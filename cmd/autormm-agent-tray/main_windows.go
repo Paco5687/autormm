@@ -81,7 +81,8 @@ func onReady() {
 	go func() {
 		for range update.ClickedCh {
 			go func() {
-				if err := selfUpdate(trayCfg); err != nil {
+				hv, _ := hubVersion(trayCfg)
+				if err := selfUpdate(trayCfg, hv); err != nil {
 					log.Printf("update failed: %v", err)
 				}
 			}()
