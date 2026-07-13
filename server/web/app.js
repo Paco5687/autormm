@@ -384,12 +384,15 @@ function renderProcs(h) {
   if (!procs.length) { mProcs.innerHTML = ''; return; }
   const rows = procs.map(p =>
     `<tr><td>${p.pid}</td><td>${escapeHtml(p.name)}</td><td>${p.cpu.toFixed(1)}%</td><td>${fmtBytes(p.mem_rss)}</td>` +
-    `<td><button class="btn ghost proc-kill" data-pid="${p.pid}" data-name="${escapeHtml(p.name)}" title="Kill process">✕</button></td></tr>`
+    `<td class="proc-actions">` +
+    `<button class="btn ghost proc-restart" data-pid="${p.pid}" data-name="${escapeHtml(p.name)}" title="Restart process">⟳</button>` +
+    `<button class="btn ghost proc-kill" data-pid="${p.pid}" data-name="${escapeHtml(p.name)}" title="Kill process">✕</button></td></tr>`
   ).join('');
   mProcs.innerHTML = `<table class="proc-table">
     <thead><tr><th>PID</th><th>Process</th><th>CPU</th><th>Memory</th><th></th></tr></thead>
     <tbody>${rows}</tbody></table>`;
   mProcs.querySelectorAll('.proc-kill').forEach(b => b.onclick = () => killProc(b.dataset.pid, b.dataset.name));
+  mProcs.querySelectorAll('.proc-restart').forEach(b => b.onclick = () => restartProc(b.dataset.pid, b.dataset.name));
 }
 
 // ---- process / service actions (#20) ----
@@ -413,6 +416,11 @@ async function hostAction(body, label) {
 function killProc(pid, name) {
   if (!confirm(`Force-kill "${name}" (PID ${pid}) on this host?`)) return;
   hostAction({ kind: 'proc', action: 'force', pid: parseInt(pid, 10) }, `kill ${name}`);
+}
+
+function restartProc(pid, name) {
+  if (!confirm(`Restart "${name}" (PID ${pid})? It's stopped and relaunched with the same command line.`)) return;
+  hostAction({ kind: 'proc', action: 'restart', pid: parseInt(pid, 10) }, `restart ${name}`);
 }
 
 document.querySelectorAll('#mServices button[data-svc]').forEach(b => b.addEventListener('click', () => {

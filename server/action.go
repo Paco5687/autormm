@@ -3,10 +3,15 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/Paco5687/autormm/internal/auth"
+	"github.com/Paco5687/autormm/internal/protocol"
 )
 
 // serviceNameRe restricts service names to safe characters so they can't inject
@@ -42,6 +47,24 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "host offline", http.StatusConflict)
 		return
 	}
+
+	// Process restart is handled agent-side (capture cmdline, stop, relaunch).
+	if req.Kind == "proc" && req.Action == "restart" {
+		if req.PID <= 0 {
+			http.Error(w, "invalid pid", http.StatusBadRequest)
+			return
+		}
+		res, err := s.restartProcOnAgent(req.AgentID, req.PID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok": res.ExitCode == 0 && res.Err == "", "exit_code": res.ExitCode, "err": res.Err,
+		})
+		return
+	}
+
 	cmd, shell, err := buildActionCommand(osName, req)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -58,6 +81,33 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request) {
 		"output":    strings.TrimSpace(res.Stdout + res.Stderr),
 		"err":       res.Err,
 	})
+}
+
+// restartProcOnAgent asks the agent to restart a process and waits for the
+// result, correlated through the exec registry (agent replies with ExecDone).
+func (s *Server) restartProcOnAgent(agentID string, pid int) (*execResult, error) {
+	if !s.store.canExec(agentID) {
+		return nil, fmt.Errorf("host offline or command execution disabled")
+	}
+	conn := s.store.connFor(agentID)
+	if conn == nil {
+		return nil, fmt.Errorf("host offline")
+	}
+	execID := auth.RandomID(12)
+	col := s.execReg.create(execID)
+	defer s.execReg.remove(execID)
+
+	log.Printf("AUDIT proc-restart agent=%s pid=%d", agentID, pid)
+	conn.sendJSON(protocol.ProcRestartRequest{Type: protocol.TypeProcRestart, ExecID: execID, PID: pid})
+
+	select {
+	case <-col.done:
+		_, _, code, errStr, _ := col.result()
+		log.Printf("AUDIT proc-restart agent=%s pid=%d exit=%d", agentID, pid, code)
+		return &execResult{ExitCode: code, Err: errStr}, nil
+	case <-time.After(25 * time.Second):
+		return nil, fmt.Errorf("timed out waiting for agent")
+	}
 }
 
 // buildActionCommand maps an action to a shell command for the host's OS.

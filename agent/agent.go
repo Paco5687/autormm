@@ -206,6 +206,11 @@ func (a *Agent) session(ctx context.Context) error {
 			if json.Unmarshal(data, &req) == nil {
 				go a.runInventory(ctx, out, req)
 			}
+		case protocol.TypeProcRestart:
+			var req protocol.ProcRestartRequest
+			if json.Unmarshal(data, &req) == nil {
+				go a.restartProc(ctx, out, req)
+			}
 		}
 	}
 }

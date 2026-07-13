@@ -18,13 +18,23 @@ const (
 	TypePing         = "ping"
 	TypeExec         = "exec" // run a command on the host
 
-	TypeInventory = "inventory" // server -> agent: list installed software
+	TypeInventory   = "inventory"    // server -> agent: list installed software
+	TypeProcRestart = "proc_restart" // server -> agent: stop a process and relaunch its command line
 
 	// agent -> server (command execution)
 	TypeExecOut       = "exec_out"       // a chunk of command output
 	TypeExecDone      = "exec_done"      // command finished
 	TypeInventoryResp = "inventory_resp" // installed-software listing
 )
+
+// ProcRestartRequest asks the agent to restart a process: capture its command
+// line + working dir, stop it, and relaunch. The result comes back as an
+// ExecDone with the same ExecID (ExitCode 0 = success).
+type ProcRestartRequest struct {
+	Type   string `json:"type"` // TypeProcRestart
+	ExecID string `json:"exec_id"`
+	PID    int    `json:"pid"`
+}
 
 // InventoryRequest asks the agent to enumerate installed software.
 type InventoryRequest struct {
