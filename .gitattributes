@@ -1,2 +1,7 @@
-# dev-only tooling — never publish to the public repo
-release.sh export-ignore
+# dev-only tooling and wiki source — versioned in the dev repo, never shipped
+# into the public *code* tree (git archive respects export-ignore).
+# Wiki pages are published to the GitHub wiki via publish-wiki.sh.
+release.sh       export-ignore
+publish-wiki.sh  export-ignore
+wiki             export-ignore
+wiki/**          export-ignore
