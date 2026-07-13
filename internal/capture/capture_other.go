@@ -13,3 +13,7 @@ func newScreenCapturer() (Capturer, error) {
 func newInjector() (Injector, error) {
 	return nil, fmt.Errorf("capture: input injection not supported on this platform")
 }
+
+func newCursor() (Cursor, error) {
+	return nil, fmt.Errorf("capture: cursor reading not supported on this platform")
+}

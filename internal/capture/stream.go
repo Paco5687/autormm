@@ -10,10 +10,9 @@ import (
 	"github.com/Paco5687/autormm/internal/protocol"
 )
 
-// Streamer converts successive screen captures into encoded frames, sending
-// only tiles that changed since the previous frame (delta encoding).
+// Streamer is the JPEG-tile Encoder: it sends only the tiles that changed since
+// the previous frame (delta encoding), as codec-0 media messages.
 type Streamer struct {
-	cap  Capturer
 	tile int
 	prev map[uint32]uint64 // tileKey -> content hash
 	w, h int
@@ -22,17 +21,20 @@ type Streamer struct {
 	quality int
 }
 
-// NewStreamer builds a streamer over cap. tile is the square tile size in px;
+// NewStreamer builds a JPEG-tile encoder. tile is the square tile size in px;
 // quality is JPEG quality (1-100).
-func NewStreamer(c Capturer, tile, quality int) *Streamer {
+func NewStreamer(tile, quality int) *Streamer {
 	if tile <= 0 {
 		tile = 128
 	}
 	if quality <= 0 || quality > 100 {
 		quality = 60
 	}
-	return &Streamer{cap: c, tile: tile, quality: quality, prev: map[uint32]uint64{}}
+	return &Streamer{tile: tile, quality: quality, prev: map[uint32]uint64{}}
 }
+
+// Close satisfies the Encoder interface.
+func (s *Streamer) Close() error { return nil }
 
 // SetQuality adjusts JPEG quality for subsequent frames. Safe to call from a
 // different goroutine than Next.
@@ -50,13 +52,10 @@ func (s *Streamer) currentQuality() int {
 	return s.quality
 }
 
-// Next captures the screen and returns an encoded frame. When force is true (or
-// the resolution changed) every tile is sent as a keyframe.
-func (s *Streamer) Next(force bool) ([]byte, error) {
-	img, err := s.cap.Capture()
-	if err != nil {
-		return nil, err
-	}
+// Encode turns a captured frame into a JPEG-tile media message (codec 0),
+// sending only changed tiles. Returns nil when nothing changed. force (or a
+// resolution change) makes every tile a keyframe.
+func (s *Streamer) Encode(img *image.RGBA, force bool) ([][]byte, error) {
 	b := img.Bounds()
 	w, h := b.Dx(), b.Dy()
 	if w != s.w || h != s.h {
@@ -92,7 +91,8 @@ func (s *Streamer) Next(force bool) ([]byte, error) {
 	if !force && len(tiles) == 0 {
 		return nil, nil // nothing changed; caller skips this tick
 	}
-	return protocol.EncodeFrame(force, uint16(w), uint16(h), uint16(s.tile), tiles), nil
+	frame := protocol.EncodeFrame(force, uint16(w), uint16(h), uint16(s.tile), tiles)
+	return [][]byte{protocol.WrapMedia(protocol.MediaJPEGTile, frame)}, nil
 }
 
 func encodeJPEG(img *image.RGBA, rect image.Rectangle, q int) ([]byte, error) {

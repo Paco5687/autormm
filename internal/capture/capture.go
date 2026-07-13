@@ -7,12 +7,18 @@
 // compiles so the agent can run in metrics-only mode.
 package capture
 
-import "image"
+import (
+	"image"
 
-// Capturer grabs the primary display.
+	"github.com/Paco5687/autormm/internal/protocol"
+)
+
+// Capturer grabs a selectable region of the desktop (all displays, or one).
 type Capturer interface {
 	Bounds() image.Rectangle
 	Capture() (*image.RGBA, error)
+	Displays() []protocol.Display
+	Select(index int) error // -1 = all displays (virtual desktop), 0..N-1 = one
 	Close() error
 }
 

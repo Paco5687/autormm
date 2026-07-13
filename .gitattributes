@@ -1,7 +1,10 @@
 # dev-only tooling and wiki source — versioned in the dev repo, never shipped
 # into the public *code* tree (git archive respects export-ignore).
 # Wiki pages are published to the GitHub wiki via publish-wiki.sh.
-release.sh       export-ignore
-publish-wiki.sh  export-ignore
-wiki             export-ignore
-wiki/**          export-ignore
+release.sh          export-ignore
+publish-wiki.sh     export-ignore
+wiki                export-ignore
+wiki/**             export-ignore
+# codec-lab is a research tool for the video-codec spike (#40), not the product.
+cmd/codec-lab       export-ignore
+cmd/codec-lab/**    export-ignore

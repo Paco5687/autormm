@@ -80,16 +80,45 @@ type Envelope struct {
 
 // Register is the agent's hello. It identifies the host and its capabilities.
 type Register struct {
-	Type         string `json:"type"` // TypeRegister
-	AgentID      string `json:"agent_id"`
-	Hostname     string `json:"hostname"`
-	OS           string `json:"os"`       // "linux", "windows", ...
-	Platform     string `json:"platform"` // "ubuntu 24.04", "Windows 11", ...
-	Arch         string `json:"arch"`
-	AgentVersion string `json:"agent_version"`
-	CanStream    bool   `json:"can_stream"` // screen capture available on this host
-	CanExec      bool   `json:"can_exec"`   // remote command execution enabled
-	Tags         string `json:"tags,omitempty"`
+	Type         string   `json:"type"` // TypeRegister
+	AgentID      string   `json:"agent_id"`
+	Hostname     string   `json:"hostname"`
+	OS           string   `json:"os"`       // "linux", "windows", ...
+	Platform     string   `json:"platform"` // "ubuntu 24.04", "Windows 11", ...
+	Arch         string   `json:"arch"`
+	AgentVersion string   `json:"agent_version"`
+	CanStream    bool     `json:"can_stream"`             // screen capture available on this host
+	CanExec      bool     `json:"can_exec"`               // remote command execution enabled
+	EncoderCaps  []string `json:"encoder_caps,omitempty"` // video codecs this agent can produce
+	Tags         string   `json:"tags,omitempty"`
+}
+
+// Remote-desktop codec capability strings (negotiated per session).
+const (
+	CapJPEGTile = "jpeg-tile"      // the always-available tiled-JPEG fallback
+	CapH264     = "webcodecs-h264" // H.264 for WebCodecs VideoDecoder
+)
+
+// MediaCodec is the 1-byte tag prefixed to every binary media message so the
+// viewer knows how to decode it (and so the codec can change mid-session).
+type MediaCodec byte
+
+const (
+	MediaJPEGTile MediaCodec = 0
+	MediaH264     MediaCodec = 1
+)
+
+// WrapMedia prefixes a payload with its codec tag.
+func WrapMedia(codec MediaCodec, payload []byte) []byte {
+	return append([]byte{byte(codec)}, payload...)
+}
+
+// UnwrapMedia splits the codec tag from a media message.
+func UnwrapMedia(msg []byte) (MediaCodec, []byte, bool) {
+	if len(msg) == 0 {
+		return 0, nil, false
+	}
+	return MediaCodec(msg[0]), msg[1:], true
 }
 
 // Session kinds carried by SessionRequest / StartSession.
@@ -104,9 +133,46 @@ type StartSession struct {
 	Type    string `json:"type"` // TypeStartSession
 	Session string `json:"session"`
 	Token   string `json:"token"`
-	Kind    string `json:"kind,omitempty"` // SessionScreen | SessionTerminal
+	Kind    string `json:"kind,omitempty"`  // SessionScreen | SessionTerminal
+	Codec   string `json:"codec,omitempty"` // negotiated video codec (CapJPEGTile | CapH264)
 	FPS     int    `json:"fps"`
 	Quality int    `json:"quality"` // JPEG quality 1-100
+}
+
+// CapsMsg is sent from the agent to the viewer at session start listing the
+// video codecs this host can produce, so the viewer can offer them.
+type CapsMsg struct {
+	T      string   `json:"t"` // always "caps"
+	Codecs []string `json:"codecs"`
+}
+
+// Display describes one monitor on a host.
+type Display struct {
+	Index   int  `json:"index"`
+	X       int  `json:"x"`
+	Y       int  `json:"y"`
+	W       int  `json:"w"`
+	H       int  `json:"h"`
+	Primary bool `json:"primary"`
+}
+
+// DisplaysMsg is sent from the agent to the viewer at session start (text frame
+// on the media socket) describing the available displays and which is selected.
+// Current is -1 when the whole desktop (all displays) is being captured.
+type DisplaysMsg struct {
+	T       string    `json:"t"` // always "displays"
+	List    []Display `json:"list"`
+	Current int       `json:"current"`
+}
+
+// CursorMsg is sent from the agent to the viewer (text frame on the media
+// socket) with the host pointer position, so the viewer can draw it as an
+// overlay. Coordinates are absolute pixels in the captured screen's resolution.
+type CursorMsg struct {
+	T   string `json:"t"` // always "cursor"
+	X   int    `json:"x"`
+	Y   int    `json:"y"`
+	Vis bool   `json:"vis"`
 }
 
 // TermMsg is the terminal media protocol (viewer/CLI <-> agent). Output from
@@ -218,7 +284,9 @@ const (
 	InputScroll    = "scroll"
 	InputKeyDown   = "kdown"
 	InputKeyUp     = "kup"
-	InputSetParams = "params" // change fps/quality mid-session
+	InputSetParams = "params"  // change fps/quality mid-session
+	InputDisplay   = "display" // switch the captured display
+	InputSetCodec  = "codec"   // switch the video codec mid-session
 )
 
 // InputEvent is sent from the viewer to the agent. Coordinates are absolute
@@ -233,4 +301,6 @@ type InputEvent struct {
 	Code    string `json:"code,omitempty"` // JS KeyboardEvent.code, e.g. "KeyA","Enter"
 	FPS     int    `json:"fps,omitempty"`
 	Quality int    `json:"quality,omitempty"`
+	Display int    `json:"display,omitempty"` // for InputDisplay: -1 all, 0..N-1 one
+	Codec   string `json:"codec,omitempty"`   // for InputSetCodec: CapJPEGTile | CapH264
 }

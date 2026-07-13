@@ -60,7 +60,11 @@ func TestEndToEndRelay(t *testing.T) {
 	if mt != websocket.BinaryMessage {
 		t.Fatalf("expected binary frame, got message type %d", mt)
 	}
-	if _, err := protocol.DecodeFrame(data); err != nil {
+	codec, payload, ok := protocol.UnwrapMedia(data)
+	if !ok || codec != protocol.MediaJPEGTile {
+		t.Fatalf("expected JPEG-tile codec tag, got %v (ok=%v)", codec, ok)
+	}
+	if _, err := protocol.DecodeFrame(payload); err != nil {
 		t.Fatalf("relayed frame did not decode: %v", err)
 	}
 
@@ -93,6 +97,7 @@ func fakeAgent(t *testing.T, base, enroll string, inputSeen chan protocol.InputE
 	_ = ws.WriteJSON(protocol.Register{
 		Type: protocol.TypeRegister, AgentID: "test-host", Hostname: "test-host",
 		OS: "linux", Platform: "test", Arch: "amd64", AgentVersion: "test", CanStream: true,
+		EncoderCaps: []string{protocol.CapJPEGTile},
 	})
 	_ = ws.WriteJSON(protocol.Metrics{Type: protocol.TypeMetrics, CPUPercent: 12.5, MemPercent: 30})
 
@@ -126,7 +131,7 @@ func fakeAgentMedia(base string, ss protocol.StartSession, inputSeen chan protoc
 	defer mws.Close()
 
 	frame := protocol.EncodeFrame(true, 320, 240, 128, []protocol.Tile{{TX: 0, TY: 0, JPEG: []byte("jpeg-bytes")}})
-	_ = mws.WriteMessage(websocket.BinaryMessage, frame)
+	_ = mws.WriteMessage(websocket.BinaryMessage, protocol.WrapMedia(protocol.MediaJPEGTile, frame))
 
 	for {
 		mt, data, err := mws.ReadMessage()

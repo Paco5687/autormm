@@ -3,8 +3,10 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"image"
 	"log"
 	"net/url"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -14,6 +16,27 @@ import (
 )
 
 const tileSize = 128
+
+// encHolder holds the active encoder so the frame loop and input loop (which
+// can swap the codec mid-session) share it safely.
+type encHolder struct {
+	mu  sync.Mutex
+	enc capture.Encoder
+}
+
+func (h *encHolder) get() capture.Encoder {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.enc
+}
+
+func (h *encHolder) swap(e capture.Encoder) capture.Encoder {
+	h.mu.Lock()
+	old := h.enc
+	h.enc = e
+	h.mu.Unlock()
+	return old
+}
 
 // startSession opens the media socket for a remote-desktop session, streams
 // frames, and applies incoming input events.
@@ -55,7 +78,19 @@ func (a *Agent) startSession(parent context.Context, ss protocol.StartSession) {
 	if fps <= 0 || fps > 30 {
 		fps = 10
 	}
-	streamer := capture.NewStreamer(cptr, tileSize, ss.Quality)
+	enc0, err := capture.NewEncoder(ss.Codec, tileSize, ss.Quality, fps)
+	if err != nil {
+		log.Printf("session %s: %v — falling back to JPEG-tile", ss.Session, err)
+		enc0 = capture.NewStreamer(tileSize, ss.Quality)
+	}
+	encoders := &encHolder{enc: enc0}
+	defer func() { encoders.get().Close() }()
+	cursor, cerr := capture.NewCursor() // best-effort; nil overlay if unsupported
+	if cerr != nil {
+		cursor = nil
+	} else {
+		defer cursor.Close()
+	}
 	log.Printf("session %s: started (%d fps, q%d)", ss.Session, fps, ss.Quality)
 
 	ctx, cancel := context.WithCancel(parent)
@@ -66,12 +101,42 @@ func (a *Agent) startSession(parent context.Context, ss protocol.StartSession) {
 		<-ctx.Done()
 		ws.Close()
 	}()
-	go a.frameLoop(ctx, ws, streamer, fps)
-	a.inputLoop(ws, injector, streamer) // blocks until socket closes
+
+	// Serialise all writes to the media socket (frames + cursor share it).
+	var wmu sync.Mutex
+	writeMsg := func(mt int, b []byte) error {
+		wmu.Lock()
+		defer wmu.Unlock()
+		ws.SetWriteDeadline(time.Now().Add(10 * time.Second))
+		return ws.WriteMessage(mt, b)
+	}
+
+	// Tell the viewer which codecs this host can produce, and the display layout.
+	if cm, err := json.Marshal(protocol.CapsMsg{T: "caps", Codecs: capture.EncoderCaps()}); err == nil {
+		writeMsg(websocket.TextMessage, cm)
+	}
+	if dl, err := json.Marshal(protocol.DisplaysMsg{T: "displays", List: cptr.Displays(), Current: -1}); err == nil {
+		writeMsg(websocket.TextMessage, dl)
+	}
+
+	// Swap the encoder when the viewer requests a codec change (opt-in H.264 /
+	// fall back to JPEG-tile).
+	switchCodec := func(codec string) {
+		ne, err := capture.NewEncoder(codec, tileSize, ss.Quality, fps)
+		if err != nil {
+			return
+		}
+		encoders.swap(ne).Close()
+		log.Printf("session %s: codec -> %s", ss.Session, codec)
+	}
+
+	go a.frameLoop(ctx, writeMsg, cptr, encoders, fps)
+	go a.cursorLoop(ctx, writeMsg, cursor, cptr)
+	a.inputLoop(ws, injector, encoders, cptr, switchCodec) // blocks until socket closes
 	log.Printf("session %s: ended", ss.Session)
 }
 
-func (a *Agent) frameLoop(ctx context.Context, ws *websocket.Conn, s *capture.Streamer, fps int) {
+func (a *Agent) frameLoop(ctx context.Context, write func(int, []byte) error, cap capture.Capturer, encoders *encHolder, fps int) {
 	interval := time.Second / time.Duration(fps)
 	const keyframeEvery = 4 * time.Second
 	lastKey := time.Time{}
@@ -81,18 +146,21 @@ func (a *Agent) frameLoop(ctx context.Context, ws *websocket.Conn, s *capture.St
 		}
 		start := time.Now()
 		force := start.Sub(lastKey) >= keyframeEvery
-		data, err := s.Next(force)
+		img, err := cap.Capture()
 		if err != nil {
 			log.Printf("capture error: %v", err)
-			ws.Close()
 			return
 		}
 		if force {
 			lastKey = start
 		}
-		if data != nil { // nil => nothing changed this tick
-			ws.SetWriteDeadline(time.Now().Add(10 * time.Second))
-			if err := ws.WriteMessage(websocket.BinaryMessage, data); err != nil {
+		msgs, err := encoders.get().Encode(img, force)
+		if err != nil {
+			log.Printf("encode error: %v", err)
+			return
+		}
+		for _, msg := range msgs { // codec-tagged; may be 0 (nothing changed / pipeline lag)
+			if err := write(websocket.BinaryMessage, msg); err != nil {
 				return
 			}
 		}
@@ -106,7 +174,47 @@ func (a *Agent) frameLoop(ctx context.Context, ws *websocket.Conn, s *capture.St
 	}
 }
 
-func (a *Agent) inputLoop(ws *websocket.Conn, in capture.Injector, s *capture.Streamer) {
+// cursorLoop sends the host pointer position (frame-relative) to the viewer at
+// ~30 Hz, only on change, so the cursor overlay tracks smoothly regardless of
+// the video frame rate.
+func (a *Agent) cursorLoop(ctx context.Context, write func(int, []byte) error, cur capture.Cursor, cptr capture.Capturer) {
+	if cur == nil {
+		return
+	}
+	t := time.NewTicker(33 * time.Millisecond)
+	defer t.Stop()
+	var lx, ly int
+	var lvis bool
+	first := true
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		x, y, vis, ok := cur.Pos()
+		if !ok {
+			continue
+		}
+		// Map to the currently-captured region; hide when the pointer is on a
+		// display that isn't being shown.
+		b := cptr.Bounds()
+		if !(image.Point{X: x, Y: y}).In(b) {
+			vis = false
+		}
+		cx, cy := x-b.Min.X, y-b.Min.Y
+		if !first && cx == lx && cy == ly && vis == lvis {
+			continue
+		}
+		first, lx, ly, lvis = false, cx, cy, vis
+		msg, _ := json.Marshal(protocol.CursorMsg{T: "cursor", X: cx, Y: cy, Vis: vis})
+		if write(websocket.TextMessage, msg) != nil {
+			return
+		}
+	}
+}
+
+func (a *Agent) inputLoop(ws *websocket.Conn, in capture.Injector, encoders *encHolder, cptr capture.Capturer, switchCodec func(string)) {
 	for {
 		ws.SetReadDeadline(time.Now().Add(90 * time.Second))
 		mt, data, err := ws.ReadMessage()
@@ -120,18 +228,24 @@ func (a *Agent) inputLoop(ws *websocket.Conn, in capture.Injector, s *capture.St
 		if json.Unmarshal(data, &ev) != nil {
 			continue
 		}
-		applyInput(ev, in, s)
+		switch ev.T {
+		case protocol.InputDisplay:
+			cptr.Select(ev.Display) // -1 all, 0..N-1 one; encoder re-keyframes on size change
+			continue
+		case protocol.InputSetCodec:
+			switchCodec(ev.Codec)
+			continue
+		case protocol.InputSetParams:
+			if ev.Quality > 0 {
+				encoders.get().SetQuality(ev.Quality)
+			}
+			continue
+		}
+		applyInput(ev, in)
 	}
 }
 
-func applyInput(ev protocol.InputEvent, in capture.Injector, s *capture.Streamer) {
-	switch ev.T {
-	case protocol.InputSetParams:
-		if ev.Quality > 0 {
-			s.SetQuality(ev.Quality)
-		}
-		return
-	}
+func applyInput(ev protocol.InputEvent, in capture.Injector) {
 	if in == nil {
 		return // view-only session
 	}

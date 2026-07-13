@@ -19,8 +19,13 @@ let remoteW = canvas.width, remoteH = canvas.height;
 let frames = 0;
 
 function connect() {
+  // Start on JPEG-tile (the safe default); H.264 is opt-in via the codec toggle.
+  currentCodec = 'jpeg-tile';
+  disposeDecoder();
+  codecsEl.innerHTML = '';
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  ws = new WebSocket(`${proto}://${location.host}/client/session?token=${encodeURIComponent(tokenParam)}`);
+  const caps = 'jpeg-tile';
+  ws = new WebSocket(`${proto}://${location.host}/client/session?token=${encodeURIComponent(tokenParam)}&caps=${caps}`);
   ws.binaryType = 'arraybuffer';
 
   ws.onopen = () => { stateEl.textContent = 'live'; stateEl.className = 'pill live'; };
@@ -29,16 +34,125 @@ function connect() {
   ws.onmessage = onMessage;
 }
 
+const rcursor = document.getElementById('rcursor');
+const displaysEl = document.getElementById('displays');
+let selectedDisplay = -1;
+
+function renderDisplays(m) {
+  const list = m.list || [];
+  if (list.length <= 1) { displaysEl.innerHTML = ''; return; } // single monitor: no picker
+  selectedDisplay = typeof m.current === 'number' ? m.current : -1;
+  const btn = (idx, label) => `<button data-d="${idx}" class="${idx === selectedDisplay ? 'active' : ''}">${label}</button>`;
+  let html = btn(-1, 'All');
+  for (const d of list) html += btn(d.index, `Display ${d.index + 1}${d.primary ? ' ★' : ''}`);
+  displaysEl.innerHTML = html;
+  displaysEl.querySelectorAll('button').forEach(b => b.onclick = () => selectDisplay(parseInt(b.dataset.d, 10)));
+}
+
+function selectDisplay(idx) {
+  selectedDisplay = idx;
+  displaysEl.querySelectorAll('button').forEach(b => b.classList.toggle('active', parseInt(b.dataset.d, 10) === idx));
+  send({ t: 'display', display: idx });
+}
+
+// ---- codec picker + H.264 (WebCodecs) decode ----
+const codecsEl = document.getElementById('codecs');
+let currentCodec = 'jpeg-tile';
+let decoder = null, decoderReady = false, h264ts = 0;
+
+function renderCodecs(m) {
+  const canH264 = (m.codecs || []).includes('webcodecs-h264') && ('VideoDecoder' in window);
+  if (!canH264) { codecsEl.innerHTML = ''; return; }
+  const btn = (c, label) => `<button data-c="${c}" class="${currentCodec === c ? 'active' : ''}">${label}</button>`;
+  codecsEl.innerHTML = btn('jpeg-tile', 'JPEG-tile') + btn('webcodecs-h264', 'H.264');
+  codecsEl.querySelectorAll('button').forEach(b => b.onclick = () => selectCodec(b.dataset.c));
+}
+
+function selectCodec(c) {
+  currentCodec = c;
+  codecsEl.querySelectorAll('button').forEach(b => b.classList.toggle('active', b.dataset.c === c));
+  if (c === 'webcodecs-h264') initDecoder(); else disposeDecoder();
+  send({ t: 'codec', codec: c });
+}
+
+function initDecoder() {
+  disposeDecoder();
+  if (!('VideoDecoder' in window)) { fallbackH264(); return; }
+  decoderReady = false; h264ts = 0;
+  decoder = new VideoDecoder({
+    output: f => {
+      if (f.displayWidth !== canvas.width || f.displayHeight !== canvas.height) {
+        canvas.width = f.displayWidth; canvas.height = f.displayHeight;
+        remoteW = f.displayWidth; remoteH = f.displayHeight;
+        resEl.textContent = `${f.displayWidth}×${f.displayHeight}`;
+      }
+      ctx.drawImage(f, 0, 0); f.close();
+    },
+    error: () => fallbackH264(),
+  });
+}
+
+function disposeDecoder() {
+  if (decoder) { try { decoder.close(); } catch (_) {} decoder = null; }
+  decoderReady = false;
+}
+
+function fallbackH264() {
+  disposeDecoder();
+  stateEl.textContent = 'H.264 unavailable — using JPEG-tile';
+  if (currentCodec !== 'jpeg-tile') selectCodec('jpeg-tile');
+}
+
+function decodeH264(buf) {
+  if (!decoder) return;
+  const flags = new DataView(buf).getUint8(0);
+  const au = new Uint8Array(buf, 1);
+  const key = (flags & 1) === 1;
+  if (!decoderReady) {
+    if (!key) return; // wait for a keyframe to start decoding
+    try { decoder.configure({ codec: codecStringFromAU(au), optimizeForLatency: true }); decoderReady = true; }
+    catch (e) { fallbackH264(); return; }
+  }
+  try { decoder.decode(new EncodedVideoChunk({ type: key ? 'key' : 'delta', timestamp: (h264ts++) * 1000, data: au })); }
+  catch (e) { fallbackH264(); }
+}
+
+// Build the exact avc1 codec string from the SPS NAL (type 7) in a keyframe.
+function codecStringFromAU(au) {
+  for (let i = 0; i + 6 < au.length; i++) {
+    if (au[i] === 0 && au[i + 1] === 0 && au[i + 2] === 1 && (au[i + 3] & 0x1f) === 7) {
+      const hex = x => x.toString(16).padStart(2, '0');
+      return 'avc1.' + hex(au[i + 4]) + hex(au[i + 5]) + hex(au[i + 6]);
+    }
+  }
+  return 'avc1.42E01E';
+}
+
+function updateCursor(m) {
+  if (!m.vis) { rcursor.classList.add('hidden'); return; }
+  const r = canvas.getBoundingClientRect();
+  rcursor.style.left = (r.left + m.x * (r.width / canvas.width)) + 'px';
+  rcursor.style.top = (r.top + m.y * (r.height / canvas.height)) + 'px';
+  rcursor.classList.remove('hidden');
+}
+
 function onMessage(ev) {
   if (typeof ev.data === 'string') {
     try {
       const msg = JSON.parse(ev.data);
       if (msg.t === 'error') { stateEl.textContent = msg.message; stateEl.className = 'pill dead'; }
+      else if (msg.t === 'cursor') updateCursor(msg);
+      else if (msg.t === 'displays') renderDisplays(msg);
+      else if (msg.t === 'caps') renderCodecs(msg);
     } catch (_) {}
     return;
   }
-  drawFrame(new DataView(ev.data));
-  frames++;
+  // Each media message is prefixed with a 1-byte codec tag (0 = JPEG-tile, 1 = H.264).
+  if (ev.data.byteLength < 1) return;
+  const codec = new DataView(ev.data).getUint8(0);
+  const payload = ev.data.slice(1);
+  if (codec === 0) { drawFrame(new DataView(payload)); frames++; }
+  else if (codec === 1) { decodeH264(payload); frames++; }
 }
 
 function drawFrame(dv) {

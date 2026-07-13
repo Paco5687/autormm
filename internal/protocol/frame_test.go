@@ -27,6 +27,21 @@ func TestFrameRoundTrip(t *testing.T) {
 	}
 }
 
+func TestMediaWrapRoundTrip(t *testing.T) {
+	payload := []byte{0xAA, 0x01, 0x02, 0x03}
+	msg := WrapMedia(MediaJPEGTile, payload)
+	codec, got, ok := UnwrapMedia(msg)
+	if !ok || codec != MediaJPEGTile {
+		t.Fatalf("codec=%v ok=%v", codec, ok)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatalf("payload mismatch: %v", got)
+	}
+	if _, _, ok := UnwrapMedia(nil); ok {
+		t.Fatal("empty message should not unwrap")
+	}
+}
+
 func TestDecodeRejectsGarbage(t *testing.T) {
 	if _, err := DecodeFrame([]byte{0x00, 0x01}); err == nil {
 		t.Fatal("expected error on short/garbage input")

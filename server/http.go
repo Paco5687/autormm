@@ -366,6 +366,17 @@ func (s *Server) handleClientSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Negotiate the video codec: intersect the viewer's decoder caps (sent as a
+	// ?caps= query param) with the agent's encoder caps. Falls back to JPEG-tile.
+	codec := ""
+	if sess.kind == protocol.SessionScreen {
+		var clientCaps []string
+		if c := r.URL.Query().Get("caps"); c != "" {
+			clientCaps = strings.Split(c, ",")
+		}
+		codec = pickCodec(clientCaps, s.store.encoderCaps(sess.agentID))
+	}
+
 	// Ask the agent to open its media socket for this session.
 	mediaTicket := auth.SignTicket(s.secret, sess.id, sess.agentID, 30*time.Second)
 	agentControl.sendJSON(protocol.StartSession{
@@ -373,6 +384,7 @@ func (s *Server) handleClientSession(w http.ResponseWriter, r *http.Request) {
 		Session: sess.id,
 		Token:   mediaTicket,
 		Kind:    sess.kind,
+		Codec:   codec,
 		FPS:     sess.fps,
 		Quality: sess.quality,
 	})
