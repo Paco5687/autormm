@@ -111,6 +111,16 @@ func (s *Store) canExec(agentID string) bool {
 	return h != nil && h.online && h.reg.CanExec
 }
 
+// osFor returns a host's reported OS ("linux", "windows", …), or "" if unknown.
+func (s *Store) osFor(agentID string) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if h := s.hosts[agentID]; h != nil {
+		return h.reg.OS
+	}
+	return ""
+}
+
 // encoderCaps returns the video codecs a host can produce.
 func (s *Store) encoderCaps(agentID string) []string {
 	s.mu.RLock()

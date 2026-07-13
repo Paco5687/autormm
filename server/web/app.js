@@ -383,12 +383,43 @@ function renderProcs(h) {
   const procs = h.metrics && h.metrics.procs ? h.metrics.procs : [];
   if (!procs.length) { mProcs.innerHTML = ''; return; }
   const rows = procs.map(p =>
-    `<tr><td>${p.pid}</td><td>${escapeHtml(p.name)}</td><td>${p.cpu.toFixed(1)}%</td><td>${fmtBytes(p.mem_rss)}</td></tr>`
+    `<tr><td>${p.pid}</td><td>${escapeHtml(p.name)}</td><td>${p.cpu.toFixed(1)}%</td><td>${fmtBytes(p.mem_rss)}</td>` +
+    `<td><button class="btn ghost proc-kill" data-pid="${p.pid}" data-name="${escapeHtml(p.name)}" title="Kill process">✕</button></td></tr>`
   ).join('');
   mProcs.innerHTML = `<table class="proc-table">
-    <thead><tr><th>PID</th><th>Process</th><th>CPU</th><th>Memory</th></tr></thead>
+    <thead><tr><th>PID</th><th>Process</th><th>CPU</th><th>Memory</th><th></th></tr></thead>
     <tbody>${rows}</tbody></table>`;
+  mProcs.querySelectorAll('.proc-kill').forEach(b => b.onclick = () => killProc(b.dataset.pid, b.dataset.name));
 }
+
+// ---- process / service actions (#20) ----
+async function hostAction(body, label) {
+  const h = hostByID(detail.agent);
+  if (!h) return;
+  try {
+    const res = await fetch('/api/action', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + token(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ agent_id: h.agent_id, ...body }),
+    });
+    const txt = await res.text();
+    if (!res.ok) { alert(`${label}: ${txt}`); return; }
+    const r = JSON.parse(txt);
+    if (!r.ok) { alert(`${label} failed (exit ${r.exit_code})\n${r.output || r.err || ''}`); }
+    // on success the change shows up on the next metrics poll
+  } catch (e) { alert('Action error: ' + e); }
+}
+
+function killProc(pid, name) {
+  if (!confirm(`Force-kill "${name}" (PID ${pid}) on this host?`)) return;
+  hostAction({ kind: 'proc', action: 'force', pid: parseInt(pid, 10) }, `kill ${name}`);
+}
+
+document.querySelectorAll('#mServices button[data-svc]').forEach(b => b.addEventListener('click', () => {
+  const name = document.getElementById('svcName').value.trim();
+  if (!name) return;
+  hostAction({ kind: 'service', action: b.dataset.svc, service: name }, `${b.dataset.svc} ${name}`);
+}));
 
 function escapeHtml(s) {
   return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));

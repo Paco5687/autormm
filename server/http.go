@@ -66,6 +66,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/schedules", s.handleSchedules)
 	mux.HandleFunc("/api/runs", s.handleRuns)
 	mux.HandleFunc("/api/session", s.handleCreateSession)
+	mux.HandleFunc("/api/action", s.handleAction)
 
 	mux.HandleFunc("/agent/ws", s.handleAgentControl)
 	mux.HandleFunc("/agent/session", s.handleAgentSession)
