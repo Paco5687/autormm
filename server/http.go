@@ -19,6 +19,10 @@ import (
 //go:embed web
 var webFS embed.FS
 
+// Version is set at release time via -ldflags -X (see .goreleaser.yaml). Agents
+// query /version and self-update to match it.
+var Version = "dev"
+
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  4096,
 	WriteBufferSize: 4096,
@@ -41,6 +45,10 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("/terminal", s.handlePage(sub, "terminal.html"))
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(sub))))
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
+	// The version this hub was built at; agents self-update to match it.
+	mux.HandleFunc("/version", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]string{"version": Version})
+	})
 
 	// One-command host enrollment.
 	mux.HandleFunc("/install.sh", s.handleInstallScript)

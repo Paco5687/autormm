@@ -19,7 +19,9 @@ import (
 	"github.com/Paco5687/autormm/internal/protocol"
 )
 
-const Version = "0.1.0"
+// Version is set at release time via -ldflags -X (see .goreleaser.yaml). It must
+// be a var, not a const, for the linker to override it.
+var Version = "dev"
 
 // Config configures the agent.
 type Config struct {

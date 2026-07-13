@@ -23,6 +23,7 @@ var iconOff []byte
 
 var (
 	trayAgent *agent.Agent
+	trayCfg   agent.Config
 	mStatus   *systray.MenuItem
 	ready     atomic.Bool
 	connected atomic.Bool
@@ -30,16 +31,21 @@ var (
 
 func main() {
 	setupLogFile() // GUI app has no console — keep a log on disk
+	cleanupOldBinary()
 
 	cfg, err := parseFlags()
 	if err != nil {
 		log.Fatalf("%v", err)
 	}
+	trayCfg = cfg
 
 	// Start at logon (per-user Run key; idempotent, no admin required).
 	if err := ensureAutostart(); err != nil {
 		log.Printf("autostart registration failed: %v", err)
 	}
+
+	// Keep the agent matched to the hub (self-update on startup + periodically).
+	go autoUpdateLoop(cfg)
 
 	trayAgent = agent.New(cfg)
 	trayAgent.SetStatusHook(onStatus)
@@ -71,7 +77,22 @@ func onReady() {
 			trayAgent.Refresh()
 		}
 	}()
+	update := systray.AddMenuItem("Update to latest", "Download the latest agent from the hub and restart")
+	go func() {
+		for range update.ClickedCh {
+			go func() {
+				if err := selfUpdate(trayCfg); err != nil {
+					log.Printf("update failed: %v", err)
+				}
+			}()
+		}
+	}()
 	// No Quit item on purpose: the agent isn't meant to be closed from the tray.
+
+	if agent.Version != "dev" {
+		v := systray.AddMenuItem("Version "+agent.Version, "")
+		v.Disable()
+	}
 
 	ready.Store(true)
 	applyStatus(connected.Load()) // reflect any state that arrived before the menu existed
