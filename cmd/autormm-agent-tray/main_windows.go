@@ -30,7 +30,7 @@ var (
 )
 
 func main() {
-	setupLogFile() // GUI app has no console — keep a log on disk
+	setupLogFile() // GUI app has no console -- keep a log on disk
 	cleanupOldBinary()
 
 	cfg, err := parseFlags()
@@ -66,7 +66,7 @@ func onReady() {
 	systray.SetIcon(iconOff)
 	systray.SetTooltip("autormm: connecting…")
 
-	host := systray.AddMenuItem("autormm — "+trayAgent.Hostname(), "")
+	host := systray.AddMenuItem("autormm -- "+trayAgent.Hostname(), "")
 	host.Disable()
 	mStatus = systray.AddMenuItem("Connecting…", "Connection status")
 	mStatus.Disable()
@@ -117,9 +117,9 @@ func applyStatus(isConnected bool) {
 		return
 	}
 	systray.SetIcon(iconOff)
-	systray.SetTooltip("autormm: disconnected — retrying")
+	systray.SetTooltip("autormm: disconnected -- retrying")
 	if mStatus != nil {
-		mStatus.SetTitle("○ Disconnected — retrying")
+		mStatus.SetTitle("○ Disconnected -- retrying")
 	}
 }
 

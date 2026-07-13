@@ -18,7 +18,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Println("autormm-agent-tray: no system tray on this platform — running headless")
+	log.Println("autormm-agent-tray: no system tray on this platform -- running headless")
 	a := agent.New(cfg)
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

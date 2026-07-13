@@ -47,7 +47,7 @@ func hubVersion(cfg agent.Config) (string, error) {
 
 // selfUpdate downloads the current tray binary from the hub, swaps it in for the
 // running exe (Windows allows renaming a running image), and relaunches. It does
-// not return on success — the process exits so the new binary takes over.
+// not return on success -- the process exits so the new binary takes over.
 // targetVersion (if set) is recorded on the relaunched process so the update
 // loop won't retry the same version endlessly if the new binary is unversioned.
 func selfUpdate(cfg agent.Config, targetVersion string) error {
@@ -96,7 +96,7 @@ func selfUpdate(cfg agent.Config, targetVersion string) error {
 	if err := cmd.Start(); err != nil {
 		return err
 	}
-	log.Printf("updated to the hub's version — relaunching")
+	log.Printf("updated to the hub's version -- relaunching")
 	os.Exit(0)
 	return nil
 }
@@ -112,7 +112,7 @@ func cleanupOldBinary() {
 // autoUpdateLoop keeps the agent matched to the hub: it checks the hub version
 // shortly after logon and periodically after, self-updating when they differ.
 // If we already updated toward a hub version but our own version still doesn't
-// match it, the binary is unversioned — stop, so we never restart-loop.
+// match it, the binary is unversioned -- stop, so we never restart-loop.
 func autoUpdateLoop(cfg agent.Config) {
 	triedVersion := os.Getenv("AUTORMM_UPDATED_TO")
 	time.Sleep(15 * time.Second) // let the network settle at logon
@@ -120,9 +120,9 @@ func autoUpdateLoop(cfg agent.Config) {
 		hv, err := hubVersion(cfg)
 		if err == nil && hv != "" && hv != agent.Version {
 			if hv == triedVersion {
-				log.Printf("updated toward %s but agent still reports %s — skipping to avoid a loop", hv, agent.Version)
+				log.Printf("updated toward %s but agent still reports %s -- skipping to avoid a loop", hv, agent.Version)
 			} else {
-				log.Printf("hub is %s, agent is %s — self-updating", hv, agent.Version)
+				log.Printf("hub is %s, agent is %s -- self-updating", hv, agent.Version)
 				if err := selfUpdate(cfg, hv); err != nil {
 					log.Printf("auto-update failed: %v", err)
 				}

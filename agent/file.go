@@ -89,7 +89,7 @@ func recvFile(ws *websocket.Conn, wj func(any) error, name string, size int64) e
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	dest := filepath.Join(dir, filepath.Base(name)) // basename only — no traversal
+	dest := filepath.Join(dir, filepath.Base(name)) // basename only -- no traversal
 	f, err := os.Create(dest)
 	if err != nil {
 		return err

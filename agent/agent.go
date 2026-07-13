@@ -108,11 +108,11 @@ func (a *Agent) Run(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		log.Printf("connection lost: %v — reconnecting in %s", err, backoff)
+		log.Printf("connection lost: %v -- reconnecting in %s", err, backoff)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-a.reconnect: // manual refresh — reconnect immediately
+		case <-a.reconnect: // manual refresh -- reconnect immediately
 			backoff = time.Second
 			continue
 		case <-time.After(backoff):
@@ -192,7 +192,7 @@ func (a *Agent) session(ctx context.Context) error {
 		case protocol.TypeStartSession:
 			var ss protocol.StartSession
 			if json.Unmarshal(data, &ss) == nil {
-				go a.startSession(ctx, ss)
+				go a.safeStartSession(ctx, ss)
 			}
 		case protocol.TypeStopSession:
 			// media sockets close on their own when the relay ends; nothing to do

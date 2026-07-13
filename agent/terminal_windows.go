@@ -31,7 +31,11 @@ func (a *Agent) runTerminal(parent context.Context, ws *websocket.Conn, _ protoc
 		sendErr(ws, "failed to start PowerShell: "+err.Error())
 		return
 	}
-	defer cpty.Close()
+	// ConPty.Close() closes raw Windows handles and is NOT idempotent, so guard
+	// it -- a double close can crash the process.
+	var closeOnce sync.Once
+	closeCpty := func() { closeOnce.Do(func() { cpty.Close() }) }
+	defer closeCpty()
 
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
@@ -65,7 +69,7 @@ func (a *Agent) runTerminal(parent context.Context, ws *websocket.Conn, _ protoc
 	// unblock the ConPTY read and the ws read on shutdown
 	go func() {
 		<-ctx.Done()
-		cpty.Close()
+		closeCpty()
 		ws.Close()
 	}()
 

@@ -6,6 +6,7 @@ import (
 	"image"
 	"log"
 	"net/url"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -36,6 +37,18 @@ func (h *encHolder) swap(e capture.Encoder) capture.Encoder {
 	h.enc = e
 	h.mu.Unlock()
 	return old
+}
+
+// safeStartSession runs a session with panic recovery so a bug in any one
+// session (screen, terminal, file) can never crash the whole agent -- it logs a
+// stack trace and the agent keeps running.
+func (a *Agent) safeStartSession(parent context.Context, ss protocol.StartSession) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("session %s panicked (recovered): %v\n%s", ss.Session, r, debug.Stack())
+		}
+	}()
+	a.startSession(parent, ss)
 }
 
 // startSession opens the media socket for a remote-desktop session, streams
@@ -84,7 +97,7 @@ func (a *Agent) startSession(parent context.Context, ss protocol.StartSession) {
 	}
 	enc0, err := capture.NewEncoder(ss.Codec, tileSize, ss.Quality, fps)
 	if err != nil {
-		log.Printf("session %s: %v — falling back to JPEG-tile", ss.Session, err)
+		log.Printf("session %s: %v -- falling back to JPEG-tile", ss.Session, err)
 		enc0 = capture.NewStreamer(tileSize, ss.Quality)
 	}
 	encoders := &encHolder{enc: enc0}
