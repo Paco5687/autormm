@@ -13,6 +13,15 @@ Go binaries with no runtime dependencies:
 | **Agent** | `autormm-agent` | every monitored host (Linux + Windows) | dials out to the hub, pushes metrics, captures the screen + injects input on demand |
 | **Client** | `autormm-client` | your workstation | CLI to list/watch hosts and open a remote-desktop session in the browser |
 
+## Features
+
+- **Remote desktop** in the browser — multi-monitor picker, live resolution switching, remote-cursor overlay, clipboard sync, file transfer, and an opt-in H.264 codec with JPEG-tile fallback.
+- **Terminal** — a real shell in the browser: `bash`/`$SHELL` on Linux/macOS, **PowerShell** on Windows (ConPTY).
+- **Monitoring** — live metrics with historical graphs, top processes, and threshold alerts with notifications.
+- **Actions** — kill or restart a process, start/stop/restart a service, run one-off commands, and schedule scripts.
+- **Inventory & device info** — installed software plus IP/MAC, CPU, RAM, kernel, and virtualization per host.
+- **Fleet ops** — one-command onboarding from the dashboard; agents **auto-update** to match the hub (validated download, with rollback).
+
 Key properties:
 
 - **Agents dial out** over a single WebSocket — no inbound ports or port-forwards on the hosts, NAT-friendly.
