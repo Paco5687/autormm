@@ -48,15 +48,24 @@ viewer→agent (JSON).
 
 ## Get started (the easy way)
 
-**1. Start the hub.** Copy the `autormm-server` binary to your always-on box and run it:
+**1. Install the hub.** On your always-on Linux box, one command downloads the
+latest release and installs `autormm-server` as a systemd user service:
 
 ```bash
-autormm-server
+curl -fsSL https://raw.githubusercontent.com/Paco5687/autormm/main/deploy/get.sh | bash -s -- server
 ```
 
-On first run it generates and saves its tokens, turns on history, and prints a
-banner with the **dashboard URL** and **admin token**. (To keep it running, use
-the systemd unit in `deploy/systemd/` — or just `./deploy/install-server.sh`.)
+On first run it turns on history and **prints your two tokens — copy them now**:
+
+```
+  ADMIN TOKEN  (clients/dashboard): ••••••••••••••••••••••••••
+  ENROLL TOKEN (agents):            ••••••••••••••••••••••••••
+```
+
+The **admin token** logs you into the dashboard; the **enroll token** is what
+agents use (it's baked into the Add-host command for you). Both are saved to
+`~/.config/autormm/server.env`. (Prefer a binary? `./deploy/install-server.sh
+--bin ./autormm-server`, or just run `autormm-server` in the foreground.)
 
 **2. Open the dashboard.** Go to `http://<hub-ip>:8765`, click the **🔑** icon,
 and paste the admin token. You're in.
