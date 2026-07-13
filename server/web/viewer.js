@@ -144,6 +144,7 @@ function onMessage(ev) {
       else if (msg.t === 'cursor') updateCursor(msg);
       else if (msg.t === 'displays') renderDisplays(msg);
       else if (msg.t === 'caps') renderCodecs(msg);
+      else if (msg.t === 'clip') setLocalClipboard(msg.d);
     } catch (_) {}
     return;
   }
@@ -215,13 +216,42 @@ canvas.addEventListener('wheel', e => {
 }, { passive: false });
 
 window.addEventListener('keydown', e => {
-  if (e.metaKey && e.key === 'v') return; // let paste-into-page shortcuts through if any
+  // Let Ctrl/Cmd+V raise a browser 'paste' event (handled below) so we can push
+  // the local clipboard to the host *before* it pastes. Don't forward the V key
+  // here — the paste handler sends it once the clipboard is synced.
+  if ((e.ctrlKey || e.metaKey) && e.code === 'KeyV') return;
   e.preventDefault();
   send({ t: 'kdown', code: e.code });
 });
 window.addEventListener('keyup', e => {
   e.preventDefault();
   send({ t: 'kup', code: e.code });
+});
+
+// ---- clipboard sync ----
+let lastClip = null;
+
+// Host -> viewer: write the host's clipboard locally (needs a secure context:
+// https or localhost; on plain http the browser blocks clipboard writes).
+function setLocalClipboard(text) {
+  if (text == null || text === lastClip) return;
+  lastClip = text;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).catch(() => {});
+  }
+}
+
+// Viewer -> host: on paste (Ctrl/Cmd+V), set the host clipboard, then paste.
+// getData in a paste handler works even on plain http.
+window.addEventListener('paste', e => {
+  const text = (e.clipboardData || window.clipboardData);
+  const data = text ? text.getData('text') : '';
+  if (data != null) {
+    lastClip = data;
+    send({ t: 'clip', clip: data });
+    send({ t: 'kdown', code: 'KeyV' }); // Ctrl/Cmd is physically held
+    send({ t: 'kup', code: 'KeyV' });
+  }
 });
 
 qualityEl.addEventListener('change', () => send({ t: 'params', quality: parseInt(qualityEl.value, 10) }));

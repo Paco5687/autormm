@@ -125,6 +125,7 @@ func UnwrapMedia(msg []byte) (MediaCodec, []byte, bool) {
 const (
 	SessionScreen   = "screen"   // remote-desktop screen streaming (default)
 	SessionTerminal = "terminal" // interactive PTY shell
+	SessionFile     = "file"     // file upload/download to the host
 )
 
 // StartSession tells the agent to dial the media endpoint for a remote-desktop
@@ -287,7 +288,15 @@ const (
 	InputSetParams = "params"  // change fps/quality mid-session
 	InputDisplay   = "display" // switch the captured display
 	InputSetCodec  = "codec"   // switch the video codec mid-session
+	InputClipboard = "clip"    // viewer -> host: set the host clipboard (text)
 )
+
+// ClipMsg carries clipboard text from the host to the viewer (text frame on the
+// media socket) when the host clipboard changes, so copy/paste works both ways.
+type ClipMsg struct {
+	T string `json:"t"` // always "clip"
+	D string `json:"d"` // clipboard text
+}
 
 // InputEvent is sent from the viewer to the agent. Coordinates are absolute
 // pixels in the remote screen's resolution.
@@ -303,4 +312,5 @@ type InputEvent struct {
 	Quality int    `json:"quality,omitempty"`
 	Display int    `json:"display,omitempty"` // for InputDisplay: -1 all, 0..N-1 one
 	Codec   string `json:"codec,omitempty"`   // for InputSetCodec: CapJPEGTile | CapH264
+	Clip    string `json:"clip,omitempty"`    // for InputClipboard: text to set on the host
 }

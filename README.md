@@ -78,8 +78,11 @@ it. No file hunting, no tokens to copy by hand.
 # Linux (headless):   the dashboard gives you this, pre-filled
 curl -fsSL "http://<hub-ip>:8765/install.sh?token=<enroll>" | sudo sh
 # Linux desktop (adds screen sharing): same URL with &desktop=1, no sudo
-# Windows:            iwr -useb "http://<hub-ip>:8765/install.ps1?token=<enroll>" | iex
+# Windows (tray app, no admin): iwr -useb "http://<hub-ip>:8765/install.ps1?token=<enroll>" | iex
 ```
+
+On Windows the agent installs as a small **system-tray app** (status icon,
+starts at logon, no admin, no scheduled task); on Linux it's a systemd service.
 
 **4. That's your client.** You don't install a separate client — the dashboard
 *is* the client. Click a host for graphs, then **Terminal** for a shell or

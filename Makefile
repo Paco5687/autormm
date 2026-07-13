@@ -23,6 +23,9 @@ embed-agents: ## build agent binaries into server/agentbins for the hub to serve
 	  CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch $(GO) build -ldflags "$(LDFLAGS)" \
 	    -o server/agentbins/autormm-agent_$${os}_$${arch}$$ext ./cmd/autormm-agent; \
 	done
+	@echo "  embed agent-tray windows/amd64 (GUI)"
+	@CGO_ENABLED=0 GOOS=windows GOARCH=amd64 $(GO) build -ldflags "$(LDFLAGS) -H=windowsgui" \
+	  -o server/agentbins/autormm-agent-tray_windows_amd64.exe ./cmd/autormm-agent-tray
 
 build: embed-agents ## build native binaries into dist/ (hub embeds agents)
 	@mkdir -p $(DIST)

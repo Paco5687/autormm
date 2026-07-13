@@ -249,9 +249,9 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		kind = protocol.SessionScreen
 	}
 	switch kind {
-	case protocol.SessionTerminal:
+	case protocol.SessionTerminal, protocol.SessionFile:
 		if !s.store.canExec(req.AgentID) {
-			http.Error(w, "host offline or shell access disabled", http.StatusConflict)
+			http.Error(w, "host offline or shell/file access disabled", http.StatusConflict)
 			return
 		}
 	default:

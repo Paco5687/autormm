@@ -21,16 +21,23 @@ const (
 	smCXScreen = 0
 	smCYScreen = 1
 
-	mouseeventfMove       = 0x0001
-	mouseeventfAbsolute   = 0x8000
-	mouseeventfLeftDown   = 0x0002
-	mouseeventfLeftUp     = 0x0004
-	mouseeventfRightDown  = 0x0008
-	mouseeventfRightUp    = 0x0010
-	mouseeventfMiddleDown = 0x0020
-	mouseeventfMiddleUp   = 0x0040
-	mouseeventfWheel      = 0x0800
-	mouseeventfHWheel     = 0x1000
+	// Virtual-screen metrics (bounding box of all monitors).
+	smXVirtualScreen  = 76
+	smYVirtualScreen  = 77
+	smCXVirtualScreen = 78
+	smCYVirtualScreen = 79
+
+	mouseeventfMove        = 0x0001
+	mouseeventfVirtualDesk = 0x4000
+	mouseeventfAbsolute    = 0x8000
+	mouseeventfLeftDown    = 0x0002
+	mouseeventfLeftUp      = 0x0004
+	mouseeventfRightDown   = 0x0008
+	mouseeventfRightUp     = 0x0010
+	mouseeventfMiddleDown  = 0x0020
+	mouseeventfMiddleUp    = 0x0040
+	mouseeventfWheel       = 0x0800
+	mouseeventfHWheel      = 0x1000
 
 	keyeventfKeyUp = 0x0002
 
@@ -87,17 +94,22 @@ func sendKey(e *keyInputEvent) {
 func (in *winInjector) MouseMove(x, y int) error {
 	in.mu.Lock()
 	defer in.mu.Unlock()
-	w := systemMetric(smCXScreen)
-	h := systemMetric(smCYScreen)
-	if w < 2 {
-		w = 2
+	// Map absolute virtual-desktop pixels to the 0..65535 range SendInput wants,
+	// normalised against the whole virtual screen (all monitors) so any display,
+	// at any offset, lands correctly. This fraction is DPI-independent.
+	vx := systemMetric(smXVirtualScreen)
+	vy := systemMetric(smYVirtualScreen)
+	vw := systemMetric(smCXVirtualScreen)
+	vh := systemMetric(smCYVirtualScreen)
+	if vw < 2 {
+		vw = 2
 	}
-	if h < 2 {
-		h = 2
+	if vh < 2 {
+		vh = 2
 	}
-	ax := int32(x * 65535 / (w - 1))
-	ay := int32(y * 65535 / (h - 1))
-	sendMouse(&mouseInputEvent{dx: ax, dy: ay, dwFlags: mouseeventfMove | mouseeventfAbsolute})
+	ax := int32((x - vx) * 65535 / (vw - 1))
+	ay := int32((y - vy) * 65535 / (vh - 1))
+	sendMouse(&mouseInputEvent{dx: ax, dy: ay, dwFlags: mouseeventfMove | mouseeventfAbsolute | mouseeventfVirtualDesk})
 	return nil
 }
 

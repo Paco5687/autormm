@@ -41,6 +41,31 @@ type Agent struct {
 	platform  string
 	arch      string
 	dialer    *websocket.Dialer
+	onStatus  func(bool)    // optional: connection-state callback (for the tray)
+	reconnect chan struct{} // Refresh() pokes this to force an immediate reconnect
+}
+
+// Hostname returns the agent's reported host name.
+func (a *Agent) Hostname() string { return a.hostname }
+
+// SetStatusHook registers a callback invoked with true when the control
+// connection registers and false when it drops. Used by the tray to reflect
+// live status. Must be set before Run.
+func (a *Agent) SetStatusHook(fn func(bool)) { a.onStatus = fn }
+
+// Refresh forces the agent to drop any current connection and reconnect now
+// (skipping backoff). Safe to call from any goroutine.
+func (a *Agent) Refresh() {
+	select {
+	case a.reconnect <- struct{}{}:
+	default:
+	}
+}
+
+func (a *Agent) emitStatus(connected bool) {
+	if a.onStatus != nil {
+		a.onStatus(connected)
+	}
 }
 
 // New builds an agent from cfg, filling defaults.
@@ -65,6 +90,7 @@ func New(cfg Config) *Agent {
 		platform:  platform,
 		arch:      arch,
 		dialer:    &d,
+		reconnect: make(chan struct{}, 1),
 	}
 }
 
@@ -76,6 +102,7 @@ func (a *Agent) Run(ctx context.Context) error {
 			return ctx.Err()
 		}
 		err := a.session(ctx)
+		a.emitStatus(false)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -83,6 +110,9 @@ func (a *Agent) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-a.reconnect: // manual refresh — reconnect immediately
+			backoff = time.Second
+			continue
 		case <-time.After(backoff):
 		}
 		if backoff < 30*time.Second {
@@ -121,6 +151,7 @@ func (a *Agent) session(ctx context.Context) error {
 		return err
 	}
 	log.Printf("registered with %s as %q (stream=%v)", a.cfg.Server, a.cfg.AgentID, reg.CanStream)
+	a.emitStatus(true)
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()

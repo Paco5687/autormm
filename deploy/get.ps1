@@ -63,7 +63,7 @@ try {
   switch ($Piece) {
     'agent' {
       & powershell -ExecutionPolicy Bypass -File .\deploy\install-agent.ps1 `
-        -Server $Server -Token $Token -Tags $Tags -Bin .\autormm-agent.exe
+        -Server $Server -Token $Token -Tags $Tags -Bin .\autormm-agent-tray.exe
     }
     'client' {
       New-Item -ItemType Directory -Force -Path (Join-Path $env:LOCALAPPDATA "autormm") | Out-Null

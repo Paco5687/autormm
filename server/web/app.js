@@ -208,6 +208,91 @@ document.querySelectorAll('#mRanges button').forEach(b => {
 });
 mRemote.addEventListener('click', () => { const h = hostByID(detail.agent); if (h) startRemote(h); });
 mTerm.addEventListener('click', () => { const h = hostByID(detail.agent); if (h) startTerminal(h); });
+document.getElementById('mFiles').addEventListener('click', () => { const h = hostByID(detail.agent); if (h) openFiles(h); });
+
+// ---- file transfer ----
+const fileModal = document.getElementById('fileModal');
+let fileWS = null, dl = null;
+document.getElementById('fileClose').addEventListener('click', closeFiles);
+fileModal.addEventListener('click', e => { if (e.target === fileModal) closeFiles(); });
+
+function flog(msg) { const el = document.getElementById('fileLog'); el.textContent += msg + '\n'; }
+
+async function openFiles(h) {
+  let s;
+  try {
+    const res = await fetch('/api/session', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + token(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ agent_id: h.agent_id, kind: 'file' }),
+    });
+    if (!res.ok) { alert('Could not start file session: ' + (await res.text())); return; }
+    s = await res.json();
+  } catch (e) { alert('File session error: ' + e); return; }
+
+  document.getElementById('fileHost').textContent = h.hostname || h.agent_id;
+  document.getElementById('fileLog').textContent = '';
+  fileModal.classList.remove('hidden');
+
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  fileWS = new WebSocket(`${proto}://${location.host}/client/session?token=${encodeURIComponent(s.token)}`);
+  fileWS.binaryType = 'arraybuffer';
+  const state = document.getElementById('fileState');
+  const send = document.getElementById('fileSend'), get = document.getElementById('fileGet');
+  fileWS.onopen = () => { state.textContent = 'ready'; state.className = 'pill live'; send.disabled = false; get.disabled = false; };
+  fileWS.onclose = () => { state.textContent = 'closed'; state.className = 'pill dead'; send.disabled = true; get.disabled = true; };
+  fileWS.onerror = () => { state.textContent = 'error'; state.className = 'pill dead'; };
+  fileWS.onmessage = onFileMsg;
+}
+
+function closeFiles() {
+  if (fileWS) { try { fileWS.close(); } catch (_) {} fileWS = null; }
+  dl = null;
+  fileModal.classList.add('hidden');
+}
+
+function onFileMsg(ev) {
+  if (typeof ev.data === 'string') {
+    const m = JSON.parse(ev.data);
+    if (m.t === 'ok') flog(`✓ uploaded → ${m.path} (${m.size} bytes)`);
+    else if (m.t === 'err') flog(`✗ ${m.msg}`);
+    else if (m.t === 'meta') { dl = { name: m.name, size: m.size, parts: [], got: 0 }; flog(`downloading ${m.name} (${m.size} bytes)…`); }
+    else if (m.t === 'done') finishDownload();
+    return;
+  }
+  if (dl) { dl.parts.push(ev.data); dl.got += ev.data.byteLength; }
+}
+
+function finishDownload() {
+  if (!dl) return;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(dl.parts));
+  a.download = dl.name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  flog(`✓ downloaded ${dl.name}`);
+  dl = null;
+}
+
+document.getElementById('fileSend').addEventListener('click', async () => {
+  const inp = document.getElementById('fileUpload');
+  const f = inp.files && inp.files[0];
+  if (!f || !fileWS || fileWS.readyState !== 1) return;
+  fileWS.send(JSON.stringify({ t: 'put', name: f.name, size: f.size }));
+  flog(`uploading ${f.name} (${f.size} bytes)…`);
+  const chunk = 256 * 1024;
+  for (let off = 0; off < f.size; off += chunk) {
+    // simple backpressure so we don't buffer the whole file in memory
+    while (fileWS.bufferedAmount > 8 * 1024 * 1024) await new Promise(r => setTimeout(r, 20));
+    fileWS.send(await f.slice(off, off + chunk).arrayBuffer());
+  }
+});
+
+document.getElementById('fileGet').addEventListener('click', () => {
+  const path = document.getElementById('fileGetPath').value.trim();
+  if (!path || !fileWS || fileWS.readyState !== 1) return;
+  fileWS.send(JSON.stringify({ t: 'get', path }));
+});
 
 // Update current values / process list from the periodic poll without refetching history.
 function refreshDetailLive() {

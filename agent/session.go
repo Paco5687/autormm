@@ -57,6 +57,10 @@ func (a *Agent) startSession(parent context.Context, ss protocol.StartSession) {
 		a.runTerminal(parent, ws, ss)
 		return
 	}
+	if ss.Kind == protocol.SessionFile {
+		a.runFileSession(parent, ws)
+		return
+	}
 
 	cptr, err := capture.NewCapturer()
 	if err != nil {
@@ -132,6 +136,7 @@ func (a *Agent) startSession(parent context.Context, ss protocol.StartSession) {
 
 	go a.frameLoop(ctx, writeMsg, cptr, encoders, fps)
 	go a.cursorLoop(ctx, writeMsg, cursor, cptr)
+	go a.clipboardLoop(ctx, writeMsg)
 	a.inputLoop(ws, injector, encoders, cptr, switchCodec) // blocks until socket closes
 	log.Printf("session %s: ended", ss.Session)
 }
@@ -214,6 +219,31 @@ func (a *Agent) cursorLoop(ctx context.Context, write func(int, []byte) error, c
 	}
 }
 
+// clipboardLoop watches the host clipboard and pushes text changes to the viewer
+// so host->viewer copy/paste works. Viewer->host goes the other way via the
+// InputClipboard message. Polling keeps this cross-platform and simple.
+func (a *Agent) clipboardLoop(ctx context.Context, write func(int, []byte) error) {
+	t := time.NewTicker(700 * time.Millisecond)
+	defer t.Stop()
+	last, have := "", false
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		s, ok := capture.GetClipboard()
+		if !ok || (have && s == last) {
+			continue
+		}
+		last, have = s, true
+		msg, _ := json.Marshal(protocol.ClipMsg{T: "clip", D: s})
+		if write(websocket.TextMessage, msg) != nil {
+			return
+		}
+	}
+}
+
 func (a *Agent) inputLoop(ws *websocket.Conn, in capture.Injector, encoders *encHolder, cptr capture.Capturer, switchCodec func(string)) {
 	for {
 		ws.SetReadDeadline(time.Now().Add(90 * time.Second))
@@ -235,28 +265,35 @@ func (a *Agent) inputLoop(ws *websocket.Conn, in capture.Injector, encoders *enc
 		case protocol.InputSetCodec:
 			switchCodec(ev.Codec)
 			continue
+		case protocol.InputClipboard:
+			capture.SetClipboard(ev.Clip)
+			continue
 		case protocol.InputSetParams:
 			if ev.Quality > 0 {
 				encoders.get().SetQuality(ev.Quality)
 			}
 			continue
 		}
-		applyInput(ev, in)
+		applyInput(ev, in, cptr)
 	}
 }
 
-func applyInput(ev protocol.InputEvent, in capture.Injector) {
+func applyInput(ev protocol.InputEvent, in capture.Injector, cptr capture.Capturer) {
 	if in == nil {
 		return // view-only session
 	}
+	// Viewer coordinates are relative to the captured region; add its origin so
+	// input lands on the right monitor when viewing one display or the union.
+	b := cptr.Bounds()
+	ax, ay := b.Min.X+ev.X, b.Min.Y+ev.Y
 	switch ev.T {
 	case protocol.InputMouseMove:
-		in.MouseMove(ev.X, ev.Y)
+		in.MouseMove(ax, ay)
 	case protocol.InputMouseDown:
-		in.MouseMove(ev.X, ev.Y)
+		in.MouseMove(ax, ay)
 		in.MouseButton(ev.Button, true)
 	case protocol.InputMouseUp:
-		in.MouseMove(ev.X, ev.Y)
+		in.MouseMove(ax, ay)
 		in.MouseButton(ev.Button, false)
 	case protocol.InputScroll:
 		in.Scroll(ev.DX, ev.DY)

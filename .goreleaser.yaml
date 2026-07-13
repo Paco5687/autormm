@@ -6,6 +6,8 @@ before:
     - go mod tidy
     # Populate the agent binaries the hub embeds and serves for one-command installs.
     - sh -c 'mkdir -p server/agentbins; for t in linux/amd64 linux/arm64 windows/amd64; do os=${t%/*}; arch=${t#*/}; ext=; [ "$os" = windows ] && ext=.exe; CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -ldflags "-s -w" -o server/agentbins/autormm-agent_${os}_${arch}$ext ./cmd/autormm-agent; done'
+    # The Windows desktop agent is a GUI (tray) build; the hub serves it for desktop installs.
+    - sh -c 'CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "-s -w -H=windowsgui" -o server/agentbins/autormm-agent-tray_windows_amd64.exe ./cmd/autormm-agent-tray'
 
 builds:
   - id: server
@@ -30,6 +32,17 @@ builds:
     ldflags:
       - -s -w -X github.com/Paco5687/autormm/agent.Version={{ .Version }}
 
+  - id: agent-tray
+    main: ./cmd/autormm-agent-tray
+    binary: autormm-agent-tray
+    env: [CGO_ENABLED=0]
+    goos: [windows]
+    goarch: [amd64]
+    flags: [-trimpath]
+    ldflags:
+      # -H=windowsgui: no console window for the tray app.
+      - -s -w -H=windowsgui -X github.com/Paco5687/autormm/agent.Version={{ .Version }}
+
   - id: client
     main: ./cmd/autormm-client
     binary: autormm-client
@@ -46,7 +59,7 @@ builds:
 # the deploy scripts, so a single download can install any piece.
 archives:
   - id: default
-    ids: [server, agent, client]
+    ids: [server, agent, agent-tray, client]
     # server is linux-only, so windows/darwin archives carry fewer binaries.
     allow_different_binary_count: true
     name_template: >-

@@ -23,8 +23,20 @@ func agentBinName(os, arch string) string {
 	return name
 }
 
-func agentBin(os, arch string) ([]byte, bool) {
-	b, err := agentBinsFS.ReadFile("agentbins/" + agentBinName(os, arch))
+// agentBinFile picks the embedded file for the requested platform and kind.
+// kind=="tray" serves the Windows GUI (system-tray) build; otherwise the plain
+// console agent.
+func agentBinFile(os, arch, kind string) string {
+	if kind == "tray" && os == "windows" {
+		return "autormm-agent-tray_windows_amd64.exe"
+	}
+	return agentBinName(os, arch)
+}
+
+func agentBin(os, arch string) ([]byte, bool) { return agentBinKind(os, arch, "") }
+
+func agentBinKind(os, arch, kind string) ([]byte, bool) {
+	b, err := agentBinsFS.ReadFile("agentbins/" + agentBinFile(os, arch, kind))
 	if err != nil {
 		return nil, false
 	}
@@ -51,19 +63,20 @@ func (s *Server) handleDownloadAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	os := r.URL.Query().Get("os")
 	arch := r.URL.Query().Get("arch")
+	kind := r.URL.Query().Get("kind") // "tray" for the Windows GUI build
 	if os == "" {
 		os = "linux"
 	}
 	if arch == "" {
 		arch = "amd64"
 	}
-	bin, ok := agentBin(os, arch)
+	bin, ok := agentBinKind(os, arch, kind)
 	if !ok {
 		http.Error(w, fmt.Sprintf("agent binary for %s/%s is not bundled in this build", os, arch), http.StatusNotFound)
 		return
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Disposition", "attachment; filename="+agentBinName(os, arch))
+	w.Header().Set("Content-Disposition", "attachment; filename="+agentBinFile(os, arch, kind))
 	w.Write(bin)
 }
 
@@ -191,20 +204,21 @@ systemctl --user enable --now autormm-agent
 echo "autormm-agent (desktop) installed and running."
 `
 
-const installPs1 = `# autormm agent installer for Windows. Run in PowerShell.
+// installPs1 installs the Windows desktop agent as a system-tray app that starts
+// at logon via a per-user Run key. No admin, no scheduled task — the tray app
+// registers its own autostart on first launch.
+const installPs1 = `# autormm agent installer for Windows (system-tray app, starts at logon). No admin needed.
 $ErrorActionPreference = 'Stop'
 $Server = '__SERVER__'
 $Token  = '__TOKEN__'
 $dir = Join-Path $env:LOCALAPPDATA 'autormm'
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
-$dest = Join-Path $dir 'autormm-agent.exe'
-Write-Host "Downloading autormm-agent from $Server ..."
-Invoke-WebRequest -Uri "$Server/download/agent?os=windows&arch=amd64&token=$Token" -OutFile $dest -UseBasicParsing
-$action  = New-ScheduledTaskAction -Execute $dest -Argument "-server $Server -token $Token"
-$trigger = New-ScheduledTaskTrigger -AtLogOn
-$principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Highest
-$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero)
-Register-ScheduledTask -TaskName 'autormm-agent' -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null
-Start-ScheduledTask -TaskName 'autormm-agent'
-Write-Host 'autormm-agent installed and started.'
+$dest = Join-Path $dir 'autormm-agent-tray.exe'
+# Stop any previous instance so the exe isn't locked while we overwrite it.
+Get-Process autormm-agent-tray -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Sleep -Milliseconds 300
+Write-Host "Downloading autormm agent from $Server ..."
+Invoke-WebRequest -Uri "$Server/download/agent?os=windows&arch=amd64&kind=tray&token=$Token" -OutFile $dest -UseBasicParsing
+Start-Process -FilePath $dest -ArgumentList "-server $Server -token $Token"
+Write-Host 'autormm agent installed. A tray icon will appear, and it will start automatically at logon.'
 `

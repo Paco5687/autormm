@@ -22,7 +22,9 @@ type Capturer interface {
 	Close() error
 }
 
-// Injector synthesises input on the host. Coordinates are absolute screen pixels.
+// Injector synthesises input on the host. MouseMove coordinates are absolute
+// pixels in the virtual desktop (i.e. the captured region's origin already
+// added), so callers must offset region-relative coordinates before calling.
 type Injector interface {
 	MouseMove(x, y int) error
 	MouseButton(button int, down bool) error // 0=left 1=middle 2=right

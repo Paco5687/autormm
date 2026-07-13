@@ -2,6 +2,7 @@
 *.log
 # embedded agent binaries are build artifacts (keep the dir + .gitkeep)
 /server/agentbins/autormm-agent_*
+/server/agentbins/autormm-agent-tray_*
 /autormm-server
 /autormm-agent
 /autormm-client
