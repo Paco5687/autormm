@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>autormm — remote</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="viewer-body">
+  <div class="viewer-bar" id="bar">
+    <strong id="title">remote</strong>
+    <span class="pill" id="state">connecting…</span>
+    <span class="pill" id="res"></span>
+    <span class="pill" id="fps"></span>
+    <span class="grow"></span>
+    <label class="muted">quality
+      <input id="quality" type="range" min="20" max="90" value="60">
+    </label>
+    <button class="btn" id="ctrlAlt">Ctrl+Alt+Del</button>
+  </div>
+  <div class="viewer-wrap">
+    <canvas id="screen" width="1280" height="720"></canvas>
+  </div>
+  <script src="/static/viewer.js"></script>
+</body>
+</html>

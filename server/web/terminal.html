@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>autormm — terminal</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/vendor/xterm.css">
+  <style>
+    html, body { height: 100%; margin: 0; background: #000; }
+    #term { position: fixed; inset: 34px 6px 6px 6px; }
+    .xterm .xterm-viewport { overflow-y: auto; }
+  </style>
+</head>
+<body class="viewer-body">
+  <div class="viewer-bar" id="bar">
+    <strong id="title">terminal</strong>
+    <span class="pill" id="state">connecting…</span>
+  </div>
+  <div id="term"></div>
+  <script src="/static/vendor/xterm.js"></script>
+  <script src="/static/vendor/xterm-addon-fit.js"></script>
+  <script src="/static/terminal.js"></script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+# autormm hub — systemd *user* service.
+# Install:  cp to ~/.config/systemd/user/  &&  systemctl --user enable --now autormm-server
+[Unit]
+Description=autormm hub server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Bind on the docker-gateway/LAN interface so Traefik can reach it; keep it off
+# the public internet and put the LAN-only middleware in front (see traefik-autormm.yml).
+EnvironmentFile=%h/.config/autormm/server.env
+ExecStart=%h/.local/bin/autormm-server -addr 0.0.0.0:8765
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

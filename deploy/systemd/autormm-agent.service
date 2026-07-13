@@ -1,0 +1,22 @@
+# autormm agent — system service for HEADLESS Linux hosts (metrics/management only).
+# Screen streaming needs a graphical session; for a desktop use
+# autormm-agent-user.service instead.
+#
+# Install: cp to /etc/systemd/system/  &&  systemctl enable --now autormm-agent
+[Unit]
+Description=autormm agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=/etc/autormm/agent.env
+ExecStart=/usr/local/bin/autormm-agent
+Restart=always
+RestartSec=5
+# Light hardening; relax if the agent needs broader host access.
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/autormm
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,2 @@
+Agent binaries are embedded here by `make` / goreleaser so the hub can serve
+one-command installs. Empty in a plain `go build` (the /download endpoint 404s).

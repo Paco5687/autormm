@@ -1,0 +1,30 @@
+# Traefik dynamic config for the autormm hub.
+# Copy to your Traefik dynamic-config dir (e.g. /etc/traefik/dynamic/autormm.yml)
+#
+# NOTE: do NOT add basicAuth here. Agents and the dashboard authenticate with
+# their own bearer tokens (Authorization header), and a basicAuth middleware
+# would clobber that header and break agent/WebSocket connections. Access is
+# restricted with the LAN-only ipAllowList below plus the app's own tokens.
+# Traefik upgrades WebSocket connections transparently, so no extra config is
+# needed for the /agent/* and /client/session sockets.
+http:
+  routers:
+    autormm:
+      rule: "Host(`autormm.example.com`)"
+      entryPoints: [ "web" ]
+      middlewares: [ "autormm-lan-only" ]
+      service: autormm-svc
+
+  middlewares:
+    autormm-lan-only:
+      ipAllowList:
+        sourceRange:
+          - "192.168.0.0/16"
+          - "127.0.0.1/32"
+
+  services:
+    autormm-svc:
+      loadBalancer:
+        servers:
+          # Point this at the hub. Behind Traefik-in-Docker, use the host-gateway IP.
+          - url: "http://HUB-IP:8765"

@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>autormm — dashboard</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">autormm<span class="dot">●</span></div>
+    <div class="grow"></div>
+    <div id="summary" class="summary"></div>
+    <span id="alertBadge" class="alert-badge hidden"></span>
+    <button id="enrollBtn" class="btn">＋ Add host</button>
+    <button id="scriptsBtn" class="btn ghost" title="Scripts &amp; schedules">📜</button>
+    <button id="tokenBtn" class="btn ghost" title="Set access token">🔑</button>
+  </header>
+
+  <main id="grid" class="grid"></main>
+
+  <div id="empty" class="empty hidden">
+    <p>No hosts have connected yet.</p>
+    <p class="muted">Install the agent on a host and point it at this server.</p>
+  </div>
+
+  <div id="modal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <div class="modal-title">
+          <div id="mTitle" class="name"></div>
+          <div id="mSub" class="platform muted"></div>
+        </div>
+        <div id="mRanges" class="ranges">
+          <button data-range="1h">1h</button>
+          <button data-range="6h" class="active">6h</button>
+          <button data-range="24h">24h</button>
+          <button data-range="7d">7d</button>
+        </div>
+        <button id="mTerm" class="btn">Terminal</button>
+        <button id="mRemote" class="btn remote">Remote</button>
+        <button id="mClose" class="btn ghost" title="Close">✕</button>
+      </div>
+      <div id="mCharts" class="charts"></div>
+      <div id="mProcs"></div>
+      <div class="software">
+        <div class="software-head">
+          <button id="mInvBtn" class="btn">Load software inventory</button>
+          <input id="mInvFilter" class="inv-filter hidden" placeholder="filter packages…">
+          <span id="mInvCount" class="muted"></span>
+        </div>
+        <div id="mInvList" class="inv-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <template id="cardTpl">
+    <article class="card">
+      <div class="card-head">
+        <span class="status"></span>
+        <div class="host">
+          <div class="name"></div>
+          <div class="platform muted"></div>
+        </div>
+        <div class="card-actions">
+          <button class="btn term" disabled>Terminal</button>
+          <button class="btn remote" disabled>Remote</button>
+        </div>
+      </div>
+      <div class="alerts"></div>
+      <div class="metrics">
+        <div class="metric"><label>CPU</label><div class="bar"><i class="cpu"></i></div><span class="cpuVal val"></span></div>
+        <div class="metric"><label>MEM</label><div class="bar"><i class="mem"></i></div><span class="memVal val"></span></div>
+      </div>
+      <svg class="spark" viewBox="0 0 100 24" preserveAspectRatio="none"><polyline class="cpuSpark" points=""/></svg>
+      <div class="details muted"></div>
+    </article>
+  </template>
+
+  <div id="enrollModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <div class="modal-title">
+          <div class="name">Add a host</div>
+          <div class="platform muted">Run one command on the machine you want to add. It installs the agent and connects it here.</div>
+        </div>
+        <button id="enrollClose" class="btn ghost" title="Close">✕</button>
+      </div>
+      <div id="enrollBody">
+        <h4 class="sc-h">Linux — server / headless</h4>
+        <div class="cmd-row"><code id="cmdLinux"></code><button class="btn copy" data-t="cmdLinux">Copy</button></div>
+        <h4 class="sc-h">Linux — desktop (enables screen sharing)</h4>
+        <div class="cmd-row"><code id="cmdLinuxDesktop"></code><button class="btn copy" data-t="cmdLinuxDesktop">Copy</button></div>
+        <h4 class="sc-h">Windows — PowerShell (as the console user)</h4>
+        <div class="cmd-row"><code id="cmdWindows"></code><button class="btn copy" data-t="cmdWindows">Copy</button></div>
+        <p id="enrollNote" class="muted"></p>
+        <p class="muted">You don't need a separate client app — this dashboard is your client (screen &amp; terminal run right here).</p>
+      </div>
+    </div>
+  </div>
+
+  <div id="scriptsModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <div class="modal-title"><div class="name">Scripts &amp; schedules</div></div>
+        <button id="scNew" class="btn">New script</button>
+        <button id="scClose" class="btn ghost" title="Close">✕</button>
+      </div>
+      <div id="scDisabled" class="no-data hidden">Scripts require the server to be started with <code>--db</code>.</div>
+      <div class="sc-layout">
+        <div class="sc-list" id="scList"></div>
+        <div class="sc-editor" id="scEditor">
+          <input id="scName" class="inv-filter" placeholder="script name" style="max-width:none">
+          <select id="scShell" class="inv-filter" style="max-width:none">
+            <option value="">default shell</option>
+            <option value="sh">sh</option>
+            <option value="bash">bash</option>
+            <option value="powershell">powershell</option>
+            <option value="cmd">cmd</option>
+          </select>
+          <textarea id="scContent" class="sc-content" placeholder="#!/bin/sh&#10;echo hello"></textarea>
+          <div class="sc-actions">
+            <button id="scSave" class="btn">Save</button>
+            <button id="scDelete" class="btn ghost">Delete</button>
+            <span class="grow"></span>
+            <select id="scRunHost" class="inv-filter"></select>
+            <button id="scRun" class="btn">Run</button>
+          </div>
+          <div class="sc-run-cron">
+            <input id="scCron" class="inv-filter" placeholder="cron e.g. 0 3 * * *">
+            <button id="scSchedule" class="btn ghost">Schedule on host</button>
+          </div>
+          <pre id="scOutput" class="sc-output"></pre>
+        </div>
+      </div>
+      <h4 class="sc-h">Schedules</h4>
+      <div id="scSchedules"></div>
+      <h4 class="sc-h">Recent runs</h4>
+      <div id="scRuns"></div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+  <script src="/static/scripts.js"></script>
+</body>
+</html>
