@@ -292,9 +292,12 @@ window.addEventListener('paste', e => {
 });
 
 qualityEl.addEventListener('change', () => send({ t: 'params', quality: parseInt(qualityEl.value, 10) }));
-document.getElementById('ctrlAlt').addEventListener('click', () => {
-  for (const c of ['ControlLeft', 'AltLeft', 'Delete']) send({ t: 'kdown', code: c });
-  for (const c of ['Delete', 'AltLeft', 'ControlLeft']) send({ t: 'kup', code: c });
+// Task Manager (Ctrl+Shift+Esc). Ctrl+Alt+Del can't be synthesized on Windows
+// (protected sequence) and its secure desktop isn't capturable anyway; Task
+// Manager is what operators actually need and it works via normal injection.
+document.getElementById('taskMgr').addEventListener('click', () => {
+  for (const c of ['ControlLeft', 'ShiftLeft', 'Escape']) send({ t: 'kdown', code: c });
+  for (const c of ['Escape', 'ShiftLeft', 'ControlLeft']) send({ t: 'kup', code: c });
 });
 
 // auto-hide the top bar unless the pointer is near the top
