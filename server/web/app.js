@@ -6,11 +6,51 @@ const tokenBtn = document.getElementById('tokenBtn');
 
 const TOKEN_KEY = 'autormm_token';
 function token() { return localStorage.getItem(TOKEN_KEY) || ''; }
-function setToken() {
-  const t = prompt('Access token (server AUTORMM_ADMIN_TOKEN):', token());
-  if (t !== null) { localStorage.setItem(TOKEN_KEY, t.trim()); poll(); }
+
+// ---- login ----
+const loginModal = document.getElementById('loginModal');
+async function showLogin() {
+  document.getElementById('loginErr').textContent = '';
+  loginModal.classList.remove('hidden');
+  try {
+    const info = await (await fetch('/api/authinfo')).json();
+    document.getElementById('loginPw').classList.toggle('hidden', !info.password_login);
+    // If no password accounts exist yet, open the token box by default.
+    document.getElementById('loginTokenBox').classList.toggle('hidden', info.password_login);
+    (info.password_login ? document.getElementById('loginUser') : document.getElementById('loginToken')).focus();
+  } catch (_) {}
 }
-tokenBtn.addEventListener('click', setToken);
+function hideLogin() { loginModal.classList.add('hidden'); }
+
+async function doLogin() {
+  const username = document.getElementById('loginUser').value.trim();
+  const password = document.getElementById('loginPass').value;
+  const err = document.getElementById('loginErr');
+  err.textContent = '';
+  try {
+    const res = await fetch('/api/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    if (!res.ok) { err.textContent = res.status === 401 ? 'Invalid username or password' : ('Login failed: ' + await res.text()); return; }
+    const d = await res.json();
+    localStorage.setItem(TOKEN_KEY, d.token);
+    document.getElementById('loginPass').value = '';
+    hideLogin(); poll();
+  } catch (e) { err.textContent = 'Login error: ' + e; }
+}
+document.getElementById('loginBtn').addEventListener('click', doLogin);
+document.getElementById('loginPass').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+document.getElementById('loginTokenToggle').addEventListener('click', e => { e.preventDefault(); document.getElementById('loginTokenBox').classList.toggle('hidden'); });
+document.getElementById('loginTokenBtn').addEventListener('click', () => {
+  const t = document.getElementById('loginToken').value.trim();
+  if (t) { localStorage.setItem(TOKEN_KEY, t); hideLogin(); poll(); }
+});
+tokenBtn.title = 'Sign in / out';
+tokenBtn.addEventListener('click', () => {
+  if (token() && confirm('Sign out of autormm?')) { localStorage.removeItem(TOKEN_KEY); }
+  showLogin();
+});
 
 const cards = new Map(); // agentID -> element
 let lastHosts = [];
@@ -31,10 +71,10 @@ function fmtUptime(s) {
 }
 
 async function poll() {
-  if (!token()) { summaryEl.textContent = 'no token — click 🔑'; return; }
+  if (!token()) { showLogin(); return; }
   try {
     const res = await fetch('/api/hosts', { headers: { Authorization: 'Bearer ' + token() } });
-    if (res.status === 401) { summaryEl.textContent = 'unauthorized — click 🔑'; return; }
+    if (res.status === 401) { localStorage.removeItem(TOKEN_KEY); showLogin(); return; }
     const hosts = await res.json();
     render(hosts || []);
     fetchAlerts();

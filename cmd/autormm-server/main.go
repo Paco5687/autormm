@@ -33,6 +33,11 @@ func envFloat(k string, def float64) float64 {
 }
 
 func main() {
+	// Subcommands (e.g. `autormm-server admin add alice`) run and exit.
+	if runAdminCmd(os.Args[1:]) {
+		return
+	}
+
 	addr := flag.String("addr", env("AUTORMM_ADDR", ":8765"), "listen address")
 	admin := flag.String("admin-token", env("AUTORMM_ADMIN_TOKEN", ""), "client/dashboard bearer token")
 	enroll := flag.String("enroll-token", env("AUTORMM_ENROLL_TOKEN", ""), "agent enrollment token")
@@ -82,8 +87,9 @@ func main() {
 			For: *alertFor, OfflineAfter: *alertOffline,
 			Webhook: *notifyWebhook, Ntfy: *notifyNtfy, Discord: *notifyDiscord,
 		},
-		TLSCert: *tlsCert,
-		TLSKey:  *tlsKey,
+		TLSCert:    *tlsCert,
+		TLSKey:     *tlsKey,
+		AdminStore: adminStorePath(),
 	})
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

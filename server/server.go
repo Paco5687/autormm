@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Paco5687/autormm/internal/adminstore"
 	"github.com/Paco5687/autormm/internal/auth"
 )
 
@@ -25,6 +26,7 @@ type Config struct {
 	Alerts       AlertConfig   // thresholds + notification sinks
 	TLSCert      string        // optional; empty => plain HTTP (e.g. behind Traefik)
 	TLSKey       string
+	AdminStore   string // path to admins.json for username/password login
 }
 
 // Server is the running hub.
@@ -38,6 +40,7 @@ type Server struct {
 	history  *History
 	scripts  *ScriptStore
 	alerter  *Alerter
+	admins   *adminstore.Store
 	httpSrv  *http.Server
 }
 
@@ -77,6 +80,9 @@ func New(cfg Config) *Server {
 		history:  hist,
 		scripts:  scripts,
 		alerter:  NewAlerter(cfg.Alerts),
+	}
+	if cfg.AdminStore != "" {
+		s.admins = adminstore.New(cfg.AdminStore)
 	}
 	return s
 }

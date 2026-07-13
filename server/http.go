@@ -67,6 +67,8 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/runs", s.handleRuns)
 	mux.HandleFunc("/api/session", s.handleCreateSession)
 	mux.HandleFunc("/api/action", s.handleAction)
+	mux.HandleFunc("/api/login", s.handleLogin)
+	mux.HandleFunc("/api/authinfo", s.handleAuthInfo)
 
 	mux.HandleFunc("/agent/ws", s.handleAgentControl)
 	mux.HandleFunc("/agent/session", s.handleAgentSession)
@@ -103,7 +105,63 @@ func (s *Server) checkAdmin(r *http.Request) bool {
 	if tok == "" {
 		tok = r.URL.Query().Get("token")
 	}
-	return auth.TokenEqual(tok, s.cfg.AdminToken)
+	if auth.TokenEqual(tok, s.cfg.AdminToken) {
+		return true
+	}
+	// A login-session token (issued by /api/login) also authorises admin access.
+	if t, err := auth.VerifyTicket(s.secret, tok); err == nil && strings.HasPrefix(t.Session, loginSubjectPrefix) {
+		return true
+	}
+	return false
+}
+
+const loginSubjectPrefix = "login:"
+
+// loginSessionTTL is how long a password login stays valid.
+const loginSessionTTL = 12 * time.Hour
+
+// handleLogin verifies a username/password against the admin store and returns a
+// signed session token the dashboard uses as its bearer.
+func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.admins == nil {
+		http.Error(w, "password login is not configured", http.StatusNotImplemented)
+		return
+	}
+	var req struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if json.NewDecoder(r.Body).Decode(&req) != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if !s.admins.Verify(req.Username, req.Password) {
+		log.Printf("AUDIT login failed user=%q from=%s", req.Username, r.RemoteAddr)
+		http.Error(w, "invalid username or password", http.StatusUnauthorized)
+		return
+	}
+	log.Printf("AUDIT login ok user=%q from=%s", req.Username, r.RemoteAddr)
+	tok := auth.SignTicket(s.secret, loginSubjectPrefix+req.Username, "", loginSessionTTL)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"token":   tok,
+		"expires": time.Now().Add(loginSessionTTL).Unix(),
+	})
+}
+
+// handleAuthInfo tells the dashboard which login methods are available, so it
+// can show a password form when admins exist.
+func (s *Server) handleAuthInfo(w http.ResponseWriter, r *http.Request) {
+	hasPassword := false
+	if s.admins != nil {
+		if names, err := s.admins.List(); err == nil && len(names) > 0 {
+			hasPassword = true
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"password_login": hasPassword})
 }
 
 func bearer(r *http.Request) string {

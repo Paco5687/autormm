@@ -123,6 +123,10 @@ body {
 .facts .fact { display: flex; gap: 8px; font-size: 12px; }
 .facts .fk { color: var(--muted); min-width: 90px; }
 .facts .fv { color: var(--text); font-family: var(--mono); word-break: break-all; }
+.login-card { max-width: 360px; }
+.login-fields { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.login-fields .inv-filter { max-width: none; }
+.login-err { color: #e5534b; font-size: 12px; min-height: 16px; margin-top: 6px; }
 .software { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 14px; }
 .software-head { display: flex; align-items: center; gap: 10px; }
 .inv-filter { background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 5px 9px; font-size: 12px; flex: 1; max-width: 240px; }
