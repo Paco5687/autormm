@@ -49,7 +49,13 @@ func main() {
 	notifyDiscord := flag.String("notify-discord", env("AUTORMM_NOTIFY_DISCORD", ""), "Discord webhook URL for alerts")
 	tlsCert := flag.String("tls-cert", env("AUTORMM_TLS_CERT", ""), "TLS certificate file (optional)")
 	tlsKey := flag.String("tls-key", env("AUTORMM_TLS_KEY", ""), "TLS key file (optional)")
+	allowPublic := flag.Bool("allow-public-bind", os.Getenv("AUTORMM_ALLOW_PUBLIC_BIND") == "1", "allow binding to a public IP (dangerous — the hub must not be exposed to the internet)")
 	flag.Parse()
+
+	// Safe by default: never let the hub come up on a public address by accident.
+	if err := server.CheckBindSafety(*addr, *allowPublic, func(m string) { log.Printf("WARNING: %s", m) }); err != nil {
+		log.Fatalf("%v", err)
+	}
 
 	// Fill any unset admin/enroll/db from a saved config, generating + persisting
 	// what's still missing so a bare `autormm-server` just works and stays stable.
