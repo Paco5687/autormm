@@ -46,3 +46,35 @@ ws.onmessage = (ev) => {
 
 term.onData(d => send({ t: 'in', d }));
 window.addEventListener('resize', () => { fit.fit(); sendResize(); });
+
+// Copy the selection with Ctrl+Shift+C (Ctrl+C stays SIGINT). Paste is handled
+// natively by xterm on Ctrl+V / right-click, which works even over plain http.
+term.attachCustomKeyEventHandler((e) => {
+  if (e.type === 'keydown' && e.ctrlKey && e.shiftKey && e.code === 'KeyC') {
+    const sel = term.getSelection();
+    if (sel) { copyText(sel); return false; }
+  }
+  return true;
+});
+
+function copyText(text) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).catch(() => fallbackCopy(text));
+  } else {
+    fallbackCopy(text);
+  }
+}
+
+// Works on plain http (navigator.clipboard needs a secure context).
+function fallbackCopy(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  try { document.execCommand('copy'); } catch (_) {}
+  ta.remove();
+  term.focus();
+}

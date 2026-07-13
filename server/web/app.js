@@ -154,10 +154,11 @@ async function startRemote(h) {
 }
 
 async function startTerminal(h) {
-  openSession(h, { kind: 'terminal' }, '/terminal');
+  // Terminals open in a compact popup window rather than a full tab.
+  openSession(h, { kind: 'terminal' }, '/terminal', 'width=980,height=620,menubar=no,toolbar=no,location=no,status=no,resizable=yes');
 }
 
-async function openSession(h, body, page) {
+async function openSession(h, body, page, features) {
   try {
     const res = await fetch('/api/session', {
       method: 'POST',
@@ -167,7 +168,11 @@ async function openSession(h, body, page) {
     if (!res.ok) { alert('Could not start session: ' + (await res.text())); return; }
     const s = await res.json();
     const url = `${page}?token=${encodeURIComponent(s.token)}&host=${encodeURIComponent(h.hostname || h.agent_id)}`;
-    window.open(url, '_blank', 'noopener');
+    if (features) {
+      window.open(url, 'autormm_' + (body.kind || 'session') + '_' + h.agent_id, features);
+    } else {
+      window.open(url, '_blank', 'noopener');
+    }
   } catch (e) {
     alert('Session error: ' + e);
   }

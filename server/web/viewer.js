@@ -295,9 +295,13 @@ qualityEl.addEventListener('change', () => send({ t: 'params', quality: parseInt
 // Task Manager (Ctrl+Shift+Esc). Ctrl+Alt+Del can't be synthesized on Windows
 // (protected sequence) and its secure desktop isn't capturable anyway; Task
 // Manager is what operators actually need and it works via normal injection.
-document.getElementById('taskMgr').addEventListener('click', () => {
+document.getElementById('taskMgr').addEventListener('click', (e) => {
   for (const c of ['ControlLeft', 'ShiftLeft', 'Escape']) send({ t: 'kdown', code: c });
   for (const c of ['Escape', 'ShiftLeft', 'ControlLeft']) send({ t: 'kup', code: c });
+  // Belt-and-suspenders: make sure no modifier is left stuck on the host if it
+  // dropped a key-up while Task Manager stole focus.
+  for (const c of ['ControlLeft', 'ControlRight', 'ShiftLeft', 'ShiftRight', 'AltLeft', 'AltRight']) send({ t: 'kup', code: c });
+  e.currentTarget.blur(); // return focus to the page so canvas input keeps flowing
 });
 
 // auto-hide the top bar unless the pointer is near the top

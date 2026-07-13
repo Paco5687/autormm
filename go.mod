@@ -4,6 +4,7 @@ go 1.26
 
 require (
 	fyne.io/systray v1.12.2
+	github.com/UserExistsError/conpty v0.1.4
 	github.com/creack/pty v1.1.24
 	github.com/gorilla/websocket v1.5.3
 	github.com/jezek/xgb v1.3.1

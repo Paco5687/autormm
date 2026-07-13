@@ -164,7 +164,9 @@ RestartSec=5
 WantedBy=multi-user.target
 UNIT
 systemctl daemon-reload
-systemctl enable --now autormm-agent
+systemctl enable autormm-agent
+# restart (not just enable --now) so re-running this command upgrades in place.
+systemctl restart autormm-agent
 echo "autormm-agent installed and running. It should appear on the dashboard shortly."
 `
 
@@ -200,7 +202,9 @@ WantedBy=default.target
 UNIT
 loginctl enable-linger "$USER" >/dev/null 2>&1 || true
 systemctl --user daemon-reload
-systemctl --user enable --now autormm-agent
+systemctl --user enable autormm-agent
+# restart (not just enable --now) so re-running this command upgrades in place.
+systemctl --user restart autormm-agent
 echo "autormm-agent (desktop) installed and running."
 `
 

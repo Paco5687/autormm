@@ -215,7 +215,7 @@ and each online host has a **Terminal** button (browser terminal via xterm.js).
 The terminal opens a real PTY shell through the agent's outbound tunnel — no SSH
 daemon, keys, or open inbound ports required, so it works on headless boxes
 behind NAT. It is gated by the admin token and honours `--allow-exec=false`.
-(PTY terminal is Linux/macOS agents; Windows agent support is pending ConPTY.)
+(PTY terminal: bash/$SHELL on Linux/macOS, PowerShell on Windows via ConPTY.)
 
 ### Scripts and scheduling
 
