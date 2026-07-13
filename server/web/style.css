@@ -158,7 +158,9 @@ body {
 .viewer-wrap {
   position: fixed; inset: 34px 0 0 0; display: flex; align-items: center; justify-content: center;
 }
-#screen { max-width: 100%; max-height: 100%; cursor: crosshair; background: #111; }
+/* Hide the local browser cursor over the screen; the remote-cursor overlay
+   (.rcursor) is the single pointer the operator sees, tracking the host. */
+#screen { max-width: 100%; max-height: 100%; cursor: none; background: #111; }
 .pill { padding: 2px 8px; border-radius: 999px; background: var(--panel-2); font-family: var(--mono); font-size: 12px; }
 .pill.live { color: var(--ok); }
 .pill.dead { color: var(--bad); }

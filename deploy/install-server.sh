@@ -51,7 +51,10 @@ sed "s#-addr 0.0.0.0:8765#-addr ${ADDR}#" \
 
 systemctl --user daemon-reload
 loginctl enable-linger "$USER" >/dev/null 2>&1 || true
-systemctl --user enable --now autormm-server
+systemctl --user enable autormm-server
+# restart (not just `enable --now`) so re-running this to upgrade actually
+# swaps the running binary instead of leaving the old process serving.
+systemctl --user restart autormm-server
 
 echo
 echo "autormm-server installed and running on ${ADDR}."
