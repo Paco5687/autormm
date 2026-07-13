@@ -13,6 +13,7 @@ import (
 	"fyne.io/systray"
 
 	"github.com/Paco5687/autormm/agent"
+	"github.com/Paco5687/autormm/internal/selfupdate"
 )
 
 //go:embed icon_on.ico
@@ -81,8 +82,7 @@ func onReady() {
 	go func() {
 		for range update.ClickedCh {
 			go func() {
-				hv, _ := hubVersion(trayCfg)
-				if err := selfUpdate(trayCfg, hv); err != nil {
+				if err := selfupdate.CheckOnce(updaterConfig(trayCfg)); err != nil {
 					log.Printf("update failed: %v", err)
 				}
 			}()

@@ -29,8 +29,13 @@ func parseFlags() (agent.Config, error) {
 	interval := flag.Duration("interval", 5*time.Second, "metrics interval")
 	insecure := flag.Bool("insecure", os.Getenv("AUTORMM_INSECURE") == "1", "skip TLS verification (self-signed certs)")
 	allowExec := flag.Bool("allow-exec", os.Getenv("AUTORMM_NO_EXEC") != "1", "permit remote command execution from the server")
+	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
 
+	if *showVersion {
+		fmt.Println(agent.Version)
+		os.Exit(0)
+	}
 	if *server == "" || *token == "" {
 		return agent.Config{}, fmt.Errorf("both --server and --token are required (or set AUTORMM_SERVER / AUTORMM_ENROLL_TOKEN)")
 	}

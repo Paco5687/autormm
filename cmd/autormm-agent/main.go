@@ -5,13 +5,16 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 	"time"
 
 	"github.com/Paco5687/autormm/agent"
+	"github.com/Paco5687/autormm/internal/selfupdate"
 )
 
 func env(k, def string) string {
@@ -29,13 +32,19 @@ func main() {
 	interval := flag.Duration("interval", 5*time.Second, "metrics interval")
 	insecure := flag.Bool("insecure", os.Getenv("AUTORMM_INSECURE") == "1", "skip TLS verification (self-signed certs)")
 	allowExec := flag.Bool("allow-exec", os.Getenv("AUTORMM_NO_EXEC") != "1", "permit remote command execution from the server")
+	showVersion := flag.Bool("version", false, "print the version and exit")
+	noUpdate := flag.Bool("no-auto-update", os.Getenv("AUTORMM_NO_AUTO_UPDATE") == "1", "disable self-update to match the hub")
 	flag.Parse()
 
+	if *showVersion {
+		fmt.Println(agent.Version)
+		return
+	}
 	if *server == "" || *token == "" {
 		log.Fatal("both --server and --token are required (or set AUTORMM_SERVER / AUTORMM_ENROLL_TOKEN)")
 	}
 
-	a := agent.New(agent.Config{
+	cfg := agent.Config{
 		Server:      *server,
 		EnrollToken: *token,
 		AgentID:     *id,
@@ -43,7 +52,27 @@ func main() {
 		Interval:    *interval,
 		Insecure:    *insecure,
 		AllowExec:   *allowExec,
-	})
+	}
+	a := agent.New(cfg)
+
+	// Keep the agent matched to the hub. Applying an update replaces the binary
+	// and exits; the service manager (systemd Restart=always) relaunches it.
+	if !*noUpdate {
+		go selfupdate.Loop(selfupdate.Config{
+			Server: cfg.Server, Token: cfg.EnrollToken, Insecure: cfg.Insecure,
+			DownloadQuery:  fmt.Sprintf("os=%s&arch=%s", runtime.GOOS, runtime.GOARCH),
+			CurrentVersion: agent.Version,
+			Log:            log.Printf,
+			Apply: func(newBinary string) error {
+				if _, err := selfupdate.ReplaceRunningBinary(newBinary); err != nil {
+					return err
+				}
+				log.Println("updated; exiting for the service manager to relaunch")
+				os.Exit(0)
+				return nil
+			},
+		}, 20*time.Second, 6*time.Hour)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
