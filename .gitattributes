@@ -1,0 +1,2 @@
+# dev-only tooling — never publish to the public repo
+release.sh export-ignore
