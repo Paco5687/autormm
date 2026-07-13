@@ -38,6 +38,7 @@ func (c *screenCapturer) Displays() []protocol.Display {
 		out = append(out, protocol.Display{
 			Index: i, X: b.Min.X, Y: b.Min.Y, W: b.Dx(), H: b.Dy(),
 			Primary: b.Min.X == 0 && b.Min.Y == 0, // the (0,0) display is the primary
+			Modes:   displayModes(i),
 		})
 	}
 	return out

@@ -147,14 +147,21 @@ type CapsMsg struct {
 	Codecs []string `json:"codecs"`
 }
 
+// Mode is a selectable display resolution.
+type Mode struct {
+	W int `json:"w"`
+	H int `json:"h"`
+}
+
 // Display describes one monitor on a host.
 type Display struct {
-	Index   int  `json:"index"`
-	X       int  `json:"x"`
-	Y       int  `json:"y"`
-	W       int  `json:"w"`
-	H       int  `json:"h"`
-	Primary bool `json:"primary"`
+	Index   int    `json:"index"`
+	X       int    `json:"x"`
+	Y       int    `json:"y"`
+	W       int    `json:"w"`
+	H       int    `json:"h"`
+	Primary bool   `json:"primary"`
+	Modes   []Mode `json:"modes,omitempty"` // selectable resolutions for this display
 }
 
 // DisplaysMsg is sent from the agent to the viewer at session start (text frame
@@ -289,6 +296,7 @@ const (
 	InputDisplay   = "display" // switch the captured display
 	InputSetCodec  = "codec"   // switch the video codec mid-session
 	InputClipboard = "clip"    // viewer -> host: set the host clipboard (text)
+	InputSetRes    = "setres"  // viewer -> host: change a display's resolution
 )
 
 // ClipMsg carries clipboard text from the host to the viewer (text frame on the
@@ -313,4 +321,6 @@ type InputEvent struct {
 	Display int    `json:"display,omitempty"` // for InputDisplay: -1 all, 0..N-1 one
 	Codec   string `json:"codec,omitempty"`   // for InputSetCodec: CapJPEGTile | CapH264
 	Clip    string `json:"clip,omitempty"`    // for InputClipboard: text to set on the host
+	W       int    `json:"w,omitempty"`       // for InputSetRes: target width
+	H       int    `json:"h,omitempty"`       // for InputSetRes: target height
 }

@@ -36,24 +36,61 @@ function connect() {
 
 const rcursor = document.getElementById('rcursor');
 const displaysEl = document.getElementById('displays');
+const resPick = document.getElementById('resPick');
 let selectedDisplay = -1;
+let displaysList = [];
 
 function renderDisplays(m) {
   const list = m.list || [];
-  if (list.length <= 1) { displaysEl.innerHTML = ''; return; } // single monitor: no picker
+  displaysList = list;
   selectedDisplay = typeof m.current === 'number' ? m.current : -1;
-  const btn = (idx, label) => `<button data-d="${idx}" class="${idx === selectedDisplay ? 'active' : ''}">${label}</button>`;
-  let html = btn(-1, 'All');
-  for (const d of list) html += btn(d.index, `Display ${d.index + 1}${d.primary ? ' ★' : ''}`);
-  displaysEl.innerHTML = html;
-  displaysEl.querySelectorAll('button').forEach(b => b.onclick = () => selectDisplay(parseInt(b.dataset.d, 10)));
+  if (list.length <= 1) {
+    displaysEl.innerHTML = ''; // single monitor: no display picker
+  } else {
+    const btn = (idx, label) => `<button data-d="${idx}" class="${idx === selectedDisplay ? 'active' : ''}">${label}</button>`;
+    let html = btn(-1, 'All');
+    for (const d of list) html += btn(d.index, `Display ${d.index + 1}${d.primary ? ' ★' : ''}`);
+    displaysEl.innerHTML = html;
+    displaysEl.querySelectorAll('button').forEach(b => b.onclick = () => selectDisplay(parseInt(b.dataset.d, 10)));
+  }
+  renderRes();
 }
 
 function selectDisplay(idx) {
   selectedDisplay = idx;
   displaysEl.querySelectorAll('button').forEach(b => b.classList.toggle('active', parseInt(b.dataset.d, 10) === idx));
   send({ t: 'display', display: idx });
+  renderRes();
 }
+
+// The display whose resolution the dropdown controls: the selected one, or the
+// only display when viewing "All". "All" across multiple monitors has no single
+// resolution, so the dropdown hides.
+function activeResDisplay() {
+  if (selectedDisplay >= 0) return displaysList.find(d => d.index === selectedDisplay) || null;
+  return displaysList.length === 1 ? displaysList[0] : null;
+}
+
+function renderRes() {
+  const d = activeResDisplay();
+  if (!d || !d.modes || !d.modes.length) { resPick.classList.add('hidden'); resPick.innerHTML = ''; return; }
+  const cur = `${d.w}x${d.h}`;
+  let html = '';
+  if (!d.modes.some(m => `${m.w}x${m.h}` === cur)) html += `<option value="${cur}" selected>${d.w}×${d.h}</option>`;
+  for (const m of d.modes) {
+    const v = `${m.w}x${m.h}`;
+    html += `<option value="${v}" ${v === cur ? 'selected' : ''}>${m.w}×${m.h}</option>`;
+  }
+  resPick.innerHTML = html;
+  resPick.classList.remove('hidden');
+}
+
+resPick.addEventListener('change', () => {
+  const d = activeResDisplay();
+  if (!d) return;
+  const [w, h] = resPick.value.split('x').map(n => parseInt(n, 10));
+  if (w > 0 && h > 0) send({ t: 'setres', display: d.index, w, h });
+});
 
 // ---- codec picker + H.264 (WebCodecs) decode ----
 const codecsEl = document.getElementById('codecs');

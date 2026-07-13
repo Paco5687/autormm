@@ -268,6 +268,15 @@ func (a *Agent) inputLoop(ws *websocket.Conn, in capture.Injector, encoders *enc
 		case protocol.InputClipboard:
 			capture.SetClipboard(ev.Clip)
 			continue
+		case protocol.InputSetRes:
+			if ev.Display >= 0 && ev.W > 0 && ev.H > 0 {
+				if err := capture.SetDisplayMode(ev.Display, ev.W, ev.H); err != nil {
+					log.Printf("set resolution %dx%d on display %d: %v", ev.W, ev.H, ev.Display, err)
+				} else {
+					cptr.Select(ev.Display) // refresh the captured region to the new size
+				}
+			}
+			continue
 		case protocol.InputSetParams:
 			if ev.Quality > 0 {
 				encoders.get().SetQuality(ev.Quality)
