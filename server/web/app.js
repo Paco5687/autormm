@@ -195,6 +195,7 @@ function openDetail(agentID) {
   const h = hostByID(agentID);
   mTitle.textContent = h ? (h.hostname || agentID) : agentID;
   mSub.textContent = h ? `${h.platform || h.os} · ${h.arch}` : '';
+  renderFacts(h);
   resetInventory();
   loadHistory();
 }
@@ -428,6 +429,23 @@ document.querySelectorAll('#mServices button[data-svc]').forEach(b => b.addEvent
   if (!name) return;
   hostAction({ kind: 'service', action: b.dataset.svc, service: name }, `${b.dataset.svc} ${name}`);
 }));
+
+const mFacts = document.getElementById('mFacts');
+function renderFacts(h) {
+  const f = (h && h.facts) || {};
+  const items = [];
+  if (f.ips && f.ips.length) items.push(['IP', f.ips.join(', ')]);
+  if (f.macs && f.macs.length) items.push(['MAC', f.macs.join(', ')]);
+  if (f.cpu_model) items.push(['CPU', f.cpu_model + (f.cpu_cores ? ` · ${f.cpu_cores} cores` : '')]);
+  if (f.mem_total) items.push(['RAM', fmtBytes(f.mem_total)]);
+  items.push(['OS', h ? (h.platform || h.os || '') : '']);
+  if (f.kernel_version) items.push(['Kernel', f.kernel_version]);
+  if (f.virtualization) items.push(['Virtualization', f.virtualization]);
+  items.push(['Agent', (h && h.agent_version) || '—']);
+  mFacts.innerHTML = items
+    .map(([k, v]) => `<div class="fact"><span class="fk">${k}</span><span class="fv">${escapeHtml(v)}</span></div>`)
+    .join('');
+}
 
 function escapeHtml(s) {
   return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));

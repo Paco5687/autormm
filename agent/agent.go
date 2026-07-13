@@ -147,6 +147,7 @@ func (a *Agent) session(ctx context.Context) error {
 		CanStream:    capture.Available(),
 		CanExec:      a.cfg.AllowExec,
 		EncoderCaps:  capture.EncoderCaps(), // jpeg-tile always; webcodecs-h264 if ffmpeg present
+		Facts:        metrics.Facts(),
 		Tags:         a.cfg.Tags,
 	}
 	if err := ws.WriteJSON(reg); err != nil {

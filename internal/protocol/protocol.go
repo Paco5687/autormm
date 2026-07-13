@@ -90,17 +90,30 @@ type Envelope struct {
 
 // Register is the agent's hello. It identifies the host and its capabilities.
 type Register struct {
-	Type         string   `json:"type"` // TypeRegister
-	AgentID      string   `json:"agent_id"`
-	Hostname     string   `json:"hostname"`
-	OS           string   `json:"os"`       // "linux", "windows", ...
-	Platform     string   `json:"platform"` // "ubuntu 24.04", "Windows 11", ...
-	Arch         string   `json:"arch"`
-	AgentVersion string   `json:"agent_version"`
-	CanStream    bool     `json:"can_stream"`             // screen capture available on this host
-	CanExec      bool     `json:"can_exec"`               // remote command execution enabled
-	EncoderCaps  []string `json:"encoder_caps,omitempty"` // video codecs this agent can produce
-	Tags         string   `json:"tags,omitempty"`
+	Type         string    `json:"type"` // TypeRegister
+	AgentID      string    `json:"agent_id"`
+	Hostname     string    `json:"hostname"`
+	OS           string    `json:"os"`       // "linux", "windows", ...
+	Platform     string    `json:"platform"` // "ubuntu 24.04", "Windows 11", ...
+	Arch         string    `json:"arch"`
+	AgentVersion string    `json:"agent_version"`
+	CanStream    bool      `json:"can_stream"`             // screen capture available on this host
+	CanExec      bool      `json:"can_exec"`               // remote command execution enabled
+	EncoderCaps  []string  `json:"encoder_caps,omitempty"` // video codecs this agent can produce
+	Facts        HostFacts `json:"facts,omitempty"`        // static device info
+	Tags         string    `json:"tags,omitempty"`
+}
+
+// HostFacts are relatively static host details collected once at registration
+// and shown in the dashboard's device info.
+type HostFacts struct {
+	KernelVersion  string   `json:"kernel_version,omitempty"`
+	CPUModel       string   `json:"cpu_model,omitempty"`
+	CPUCores       int      `json:"cpu_cores,omitempty"`
+	MemTotal       uint64   `json:"mem_total,omitempty"`
+	IPs            []string `json:"ips,omitempty"`
+	MACs           []string `json:"macs,omitempty"`
+	Virtualization string   `json:"virtualization,omitempty"` // "kvm", "vmware", … or "" for bare metal
 }
 
 // Remote-desktop codec capability strings (negotiated per session).
@@ -270,6 +283,7 @@ type HostView struct {
 	Tags         string    `json:"tags,omitempty"`
 	Online       bool      `json:"online"`
 	LastSeen     time.Time `json:"last_seen"`
+	Facts        HostFacts `json:"facts,omitempty"`
 	Metrics      *Metrics  `json:"metrics,omitempty"`
 	Alerts       []string  `json:"alerts,omitempty"`
 	CPUHistory   []float64 `json:"cpu_history,omitempty"`

@@ -2,7 +2,10 @@
 package metrics
 
 import (
+	stdnet "net"
+	"runtime"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/shirou/gopsutil/v3/cpu"
@@ -39,6 +42,91 @@ func HostInfo() (hostname, os, platform, arch string) {
 		return info.Hostname, info.OS, info.Platform + " " + info.PlatformVersion, info.KernelArch
 	}
 	return "unknown", "", "", ""
+}
+
+// Facts collects relatively static device details for the dashboard's device
+// info. Called once at agent startup.
+func Facts() protocol.HostFacts {
+	f := protocol.HostFacts{CPUCores: runtime.NumCPU()}
+	if info, err := host.Info(); err == nil {
+		f.KernelVersion = info.KernelVersion
+		f.Virtualization = info.VirtualizationSystem
+	}
+	if ci, err := cpu.Info(); err == nil && len(ci) > 0 {
+		f.CPUModel = strings.TrimSpace(ci[0].ModelName)
+	}
+	if vm, err := mem.VirtualMemory(); err == nil {
+		f.MemTotal = vm.Total
+	}
+	f.IPs, f.MACs = netIdentity()
+	return f
+}
+
+// netIdentity returns the host's non-loopback IPv4 addresses and MAC addresses,
+// skipping obviously-virtual interfaces (Docker, veth, bridges, …). The primary
+// outbound IP is listed first.
+func netIdentity() (ips, macs []string) {
+	seenIP, seenMAC := map[string]bool{}, map[string]bool{}
+	if p := primaryIP(); p != "" {
+		seenIP[p] = true
+		ips = append(ips, p)
+	}
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return
+	}
+	for _, ifc := range ifaces {
+		up, loop := false, false
+		for _, fl := range ifc.Flags {
+			switch fl {
+			case "up":
+				up = true
+			case "loopback":
+				loop = true
+			}
+		}
+		if !up || loop || isVirtualIface(ifc.Name) {
+			continue
+		}
+		if ifc.HardwareAddr != "" && !seenMAC[ifc.HardwareAddr] {
+			seenMAC[ifc.HardwareAddr] = true
+			macs = append(macs, ifc.HardwareAddr)
+		}
+		for _, a := range ifc.Addrs {
+			ip := a.Addr
+			if i := strings.IndexByte(ip, '/'); i >= 0 {
+				ip = ip[:i] // strip CIDR suffix
+			}
+			if strings.Contains(ip, ".") && !strings.Contains(ip, ":") && !strings.HasPrefix(ip, "127.") && !seenIP[ip] {
+				seenIP[ip] = true
+				ips = append(ips, ip)
+			}
+		}
+	}
+	return
+}
+
+// primaryIP returns the local address used to reach the internet, without
+// sending anything (a UDP "connection" just picks the route).
+func primaryIP() string {
+	c, err := stdnet.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		return ""
+	}
+	defer c.Close()
+	if a, ok := c.LocalAddr().(*stdnet.UDPAddr); ok {
+		return a.IP.String()
+	}
+	return ""
+}
+
+func isVirtualIface(name string) bool {
+	for _, p := range []string{"docker", "br-", "veth", "virbr", "vmnet", "vboxnet", "cni", "flannel", "cali", "kube", "nerdctl", "cni0"} {
+		if strings.HasPrefix(name, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // Collect gathers a point-in-time snapshot. Individual failures are tolerated

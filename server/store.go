@@ -158,6 +158,7 @@ func (s *Store) viewLocked(h *host) protocol.HostView {
 		AgentVersion: h.reg.AgentVersion,
 		CanStream:    h.reg.CanStream,
 		CanExec:      h.reg.CanExec,
+		Facts:        h.reg.Facts,
 		Tags:         h.reg.Tags,
 		Online:       h.online,
 		LastSeen:     h.lastSeen,
