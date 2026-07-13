@@ -16,7 +16,7 @@ Go binaries with no runtime dependencies:
 Key properties:
 
 - **Agents dial out** over a single WebSocket — no inbound ports or port-forwards on the hosts, NAT-friendly.
-- **Built-in screen streaming.** The agent captures the screen and sends changed tiles as JPEG; the browser viewer reconstructs them on a `<canvas>` and forwards mouse/keyboard. No VNC/RDP server required on the host.
+- **Built-in screen streaming.** The agent captures the screen and sends changed tiles as JPEG; the browser viewer reconstructs them on a `<canvas>` and forwards mouse/keyboard. No VNC/RDP server required on the host. Multi-monitor hosts get a display picker (all displays or one), the remote cursor is drawn as an overlay, and an **opt-in H.264 codec** (WebCodecs, auto-fallback to JPEG) is offered when the host has ffmpeg.
 - **Cross-platform, CGO-free.** Single static binary per platform; cross-compiles cleanly for Linux and Windows.
 - **Token auth + signed session tickets.** Runs as plain `IP:port` on your LAN — no reverse proxy required; reach it from afar over a zero-trust overlay.
 
@@ -275,8 +275,8 @@ network — when history is enabled via `--db`) and its top processes.
 - **Screen capture is X11 (Linux) / GDI (Windows).** Native Wayland capture isn't supported — use Xorg or Xwayland on Linux desktops. macOS builds run in **metrics-only** mode (capture returns "unsupported").
 - The Linux agent needs access to the X session (`DISPLAY`/`XAUTHORITY`); the provided user service handles this. Headless servers register as **not streamable** and are monitor-only.
 - **Keyboard** mapping covers the common physical keys (letters, digits, punctuation, modifiers, arrows, F-keys, numpad). Exotic keys/layouts may not map.
-- Frames are **full-tile JPEG deltas** (changed 128px tiles only). It's efficient for typical desktop use, not tuned for full-screen video/gaming.
-- Single primary display is captured (display 0).
+- The default codec is **JPEG tile-deltas** (changed 128px tiles only) — efficient for typical desktop use, not tuned for full-screen video/gaming. An **opt-in H.264 codec** does much better on video/motion; it needs `ffmpeg` on the host (encode) and a WebCodecs browser like Chrome/Edge (decode), and silently falls back to JPEG if either is missing.
+- **Multi-monitor** hosts are supported: the viewer shows all displays by default, with a picker to isolate one.
 
 ## Layout
 
