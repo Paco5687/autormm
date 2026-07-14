@@ -279,16 +279,23 @@ function toggleKbd(show) {
 }
 document.getElementById('kbd').addEventListener('click', () => toggleKbd());
 document.getElementById('kbdHide').addEventListener('click', () => toggleKbd(false));
-// Forward on beforeinput (fires with the data) while letting the character also
-// appear in the box, so you can see what you're typing.
-softkbd.addEventListener('beforeinput', e => {
-  if (e.inputType === 'insertText' && e.data != null) {
+// Forward on the input event (fires whenever the box content changes — the most
+// widely-supported hook) and keep the text visible so you can see what you type.
+let lastKbdVal = '';
+softkbd.addEventListener('input', e => {
+  const t = e.inputType || '';
+  if ((t === 'insertText' || t === 'insertFromPaste' || t === 'insertCompositionText') && e.data != null) {
     send({ t: 'type', text: e.data });
-  } else if (e.inputType === 'insertLineBreak' || e.inputType === 'insertParagraph') {
-    e.preventDefault(); keyTap('Enter'); softkbd.value = '';
-  } else if (e.inputType && e.inputType.indexOf('delete') === 0) {
+  } else if (t === 'insertLineBreak' || t === 'insertParagraph') {
+    keyTap('Enter'); softkbd.value = '';
+  } else if (t.indexOf('delete') === 0) {
     keyTap('Backspace');
+  } else if (!t) {
+    // Fallback for browsers that don't set inputType: forward the appended tail.
+    const v = softkbd.value;
+    if (v.length > lastKbdVal.length && v.startsWith(lastKbdVal)) send({ t: 'type', text: v.slice(lastKbdVal.length) });
   }
+  lastKbdVal = softkbd.value;
 });
 softkbd.addEventListener('keydown', e => {
   const special = ['Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Escape', 'Home', 'End'];
