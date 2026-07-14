@@ -279,14 +279,19 @@ function toggleKbd(show) {
 }
 document.getElementById('kbd').addEventListener('click', () => toggleKbd());
 document.getElementById('kbdHide').addEventListener('click', () => toggleKbd(false));
-softkbd.addEventListener('input', e => {
-  if (e.inputType === 'insertText' && e.data != null) send({ t: 'type', text: e.data });
-  else if (e.inputType === 'insertLineBreak') keyTap('Enter');
-  else if (e.inputType && e.inputType.indexOf('delete') === 0) keyTap('Backspace');
-  softkbd.value = ''; // keep empty so each keystroke is a fresh insert
+// Forward on beforeinput (fires with the data) while letting the character also
+// appear in the box, so you can see what you're typing.
+softkbd.addEventListener('beforeinput', e => {
+  if (e.inputType === 'insertText' && e.data != null) {
+    send({ t: 'type', text: e.data });
+  } else if (e.inputType === 'insertLineBreak' || e.inputType === 'insertParagraph') {
+    e.preventDefault(); keyTap('Enter'); softkbd.value = '';
+  } else if (e.inputType && e.inputType.indexOf('delete') === 0) {
+    keyTap('Backspace');
+  }
 });
 softkbd.addEventListener('keydown', e => {
-  const special = ['Enter', 'Backspace', 'Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Escape', 'Home', 'End', 'Delete'];
+  const special = ['Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Escape', 'Home', 'End'];
   if (special.includes(e.code)) { e.preventDefault(); keyTap(e.code); }
 });
 
