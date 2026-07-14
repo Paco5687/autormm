@@ -33,8 +33,9 @@ func envFloat(k string, def float64) float64 {
 }
 
 func main() {
-	// Subcommands (e.g. `autormm-server admin add alice`) run and exit.
-	if runAdminCmd(os.Args[1:]) {
+	// Subcommands (e.g. `autormm-server admin add alice`, `autormm-server reset`)
+	// run and exit.
+	if runAdminCmd(os.Args[1:]) || runResetCmd(os.Args[1:]) {
 		return
 	}
 

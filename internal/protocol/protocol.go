@@ -322,6 +322,7 @@ const (
 	InputSetCodec  = "codec"   // switch the video codec mid-session
 	InputClipboard = "clip"    // viewer -> host: set the host clipboard (text)
 	InputSetRes    = "setres"  // viewer -> host: change a display's resolution
+	InputType      = "type"    // viewer -> host: type a string (Unicode, e.g. from a soft keyboard)
 )
 
 // ClipMsg carries clipboard text from the host to the viewer (text frame on the
@@ -348,4 +349,5 @@ type InputEvent struct {
 	Clip    string `json:"clip,omitempty"`    // for InputClipboard: text to set on the host
 	W       int    `json:"w,omitempty"`       // for InputSetRes: target width
 	H       int    `json:"h,omitempty"`       // for InputSetRes: target height
+	Text    string `json:"text,omitempty"`    // for InputType: Unicode text to type
 }

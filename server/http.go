@@ -69,6 +69,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/action", s.handleAction)
 	mux.HandleFunc("/api/login", s.handleLogin)
 	mux.HandleFunc("/api/authinfo", s.handleAuthInfo)
+	mux.HandleFunc("/api/setup", s.handleSetup)
 	mux.HandleFunc("/api/update/check", s.handleUpdateCheck)
 	mux.HandleFunc("/api/update/apply", s.handleUpdateApply)
 	mux.HandleFunc("/api/update/push", s.handleUpdatePush)
@@ -155,16 +156,55 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleAuthInfo tells the dashboard which login methods are available, so it
-// can show a password form when admins exist.
+// handleAuthInfo tells the dashboard which login methods are available: whether
+// any admin accounts exist (password login) and whether first-run setup is
+// needed (no accounts yet).
 func (s *Server) handleAuthInfo(w http.ResponseWriter, r *http.Request) {
-	hasPassword := false
+	hasAccounts := false
+	canSetup := false
 	if s.admins != nil {
+		canSetup = true
 		if names, err := s.admins.List(); err == nil && len(names) > 0 {
-			hasPassword = true
+			hasAccounts = true
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"password_login": hasPassword})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"password_login": hasAccounts,
+		"needs_setup":    canSetup && !hasAccounts,
+	})
+}
+
+// handleSetup creates the first admin account on a fresh hub (no auth required,
+// but only while zero accounts exist — trust on first use). Returns a login
+// token so the browser is signed in immediately.
+func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.admins == nil {
+		http.Error(w, "account storage unavailable", http.StatusNotImplemented)
+		return
+	}
+	if names, _ := s.admins.List(); len(names) > 0 {
+		http.Error(w, "setup already complete — sign in instead", http.StatusConflict)
+		return
+	}
+	var req struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if json.NewDecoder(r.Body).Decode(&req) != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if err := s.admins.Set(req.Username, req.Password); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	log.Printf("AUDIT setup: created first admin %q from=%s", req.Username, r.RemoteAddr)
+	tok := auth.SignTicket(s.secret, loginSubjectPrefix+req.Username, "", loginSessionTTL)
+	writeJSON(w, http.StatusOK, map[string]any{"token": tok})
 }
 
 func bearer(r *http.Request) string {

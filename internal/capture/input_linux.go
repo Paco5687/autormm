@@ -4,6 +4,7 @@ package capture
 
 import (
 	"fmt"
+	"os/exec"
 	"sync"
 
 	"github.com/jezek/xgb"
@@ -154,6 +155,19 @@ func (in *x11Injector) Key(code string, down bool) error {
 		typ = evKeyPress
 	}
 	return in.fake(typ, byte(kc), 0, 0)
+}
+
+// TypeText types Unicode text. XTEST can't inject arbitrary Unicode directly, so
+// it shells out to xdotool when available (handles any character). Without it,
+// on-screen-keyboard text won't type on this host (special keys still work).
+func (in *x11Injector) TypeText(text string) error {
+	if text == "" {
+		return nil
+	}
+	if p, err := exec.LookPath("xdotool"); err == nil {
+		return exec.Command(p, "type", "--clearmodifiers", "--", text).Run()
+	}
+	return fmt.Errorf("typing text needs xdotool on this host")
 }
 
 func (in *x11Injector) Close() error {

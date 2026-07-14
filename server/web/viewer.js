@@ -265,7 +265,29 @@ canvas.addEventListener('wheel', e => {
   send({ t: 'scroll', dx: Math.round(e.deltaX * scale), dy: Math.round(e.deltaY * scale) });
 }, { passive: false });
 
+// ---- on-screen keyboard (touch devices) ----
+// The remote screen is a <canvas>, so tapping it never raises a mobile keyboard.
+// The ⌨ button focuses a hidden input; typing into it is forwarded as text, and
+// its special keys (Enter/Backspace/arrows) as key events.
+const softkbd = document.getElementById('softkbd');
+function keyTap(code) { send({ t: 'kdown', code }); send({ t: 'kup', code }); }
+document.getElementById('kbd').addEventListener('click', () => {
+  if (document.activeElement === softkbd) { softkbd.blur(); }
+  else { softkbd.value = ''; softkbd.focus(); }
+});
+softkbd.addEventListener('input', e => {
+  if (e.inputType === 'insertText' && e.data != null) send({ t: 'type', text: e.data });
+  else if (e.inputType === 'insertLineBreak') keyTap('Enter');
+  else if (e.inputType && e.inputType.indexOf('delete') === 0) keyTap('Backspace');
+  softkbd.value = ''; // keep empty so each keystroke is a fresh insert
+});
+softkbd.addEventListener('keydown', e => {
+  const special = ['Enter', 'Backspace', 'Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Escape', 'Home', 'End', 'Delete'];
+  if (special.includes(e.code)) { e.preventDefault(); keyTap(e.code); }
+});
+
 window.addEventListener('keydown', e => {
+  if (document.activeElement === softkbd) return; // soft keyboard handles its own input
   // Let Ctrl/Cmd+V raise a browser 'paste' event (handled below) so we can push
   // the local clipboard to the host *before* it pastes. Don't forward the V key
   // here — the paste handler sends it once the clipboard is synced.
@@ -274,6 +296,7 @@ window.addEventListener('keydown', e => {
   send({ t: 'kdown', code: e.code });
 });
 window.addEventListener('keyup', e => {
+  if (document.activeElement === softkbd) return;
   e.preventDefault();
   send({ t: 'kup', code: e.code });
 });

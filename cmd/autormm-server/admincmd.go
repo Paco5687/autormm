@@ -9,6 +9,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/Paco5687/autormm/internal/adminstore"
+	"github.com/Paco5687/autormm/internal/auth"
 )
 
 func adminStorePath() string { return filepath.Join(configDir(), "admins.json") }
@@ -72,6 +73,65 @@ func runAdminCmd(args []string) bool {
 		os.Exit(2)
 	}
 	return true
+}
+
+// runResetCmd handles `autormm-server reset`: it wipes all admin accounts and
+// rotates the admin + enrollment tokens. This is the account-recovery path —
+// because the enrollment token changes, every host must be re-added.
+func runResetCmd(args []string) bool {
+	if len(args) < 1 || args[0] != "reset" {
+		return false
+	}
+	yes := false
+	for _, a := range args[1:] {
+		if a == "--yes" || a == "-y" {
+			yes = true
+		}
+	}
+	if !yes {
+		fmt.Print("This wipes ALL admin accounts and rotates the enrollment token.\n" +
+			"Every host will need to be re-added afterwards.\nType 'reset' to confirm: ")
+		var in string
+		fmt.Scanln(&in)
+		if strings.TrimSpace(in) != "reset" {
+			fmt.Println("aborted")
+			os.Exit(1)
+		}
+	}
+	admin := auth.RandomID(18)
+	enroll := auth.RandomID(18)
+
+	p := loadPersisted()
+	p.Admin, p.Enroll = admin, enroll
+	savePersisted(p)
+	updateServerEnv(admin, enroll)
+	os.Remove(filepath.Join(configDir(), "admins.json"))
+
+	fmt.Printf("\nReset complete. New tokens:\n  ADMIN TOKEN:  %s\n  ENROLL TOKEN: %s\n\n", admin, enroll)
+	fmt.Println("Next steps:")
+	fmt.Println("  1. Restart the hub:   systemctl --user restart autormm-server")
+	fmt.Println("  2. Open the dashboard and create a new admin account.")
+	fmt.Println("  3. Re-add every host — the previous enrollment token no longer works.")
+	return true
+}
+
+// updateServerEnv rewrites the token lines in server.env (if the installer
+// created one), since the systemd unit sources it and it overrides autormm.json.
+func updateServerEnv(admin, enroll string) {
+	path := filepath.Join(configDir(), "server.env")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	lines := strings.Split(string(b), "\n")
+	for i, ln := range lines {
+		if strings.HasPrefix(ln, "AUTORMM_ADMIN_TOKEN=") {
+			lines[i] = "AUTORMM_ADMIN_TOKEN=" + admin
+		} else if strings.HasPrefix(ln, "AUTORMM_ENROLL_TOKEN=") {
+			lines[i] = "AUTORMM_ENROLL_TOKEN=" + enroll
+		}
+	}
+	os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o600)
 }
 
 func promptNewPassword() (string, error) {

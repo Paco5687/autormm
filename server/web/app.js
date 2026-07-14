@@ -11,15 +11,41 @@ function token() { return localStorage.getItem(TOKEN_KEY) || ''; }
 const loginModal = document.getElementById('loginModal');
 async function showLogin() {
   document.getElementById('loginErr').textContent = '';
+  document.getElementById('loginForgotBox').classList.add('hidden');
   loginModal.classList.remove('hidden');
   try {
     const info = await (await fetch('/api/authinfo')).json();
-    document.getElementById('loginPw').classList.toggle('hidden', !info.password_login);
-    // If no password accounts exist yet, open the token box by default.
-    document.getElementById('loginTokenBox').classList.toggle('hidden', info.password_login);
-    (info.password_login ? document.getElementById('loginUser') : document.getElementById('loginToken')).focus();
+    const setup = !!info.needs_setup;
+    // First run: show the account-creation form and hide the sign-in bits.
+    document.getElementById('loginTitle').textContent = setup ? 'Set up autormm' : 'Sign in to autormm';
+    document.getElementById('loginSetup').classList.toggle('hidden', !setup);
+    document.getElementById('loginPw').classList.toggle('hidden', setup || !info.password_login);
+    document.getElementById('loginLinks').classList.toggle('hidden', setup);
+    document.getElementById('loginTokenBox').classList.toggle('hidden', setup || info.password_login);
+    if (setup) { document.getElementById('setupUser').focus(); }
+    else { (info.password_login ? document.getElementById('loginUser') : document.getElementById('loginToken')).focus(); }
   } catch (_) {}
 }
+
+async function doSetup() {
+  const username = document.getElementById('setupUser').value.trim();
+  const password = document.getElementById('setupPass').value;
+  const err = document.getElementById('loginErr');
+  err.textContent = '';
+  try {
+    const res = await fetch('/api/setup', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    if (!res.ok) { err.textContent = 'Setup failed: ' + await res.text(); return; }
+    const d = await res.json();
+    localStorage.setItem(TOKEN_KEY, d.token);
+    hideLogin(); poll();
+  } catch (e) { err.textContent = 'Setup error: ' + e; }
+}
+document.getElementById('setupBtn').addEventListener('click', doSetup);
+document.getElementById('setupPass').addEventListener('keydown', e => { if (e.key === 'Enter') doSetup(); });
+document.getElementById('loginForgot').addEventListener('click', e => { e.preventDefault(); document.getElementById('loginForgotBox').classList.toggle('hidden'); });
 function hideLogin() { loginModal.classList.add('hidden'); }
 
 async function doLogin() {

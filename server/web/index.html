@@ -187,17 +187,34 @@
 
   <div id="loginModal" class="modal hidden">
     <div class="modal-card login-card">
-      <div class="modal-title"><div class="name">Sign in to autormm</div></div>
+      <div class="modal-title"><div class="name" id="loginTitle">Sign in to autormm</div></div>
+
+      <div id="loginSetup" class="login-fields hidden">
+        <p class="muted">Welcome — create your admin account to get started.</p>
+        <input id="setupUser" class="inv-filter" placeholder="choose a username" autocomplete="username">
+        <input id="setupPass" class="inv-filter" type="password" placeholder="password (min 8 chars)" autocomplete="new-password">
+        <button id="setupBtn" class="btn">Create account</button>
+      </div>
+
       <div id="loginPw" class="login-fields">
         <input id="loginUser" class="inv-filter" placeholder="username" autocomplete="username">
         <input id="loginPass" class="inv-filter" type="password" placeholder="password" autocomplete="current-password">
         <button id="loginBtn" class="btn">Sign in</button>
       </div>
       <div id="loginErr" class="login-err"></div>
-      <p class="muted"><a href="#" id="loginTokenToggle">Use an access token instead</a></p>
+      <p class="muted" id="loginLinks">
+        <a href="#" id="loginTokenToggle">Use an access token</a> ·
+        <a href="#" id="loginForgot">Forgot password?</a>
+      </p>
       <div id="loginTokenBox" class="login-fields hidden">
         <input id="loginToken" class="inv-filter" placeholder="admin token">
         <button id="loginTokenBtn" class="btn">Use token</button>
+      </div>
+      <div id="loginForgotBox" class="muted hidden" style="margin-top:8px;font-size:12px;line-height:1.5">
+        Recovery needs access to the hub server. Run <code>autormm-server reset</code>
+        there — it wipes all accounts and rotates the enrollment token, so
+        <b>every host must be re-added</b> afterwards. Then reload this page and set
+        up a new account. <i>Still have the admin token? Use it above instead.</i>
       </div>
     </div>
   </div>

@@ -5,6 +5,7 @@ package capture
 import (
 	"sync"
 	"syscall"
+	"unicode/utf16"
 	"unsafe"
 )
 
@@ -39,7 +40,8 @@ const (
 	mouseeventfWheel       = 0x0800
 	mouseeventfHWheel      = 0x1000
 
-	keyeventfKeyUp = 0x0002
+	keyeventfKeyUp   = 0x0002
+	keyeventfUnicode = 0x0004
 
 	wheelDelta = 120
 )
@@ -165,6 +167,19 @@ func (in *winInjector) Key(code string, down bool) error {
 		flags = keyeventfKeyUp
 	}
 	sendKey(&keyInputEvent{wVk: vk, dwFlags: flags})
+	return nil
+}
+
+// TypeText injects Unicode text via KEYEVENTF_UNICODE (scan code = code unit),
+// which types any character regardless of keyboard layout — used by the mobile
+// on-screen keyboard.
+func (in *winInjector) TypeText(text string) error {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	for _, u16 := range utf16.Encode([]rune(text)) {
+		sendKey(&keyInputEvent{wScan: u16, dwFlags: keyeventfUnicode})
+		sendKey(&keyInputEvent{wScan: u16, dwFlags: keyeventfUnicode | keyeventfKeyUp})
+	}
 	return nil
 }
 

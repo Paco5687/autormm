@@ -30,6 +30,7 @@ type Injector interface {
 	MouseButton(button int, down bool) error // 0=left 1=middle 2=right
 	Scroll(dx, dy int) error
 	Key(code string, down bool) error // code is a JS KeyboardEvent.code
+	TypeText(text string) error       // type Unicode text (e.g. from a soft keyboard)
 	Close() error
 }
 

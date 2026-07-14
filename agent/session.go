@@ -323,6 +323,8 @@ func applyInput(ev protocol.InputEvent, in capture.Injector, cptr capture.Captur
 		in.Key(ev.Code, true)
 	case protocol.InputKeyUp:
 		in.Key(ev.Code, false)
+	case protocol.InputType:
+		in.TypeText(ev.Text)
 	}
 }
 
