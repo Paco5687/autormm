@@ -271,33 +271,34 @@ canvas.addEventListener('wheel', e => {
 // its special keys (Enter/Backspace/arrows) as key events.
 const softkbd = document.getElementById('softkbd');
 const kbdbar = document.getElementById('kbdbar');
+let lastKbdVal = '';
 function keyTap(code) { send({ t: 'kdown', code }); send({ t: 'kup', code }); }
 function toggleKbd(show) {
   if (show === undefined) show = kbdbar.classList.contains('hidden');
   kbdbar.classList.toggle('hidden', !show);
-  if (show) { softkbd.value = ''; softkbd.focus(); } else { softkbd.blur(); }
+  if (show) { softkbd.value = ''; lastKbdVal = ''; softkbd.focus(); } else { softkbd.blur(); }
 }
 document.getElementById('kbd').addEventListener('click', () => toggleKbd());
 document.getElementById('kbdHide').addEventListener('click', () => toggleKbd(false));
-// Forward on the input event (fires whenever the box content changes — the most
-// widely-supported hook) and keep the text visible so you can see what you type.
-let lastKbdVal = '';
-softkbd.addEventListener('input', e => {
-  const t = e.inputType || '';
-  if ((t === 'insertText' || t === 'insertFromPaste' || t === 'insertCompositionText') && e.data != null) {
-    send({ t: 'type', text: e.data });
-  } else if (t === 'insertLineBreak' || t === 'insertParagraph') {
-    keyTap('Enter'); softkbd.value = '';
-  } else if (t.indexOf('delete') === 0) {
-    keyTap('Backspace');
-  } else if (!t) {
-    // Fallback for browsers that don't set inputType: forward the appended tail.
-    const v = softkbd.value;
-    if (v.length > lastKbdVal.length && v.startsWith(lastKbdVal)) send({ t: 'type', text: v.slice(lastKbdVal.length) });
-  }
-  lastKbdVal = softkbd.value;
+function sendEnter() { keyTap('Enter'); softkbd.value = ''; lastKbdVal = ''; softkbd.focus(); }
+document.getElementById('kbdEnter').addEventListener('click', sendEnter);
+
+// Diff the box value on every change. This is the only reliable way to capture
+// Android/Gboard input, which doesn't fire usable keydown/inputType events.
+// Compare against the last value: backspace what changed after the common
+// prefix, then type the new tail.
+softkbd.addEventListener('input', () => {
+  const v = softkbd.value;
+  if (v === lastKbdVal) return;
+  let common = 0;
+  const max = Math.min(v.length, lastKbdVal.length);
+  while (common < max && v[common] === lastKbdVal[common]) common++;
+  for (let i = 0; i < lastKbdVal.length - common; i++) keyTap('Backspace');
+  if (v.length > common) send({ t: 'type', text: v.slice(common) });
+  lastKbdVal = v;
 });
 softkbd.addEventListener('keydown', e => {
+  if (e.key === 'Enter' || e.code === 'Enter') { e.preventDefault(); sendEnter(); return; }
   const special = ['Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Escape', 'Home', 'End'];
   if (special.includes(e.code)) { e.preventDefault(); keyTap(e.code); }
 });
