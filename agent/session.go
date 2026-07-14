@@ -324,9 +324,8 @@ func applyInput(ev protocol.InputEvent, in capture.Injector, cptr capture.Captur
 	case protocol.InputKeyUp:
 		in.Key(ev.Code, false)
 	case protocol.InputType:
-		log.Printf("type event: %q", ev.Text)
 		if err := in.TypeText(ev.Text); err != nil {
-			log.Printf("TypeText(%q) error: %v", ev.Text, err)
+			log.Printf("TypeText error: %v", err) // don't log the text itself (privacy)
 		}
 	}
 }

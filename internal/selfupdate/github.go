@@ -69,7 +69,7 @@ func FetchGitHubServer(repo, version, destDir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	f, err := os.CreateTemp(destDir, "autormm-update-*")
+	f, err := os.CreateTemp(destDir, "autormm-stage-*")
 	if err != nil {
 		return "", err
 	}

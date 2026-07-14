@@ -128,7 +128,10 @@ func download(cfg Config) (string, error) {
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("download: %s", resp.Status)
 	}
-	f, err := os.CreateTemp(filepath.Dir(exe), "autormm-update-*"+ext)
+	// NB: no "update"/"setup"/"install" in the name — Windows' UAC installer-
+	// detection heuristic would flag such an exe as requiring elevation, and the
+	// smoke test (running it) would fail with ERROR_ELEVATION_REQUIRED.
+	f, err := os.CreateTemp(filepath.Dir(exe), "autormm-stage-*"+ext)
 	if err != nil {
 		return "", err
 	}
