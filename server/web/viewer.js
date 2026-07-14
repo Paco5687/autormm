@@ -23,6 +23,7 @@ function connect() {
   currentCodec = 'jpeg-tile';
   disposeDecoder();
   codecsEl.innerHTML = '';
+  autoFitDone = false; // auto-fit resolution once per session
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const caps = 'jpeg-tile';
   ws = new WebSocket(`${proto}://${location.host}/client/session?token=${encodeURIComponent(tokenParam)}&caps=${caps}`);
@@ -83,9 +84,38 @@ function aspectLabel(w, h) {
   return `${Math.round(w / g)}:${Math.round(h / g)}`;
 }
 
+const fitBtn = document.getElementById('fitBtn');
+let autoFitDone = false;
+
+// bestMode picks the host mode that best fits this window: the largest one whose
+// pixels fit the viewer's device-pixel area (crisp, no upscaling), preferring a
+// matching aspect ratio; if none fit, the smallest available.
+function bestMode(d) {
+  if (!d || !d.modes || !d.modes.length) return null;
+  const dpr = window.devicePixelRatio || 1;
+  const availW = Math.round(window.innerWidth * dpr);
+  const availH = Math.round((window.innerHeight - 34) * dpr); // minus the top bar
+  const targetAR = availW / Math.max(1, availH);
+  const fitting = d.modes.filter(m => m.w <= availW && m.h <= availH);
+  const pool = (fitting.length ? fitting : d.modes).slice();
+  pool.sort((a, b) => {
+    const areaA = a.w * a.h, areaB = b.w * b.h;
+    if (areaA !== areaB) return fitting.length ? areaB - areaA : areaA - areaB; // largest that fits, else smallest
+    return Math.abs(a.w / a.h - targetAR) - Math.abs(b.w / b.h - targetAR);
+  });
+  return pool[0];
+}
+
+function fitToWindow() {
+  const d = activeResDisplay();
+  const m = bestMode(d);
+  if (m && (m.w !== d.w || m.h !== d.h)) send({ t: 'setres', display: d.index, w: m.w, h: m.h });
+}
+fitBtn.addEventListener('click', fitToWindow);
+
 function renderRes() {
   const d = activeResDisplay();
-  if (!d || !d.modes || !d.modes.length) { resPick.classList.add('hidden'); resPick.innerHTML = ''; return; }
+  if (!d || !d.modes || !d.modes.length) { resPick.classList.add('hidden'); fitBtn.classList.add('hidden'); resPick.innerHTML = ''; return; }
   const cur = `${d.w}x${d.h}`;
   const label = (w, h) => `${w}×${h} (${aspectLabel(w, h)})`;
   let html = '';
@@ -96,6 +126,9 @@ function renderRes() {
   }
   resPick.innerHTML = html;
   resPick.classList.remove('hidden');
+  fitBtn.classList.remove('hidden');
+  // Auto-fit once per session, on the first time we know the display's modes.
+  if (!autoFitDone) { autoFitDone = true; fitToWindow(); }
 }
 
 resPick.addEventListener('change', () => {
