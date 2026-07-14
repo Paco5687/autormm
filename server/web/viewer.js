@@ -2,6 +2,8 @@
 const params = new URLSearchParams(location.search);
 const tokenParam = params.get('token');
 const hostName = params.get('host') || 'remote';
+const agentId = params.get('agent') || hostName;
+const autofitKey = 'autofit:' + agentId;
 
 const canvas = document.getElementById('screen');
 const ctx = canvas.getContext('2d', { alpha: false });
@@ -85,7 +87,15 @@ function aspectLabel(w, h) {
 }
 
 const fitBtn = document.getElementById('fitBtn');
+const autofitEl = document.getElementById('autofit');
+const autofitLabel = document.getElementById('autofitLabel');
 let autoFitDone = false;
+// Per-host preference (remembered in this browser): auto-fit resolution on connect.
+autofitEl.checked = localStorage.getItem(autofitKey) === '1';
+autofitEl.addEventListener('change', () => {
+  localStorage.setItem(autofitKey, autofitEl.checked ? '1' : '0');
+  if (autofitEl.checked) fitToWindow();
+});
 
 // bestMode picks the host mode that best fits this window: the largest one whose
 // pixels fit the viewer's device-pixel area (crisp, no upscaling), preferring a
@@ -115,7 +125,10 @@ fitBtn.addEventListener('click', fitToWindow);
 
 function renderRes() {
   const d = activeResDisplay();
-  if (!d || !d.modes || !d.modes.length) { resPick.classList.add('hidden'); fitBtn.classList.add('hidden'); resPick.innerHTML = ''; return; }
+  if (!d || !d.modes || !d.modes.length) {
+    resPick.classList.add('hidden'); fitBtn.classList.add('hidden'); autofitLabel.classList.add('hidden'); resPick.innerHTML = '';
+    return;
+  }
   const cur = `${d.w}x${d.h}`;
   const label = (w, h) => `${w}×${h} (${aspectLabel(w, h)})`;
   let html = '';
@@ -127,8 +140,9 @@ function renderRes() {
   resPick.innerHTML = html;
   resPick.classList.remove('hidden');
   fitBtn.classList.remove('hidden');
-  // Auto-fit once per session, on the first time we know the display's modes.
-  if (!autoFitDone) { autoFitDone = true; fitToWindow(); }
+  autofitLabel.classList.remove('hidden');
+  // Auto-fit once per session, only if enabled for this host.
+  if (!autoFitDone) { autoFitDone = true; if (autofitEl.checked) fitToWindow(); }
 }
 
 resPick.addEventListener('change', () => {

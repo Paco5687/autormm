@@ -347,7 +347,7 @@ async function openSession(h, body, page, features) {
     });
     if (!res.ok) { alert('Could not start session: ' + (await res.text())); return; }
     const s = await res.json();
-    const url = `${page}?token=${encodeURIComponent(s.token)}&host=${encodeURIComponent(h.hostname || h.agent_id)}`;
+    const url = `${page}?token=${encodeURIComponent(s.token)}&host=${encodeURIComponent(h.hostname || h.agent_id)}&agent=${encodeURIComponent(h.agent_id)}`;
     if (features) {
       window.open(url, 'autormm_' + (body.kind || 'session') + '_' + h.agent_id, features);
     } else {

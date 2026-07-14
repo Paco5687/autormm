@@ -196,6 +196,9 @@ body {
   border-radius: 6px; padding: 3px 6px; font-size: 12px; cursor: pointer;
 }
 .respick.hidden { display: none; }
+.afl { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); cursor: pointer; }
+.afl.hidden { display: none; }
+.afl input { margin: 0; }
 /* remote cursor overlay (the host cursor isn't in the captured frame) */
 .rcursor {
   position: fixed; width: 22px; height: 22px; z-index: 20; pointer-events: none;
