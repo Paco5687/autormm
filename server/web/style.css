@@ -173,6 +173,9 @@ body {
 /* Hide the local browser cursor over the screen; the remote-cursor overlay
    (.rcursor) is the single pointer the operator sees, tracking the host. */
 #screen { max-width: 100%; max-height: 100%; cursor: none; background: #111; }
+.kbdbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; display: flex; gap: 6px; padding: 6px 8px; background: rgba(18,20,26,.97); border-top: 1px solid var(--line); }
+.kbdbar.hidden { display: none; }
+.kbdbar #softkbd { flex: 1; min-width: 0; background: #0d0f13; color: #e6edf3; border: 1px solid var(--line); border-radius: 6px; padding: 9px 11px; font-size: 16px; outline: none; }
 .pill { padding: 2px 8px; border-radius: 999px; background: var(--panel-2); font-family: var(--mono); font-size: 12px; }
 .pill.live { color: var(--ok); }
 .pill.dead { color: var(--bad); }

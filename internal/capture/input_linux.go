@@ -4,7 +4,6 @@ package capture
 
 import (
 	"fmt"
-	"os/exec"
 	"sync"
 
 	"github.com/jezek/xgb"
@@ -26,7 +25,9 @@ type x11Injector struct {
 	conn *xgb.Conn
 	root xproto.Window
 	// keysym -> keycode, built from the server's keyboard mapping.
-	k2c map[xproto.Keysym]xproto.Keycode
+	k2c     map[xproto.Keysym]xproto.Keycode
+	per     int            // keysyms per keycode
+	spareKC xproto.Keycode // an unused keycode borrowed for Unicode typing (0 = none)
 }
 
 func newInjector() (Injector, error) {
@@ -56,16 +57,23 @@ func (in *x11Injector) loadKeymap(setup *xproto.SetupInfo) {
 		return
 	}
 	per := int(reply.KeysymsPerKeycode)
+	in.per = per
 	for i := 0; i < count; i++ {
 		kc := xproto.Keycode(int(lo) + i)
+		empty := true
 		for j := 0; j < per; j++ {
 			ks := reply.Keysyms[i*per+j]
 			if ks == 0 {
 				continue
 			}
+			empty = false
 			if _, ok := in.k2c[ks]; !ok {
 				in.k2c[ks] = kc // first (usually unshifted) mapping wins
 			}
+		}
+		// Remember an unused keycode we can borrow for Unicode typing.
+		if empty && in.spareKC == 0 {
+			in.spareKC = kc
 		}
 	}
 }
@@ -157,17 +165,56 @@ func (in *x11Injector) Key(code string, down bool) error {
 	return in.fake(typ, byte(kc), 0, 0)
 }
 
-// TypeText types Unicode text. XTEST can't inject arbitrary Unicode directly, so
-// it shells out to xdotool when available (handles any character). Without it,
-// on-screen-keyboard text won't type on this host (special keys still work).
+// TypeText injects Unicode text with no external dependency: it borrows an
+// unused keycode, remaps it to each character's keysym, fakes a key press via
+// XTEST, then restores the keycode. Works for any layout.
 func (in *x11Injector) TypeText(text string) error {
 	if text == "" {
 		return nil
 	}
-	if p, err := exec.LookPath("xdotool"); err == nil {
-		return exec.Command(p, "type", "--clearmodifiers", "--", text).Run()
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	if in.spareKC == 0 || in.per == 0 {
+		return fmt.Errorf("no spare keycode available for Unicode typing")
 	}
-	return fmt.Errorf("typing text needs xdotool on this host")
+	for _, r := range text {
+		ks := runeKeysym(r)
+		if ks == 0 {
+			continue
+		}
+		syms := make([]xproto.Keysym, in.per)
+		syms[0] = ks // unshifted
+		if in.per > 1 {
+			syms[1] = ks // shifted (so modifier state doesn't matter)
+		}
+		if err := xproto.ChangeKeyboardMappingChecked(in.conn, 1, in.spareKC, byte(in.per), syms).Check(); err != nil {
+			return err
+		}
+		in.sync() // let the server apply the remap before we fake the key
+		in.fake(evKeyPress, byte(in.spareKC), 0, 0)
+		in.fake(evKeyRelease, byte(in.spareKC), 0, 0)
+		in.sync()
+	}
+	// Restore the borrowed keycode to NoSymbol.
+	xproto.ChangeKeyboardMapping(in.conn, 1, in.spareKC, byte(in.per), make([]xproto.Keysym, in.per))
+	in.sync()
+	return nil
+}
+
+// sync round-trips so queued requests (e.g. the keymap change) are applied.
+func (in *x11Injector) sync() { xproto.GetInputFocus(in.conn).Reply() }
+
+// runeKeysym maps a rune to an X keysym: Latin-1 codepoints are their own
+// keysym; everything else uses the Unicode keysym range (0x01000000 + cp).
+func runeKeysym(r rune) xproto.Keysym {
+	switch {
+	case r == 0:
+		return 0
+	case r >= 0x20 && r <= 0xff:
+		return xproto.Keysym(r)
+	default:
+		return xproto.Keysym(0x01000000 + uint32(r))
+	}
 }
 
 func (in *x11Injector) Close() error {

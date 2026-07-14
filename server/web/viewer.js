@@ -270,11 +270,15 @@ canvas.addEventListener('wheel', e => {
 // The ⌨ button focuses a hidden input; typing into it is forwarded as text, and
 // its special keys (Enter/Backspace/arrows) as key events.
 const softkbd = document.getElementById('softkbd');
+const kbdbar = document.getElementById('kbdbar');
 function keyTap(code) { send({ t: 'kdown', code }); send({ t: 'kup', code }); }
-document.getElementById('kbd').addEventListener('click', () => {
-  if (document.activeElement === softkbd) { softkbd.blur(); }
-  else { softkbd.value = ''; softkbd.focus(); }
-});
+function toggleKbd(show) {
+  if (show === undefined) show = kbdbar.classList.contains('hidden');
+  kbdbar.classList.toggle('hidden', !show);
+  if (show) { softkbd.value = ''; softkbd.focus(); } else { softkbd.blur(); }
+}
+document.getElementById('kbd').addEventListener('click', () => toggleKbd());
+document.getElementById('kbdHide').addEventListener('click', () => toggleKbd(false));
 softkbd.addEventListener('input', e => {
   if (e.inputType === 'insertText' && e.data != null) send({ t: 'type', text: e.data });
   else if (e.inputType === 'insertLineBreak') keyTap('Enter');

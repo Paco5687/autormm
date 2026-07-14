@@ -26,8 +26,11 @@
     <canvas id="screen" width="1280" height="720"></canvas>
   </div>
   <div id="rcursor" class="rcursor hidden"></div>
-  <input id="softkbd" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
-    style="position:fixed;bottom:0;left:0;width:1px;height:1px;opacity:0;border:0;padding:0;font-size:16px">
+  <div id="kbdbar" class="kbdbar hidden">
+    <input id="softkbd" placeholder="Type here — text is sent to the remote" inputmode="text"
+      autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+    <button id="kbdHide" class="btn ghost" title="Hide keyboard">✕</button>
+  </div>
   <script src="/static/viewer.js"></script>
 </body>
 </html>
