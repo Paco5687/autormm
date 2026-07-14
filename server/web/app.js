@@ -150,15 +150,33 @@ async function checkUpdates() {
 }
 document.getElementById('updCheck').addEventListener('click', checkUpdates);
 document.getElementById('updApply').addEventListener('click', async () => {
-  const st = document.getElementById('updStatus');
   if (!confirm('Update the hub now? It downloads the new version and restarts (brief downtime).')) return;
-  st.textContent = 'updating… the hub will restart';
-  try {
-    const r = await authFetch('/api/update/apply', 'POST');
-    const d = await r.json().catch(() => ({}));
-    st.textContent = (d.message || 'updating…') + ' — reload the page in ~15s';
-  } catch (e) { st.textContent = 'the hub is restarting… reload in ~15s'; }
+  document.getElementById('updStatus').textContent = 'updating…';
+  try { await authFetch('/api/update/apply', 'POST'); } catch (_) {}
+  waitForHubAndReload(); // stay signed in: overlay until the hub is back, then reload
 });
+
+// Show a "reconnecting" overlay while the hub restarts, then reload once it's
+// healthy again. localStorage keeps the login token, so you stay signed in.
+function waitForHubAndReload() {
+  updateModal.classList.add('hidden');
+  let ov = document.getElementById('updatingOverlay');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.id = 'updatingOverlay';
+    ov.className = 'updating-overlay';
+    ov.innerHTML = '<div class="updating-box"><div class="spin"></div>Updating the hub…<div class="muted">reconnecting</div></div>';
+    document.body.appendChild(ov);
+  }
+  ov.classList.remove('hidden');
+  let ok = 0;
+  const iv = setInterval(async () => {
+    try {
+      const r = await fetch('/healthz', { cache: 'no-store' });
+      if (r.ok) { if (++ok >= 2) { clearInterval(iv); location.reload(); } } else { ok = 0; }
+    } catch (_) { ok = 0; }
+  }, 2000);
+}
 document.getElementById('updPush').addEventListener('click', async () => {
   const st = document.getElementById('updStatus');
   st.textContent = 'notifying hosts…';

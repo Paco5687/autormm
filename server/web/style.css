@@ -127,6 +127,12 @@ body {
 .login-fields { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
 .login-fields .inv-filter { max-width: none; }
 .login-err { color: #e5534b; font-size: 12px; min-height: 16px; margin-top: 6px; }
+.updating-overlay { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; background: rgba(10,12,16,.86); }
+.updating-overlay.hidden { display: none; }
+.updating-box { text-align: center; color: var(--text); font-size: 15px; }
+.updating-box .muted { margin-top: 4px; }
+.updating-box .spin { width: 28px; height: 28px; margin: 0 auto 12px; border: 3px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 .software { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 14px; }
 .software-head { display: flex; align-items: center; gap: 10px; }
 .inv-filter { background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 5px 9px; font-size: 12px; flex: 1; max-width: 240px; }

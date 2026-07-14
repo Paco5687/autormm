@@ -108,10 +108,16 @@ func (a *Agent) Run(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		start := time.Now()
 		err := a.session(ctx)
 		a.emitStatus(false)
 		if ctx.Err() != nil {
 			return ctx.Err()
+		}
+		// A healthy connection just dropped (e.g. the hub restarted for an update)
+		// — reconnect quickly instead of carrying a grown backoff.
+		if time.Since(start) > 10*time.Second {
+			backoff = time.Second
 		}
 		log.Printf("connection lost: %v -- reconnecting in %s", err, backoff)
 		select {
