@@ -273,10 +273,32 @@ const softkbd = document.getElementById('softkbd');
 const kbdbar = document.getElementById('kbdbar');
 let lastKbdVal = '';
 function keyTap(code) { send({ t: 'kdown', code }); send({ t: 'kup', code }); }
+const vwrap = document.querySelector('.viewer-wrap');
 function toggleKbd(show) {
   if (show === undefined) show = kbdbar.classList.contains('hidden');
   kbdbar.classList.toggle('hidden', !show);
   if (show) { softkbd.value = ''; lastKbdVal = ''; softkbd.focus(); } else { softkbd.blur(); }
+  updateKbdLayout();
+}
+// When the on-screen keyboard is up, shrink the remote view to fit the space
+// above it (like Parsec) so the whole screen stays visible, and float the input
+// bar just above the OS keyboard. Uses visualViewport to know the visible area.
+function updateKbdLayout() {
+  const vv = window.visualViewport;
+  const open = !kbdbar.classList.contains('hidden');
+  if (open && vv) {
+    const barH = kbdbar.offsetHeight || 46;
+    const kbH = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
+    kbdbar.style.bottom = kbH + 'px';
+    vwrap.style.bottom = (kbH + barH) + 'px';
+  } else {
+    kbdbar.style.bottom = '';
+    vwrap.style.bottom = '';
+  }
+}
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', updateKbdLayout);
+  window.visualViewport.addEventListener('scroll', updateKbdLayout);
 }
 document.getElementById('kbd').addEventListener('click', () => toggleKbd());
 document.getElementById('kbdHide').addEventListener('click', () => toggleKbd(false));
@@ -357,10 +379,7 @@ document.getElementById('taskMgr').addEventListener('click', (e) => {
   e.currentTarget.blur(); // return focus to the page so canvas input keeps flowing
 });
 
-// auto-hide the top bar unless the pointer is near the top
-document.addEventListener('mousemove', e => {
-  barEl.classList.toggle('hide', e.clientY > 60);
-});
+// The top bar stays visible (keyboard / display / codec controls are always reachable).
 
 // fps meter + keepalive
 setInterval(() => { fpsEl.textContent = frames + ' fps'; frames = 0; }, 1000);
