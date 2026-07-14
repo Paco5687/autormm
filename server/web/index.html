@@ -15,6 +15,7 @@
     <button id="enrollBtn" class="btn">＋ Add host</button>
     <button id="scriptsBtn" class="btn ghost" title="Scripts &amp; schedules">📜</button>
     <button id="updatesBtn" class="btn ghost" title="Check for updates">⟳</button>
+    <button id="acctBtn" class="btn ghost" title="Accounts">👤</button>
     <button id="tokenBtn" class="btn ghost" title="Set access token">🔑</button>
   </header>
 
@@ -169,6 +170,23 @@
     </div>
   </div>
 
+  <div id="acctModal" class="modal hidden">
+    <div class="modal-card login-card">
+      <div class="modal-head">
+        <div class="modal-title"><div class="name">Accounts</div></div>
+        <button id="acctClose" class="btn ghost" title="Close">✕</button>
+      </div>
+      <div id="acctList" class="muted" style="margin:6px 0"></div>
+      <h4 class="sc-h">Add or change a password</h4>
+      <div class="login-fields">
+        <input id="acctUser" class="inv-filter" placeholder="username" autocomplete="username">
+        <input id="acctPass" class="inv-filter" type="password" placeholder="new password (min 8)" autocomplete="new-password">
+        <button id="acctSave" class="btn">Save</button>
+      </div>
+      <div id="acctErr" class="login-err"></div>
+    </div>
+  </div>
+
   <div id="updateModal" class="modal hidden">
     <div class="modal-card login-card">
       <div class="modal-head">
@@ -211,10 +229,11 @@
         <button id="loginTokenBtn" class="btn">Use token</button>
       </div>
       <div id="loginForgotBox" class="muted hidden" style="margin-top:8px;font-size:12px;line-height:1.5">
-        Recovery needs access to the hub server. Run <code>autormm-server reset</code>
-        there — it wipes all accounts and rotates the enrollment token, so
-        <b>every host must be re-added</b> afterwards. Then reload this page and set
-        up a new account. <i>Still have the admin token? Use it above instead.</i>
+        <b>Have the admin token?</b> Choose <i>Use an access token</i> above, sign
+        in, then open <b>👤 Accounts</b> and set a new password — no reset needed.<br>
+        <b>Lost the token too?</b> On the hub run <code>autormm-server reset</code> —
+        it wipes all accounts and rotates the enrollment token, so <b>every host
+        must be re-added</b>. A last resort.
       </div>
     </div>
   </div>

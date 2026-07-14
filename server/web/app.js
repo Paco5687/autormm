@@ -74,7 +74,51 @@ document.getElementById('loginTokenBtn').addEventListener('click', () => {
 });
 // ---- updates ----
 const updateModal = document.getElementById('updateModal');
-function authFetch(path, method) { return fetch(path, { method: method || 'GET', headers: { Authorization: 'Bearer ' + token() } }); }
+function authFetch(path, method, body) {
+  const opts = { method: method || 'GET', headers: { Authorization: 'Bearer ' + token() } };
+  if (body !== undefined) { opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body); }
+  return fetch(path, opts);
+}
+
+// ---- accounts ----
+const acctModal = document.getElementById('acctModal');
+document.getElementById('acctBtn').addEventListener('click', () => {
+  if (!token()) { showLogin(); return; }
+  acctModal.classList.remove('hidden');
+  document.getElementById('acctErr').textContent = '';
+  loadAccounts();
+});
+document.getElementById('acctClose').addEventListener('click', () => acctModal.classList.add('hidden'));
+acctModal.addEventListener('click', e => { if (e.target === acctModal) acctModal.classList.add('hidden'); });
+
+async function loadAccounts() {
+  const el = document.getElementById('acctList');
+  try {
+    const r = await authFetch('/api/admin/accounts');
+    if (r.status === 401) { acctModal.classList.add('hidden'); showLogin(); return; }
+    const names = (await r.json()).accounts || [];
+    el.innerHTML = names.length
+      ? 'Accounts: ' + names.map(n => `${escapeHtml(n)} <a href="#" class="acct-rm" data-u="${escapeHtml(n)}">✕</a>`).join(' · ')
+      : 'No password accounts yet — add one below.';
+    el.querySelectorAll('.acct-rm').forEach(a => a.onclick = async e => {
+      e.preventDefault();
+      if (confirm(`Remove account "${a.dataset.u}"?`)) { await authFetch('/api/admin/remove', 'POST', { username: a.dataset.u }); loadAccounts(); }
+    });
+  } catch (_) {}
+}
+document.getElementById('acctSave').addEventListener('click', async () => {
+  const username = document.getElementById('acctUser').value.trim();
+  const password = document.getElementById('acctPass').value;
+  const err = document.getElementById('acctErr');
+  err.style.color = ''; err.textContent = '';
+  const r = await authFetch('/api/admin/set', 'POST', { username, password });
+  if (!r.ok) { err.textContent = await r.text(); return; }
+  document.getElementById('acctUser').value = '';
+  document.getElementById('acctPass').value = '';
+  err.style.color = '#3fb950'; err.textContent = 'Saved.';
+  setTimeout(() => { err.style.color = ''; err.textContent = ''; }, 2000);
+  loadAccounts();
+});
 document.getElementById('updatesBtn').addEventListener('click', () => {
   updateModal.classList.remove('hidden');
   document.getElementById('updStatus').textContent = '';
