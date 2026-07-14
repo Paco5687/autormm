@@ -16,7 +16,8 @@ const (
 	TypeStartSession = "start_session" // ask the agent to open a media socket
 	TypeStopSession  = "stop_session"
 	TypePing         = "ping"
-	TypeExec         = "exec" // run a command on the host
+	TypeExec         = "exec"       // run a command on the host
+	TypeUpdateNow    = "update_now" // ask the agent to check the hub for an update now
 
 	TypeInventory   = "inventory"    // server -> agent: list installed software
 	TypeProcRestart = "proc_restart" // server -> agent: stop a process and relaunch its command line

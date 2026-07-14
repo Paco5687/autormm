@@ -14,6 +14,7 @@
     <span id="alertBadge" class="alert-badge hidden"></span>
     <button id="enrollBtn" class="btn">＋ Add host</button>
     <button id="scriptsBtn" class="btn ghost" title="Scripts &amp; schedules">📜</button>
+    <button id="updatesBtn" class="btn ghost" title="Check for updates">⟳</button>
     <button id="tokenBtn" class="btn ghost" title="Set access token">🔑</button>
   </header>
 
@@ -165,6 +166,22 @@
       <div id="scSchedules"></div>
       <h4 class="sc-h">Recent runs</h4>
       <div id="scRuns"></div>
+    </div>
+  </div>
+
+  <div id="updateModal" class="modal hidden">
+    <div class="modal-card login-card">
+      <div class="modal-head">
+        <div class="modal-title"><div class="name">Updates</div></div>
+        <button id="updateClose" class="btn ghost" title="Close">✕</button>
+      </div>
+      <p class="muted">Hub version: <b id="updCurrent">…</b></p>
+      <div id="updStatus" class="muted" style="min-height:18px"></div>
+      <div class="login-fields" style="margin-top:10px">
+        <button id="updCheck" class="btn">Check for updates</button>
+        <button id="updApply" class="btn hidden"></button>
+        <button id="updPush" class="btn ghost">Push update to all hosts</button>
+      </div>
     </div>
   </div>
 

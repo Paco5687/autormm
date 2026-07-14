@@ -45,11 +45,17 @@ func main() {
 		log.Printf("autostart registration failed: %v", err)
 	}
 
-	// Keep the agent matched to the hub (self-update on startup + periodically).
+	// Keep the agent matched to the hub (self-update on startup + periodically,
+	// or immediately when the hub pushes an update).
 	go autoUpdateLoop(cfg)
 
 	trayAgent = agent.New(cfg)
 	trayAgent.SetStatusHook(onStatus)
+	trayAgent.SetUpdateHook(func() {
+		if err := selfupdate.CheckOnce(updaterConfig(cfg)); err != nil {
+			log.Printf("update check: %v", err)
+		}
+	})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

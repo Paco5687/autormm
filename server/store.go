@@ -95,6 +95,19 @@ func (s *Store) connFor(agentID string) *agentConn {
 	return nil
 }
 
+// onlineConns returns the control connections of all currently-online hosts.
+func (s *Store) onlineConns() []*agentConn {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var conns []*agentConn
+	for _, h := range s.hosts {
+		if h.online && h.conn != nil {
+			conns = append(conns, h.conn)
+		}
+	}
+	return conns
+}
+
 // canStream reports whether a host is online and supports screen capture.
 func (s *Store) canStream(agentID string) bool {
 	s.mu.RLock()

@@ -55,7 +55,13 @@ func main() {
 	tlsCert := flag.String("tls-cert", env("AUTORMM_TLS_CERT", ""), "TLS certificate file (optional)")
 	tlsKey := flag.String("tls-key", env("AUTORMM_TLS_KEY", ""), "TLS key file (optional)")
 	allowPublic := flag.Bool("allow-public-bind", os.Getenv("AUTORMM_ALLOW_PUBLIC_BIND") == "1", "allow binding to a public IP (dangerous — the hub must not be exposed to the internet)")
+	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Println(server.Version)
+		return
+	}
 
 	// Safe by default: never let the hub come up on a public address by accident.
 	if err := server.CheckBindSafety(*addr, *allowPublic, func(m string) { log.Printf("WARNING: %s", m) }); err != nil {

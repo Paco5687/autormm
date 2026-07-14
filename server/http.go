@@ -69,6 +69,9 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/action", s.handleAction)
 	mux.HandleFunc("/api/login", s.handleLogin)
 	mux.HandleFunc("/api/authinfo", s.handleAuthInfo)
+	mux.HandleFunc("/api/update/check", s.handleUpdateCheck)
+	mux.HandleFunc("/api/update/apply", s.handleUpdateApply)
+	mux.HandleFunc("/api/update/push", s.handleUpdatePush)
 
 	mux.HandleFunc("/agent/ws", s.handleAgentControl)
 	mux.HandleFunc("/agent/session", s.handleAgentSession)

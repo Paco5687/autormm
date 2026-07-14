@@ -57,21 +57,27 @@ func main() {
 
 	// Keep the agent matched to the hub. Applying an update replaces the binary
 	// and exits; the service manager (systemd Restart=always) relaunches it.
+	updateCfg := selfupdate.Config{
+		Server: cfg.Server, Token: cfg.EnrollToken, Insecure: cfg.Insecure,
+		DownloadQuery:  fmt.Sprintf("os=%s&arch=%s", runtime.GOOS, runtime.GOARCH),
+		CurrentVersion: agent.Version,
+		Log:            log.Printf,
+		Apply: func(newBinary string) error {
+			if _, err := selfupdate.ReplaceRunningBinary(newBinary); err != nil {
+				return err
+			}
+			log.Println("updated; exiting for the service manager to relaunch")
+			os.Exit(0)
+			return nil
+		},
+	}
 	if !*noUpdate {
-		go selfupdate.Loop(selfupdate.Config{
-			Server: cfg.Server, Token: cfg.EnrollToken, Insecure: cfg.Insecure,
-			DownloadQuery:  fmt.Sprintf("os=%s&arch=%s", runtime.GOOS, runtime.GOARCH),
-			CurrentVersion: agent.Version,
-			Log:            log.Printf,
-			Apply: func(newBinary string) error {
-				if _, err := selfupdate.ReplaceRunningBinary(newBinary); err != nil {
-					return err
-				}
-				log.Println("updated; exiting for the service manager to relaunch")
-				os.Exit(0)
-				return nil
-			},
-		}, 20*time.Second, 6*time.Hour)
+		a.SetUpdateHook(func() {
+			if err := selfupdate.CheckOnce(updateCfg); err != nil {
+				log.Printf("update check: %v", err)
+			}
+		})
+		go selfupdate.Loop(updateCfg, 20*time.Second, 6*time.Hour)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

@@ -71,15 +71,28 @@ function activeResDisplay() {
   return displaysList.length === 1 ? displaysList[0] : null;
 }
 
+// aspectLabel returns a friendly aspect ratio (16:9, 16:10, 4:3, …) for w×h,
+// snapping to a common ratio when close, else the gcd-reduced fraction.
+function aspectLabel(w, h) {
+  if (!w || !h) return '';
+  const common = [[16, 9], [16, 10], [4, 3], [21, 9], [5, 4], [3, 2], [32, 9], [1, 1]];
+  const r = w / h;
+  for (const [a, b] of common) if (Math.abs(r - a / b) < 0.02) return `${a}:${b}`;
+  const gcd = (x, y) => (y ? gcd(y, x % y) : x);
+  const g = gcd(w, h) || 1;
+  return `${Math.round(w / g)}:${Math.round(h / g)}`;
+}
+
 function renderRes() {
   const d = activeResDisplay();
   if (!d || !d.modes || !d.modes.length) { resPick.classList.add('hidden'); resPick.innerHTML = ''; return; }
   const cur = `${d.w}x${d.h}`;
+  const label = (w, h) => `${w}×${h} (${aspectLabel(w, h)})`;
   let html = '';
-  if (!d.modes.some(m => `${m.w}x${m.h}` === cur)) html += `<option value="${cur}" selected>${d.w}×${d.h}</option>`;
+  if (!d.modes.some(m => `${m.w}x${m.h}` === cur)) html += `<option value="${cur}" selected>${label(d.w, d.h)}</option>`;
   for (const m of d.modes) {
     const v = `${m.w}x${m.h}`;
-    html += `<option value="${v}" ${v === cur ? 'selected' : ''}>${m.w}×${m.h}</option>`;
+    html += `<option value="${v}" ${v === cur ? 'selected' : ''}>${label(m.w, m.h)}</option>`;
   }
   resPick.innerHTML = html;
   resPick.classList.remove('hidden');

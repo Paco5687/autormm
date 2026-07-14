@@ -46,6 +46,56 @@ document.getElementById('loginTokenBtn').addEventListener('click', () => {
   const t = document.getElementById('loginToken').value.trim();
   if (t) { localStorage.setItem(TOKEN_KEY, t); hideLogin(); poll(); }
 });
+// ---- updates ----
+const updateModal = document.getElementById('updateModal');
+function authFetch(path, method) { return fetch(path, { method: method || 'GET', headers: { Authorization: 'Bearer ' + token() } }); }
+document.getElementById('updatesBtn').addEventListener('click', () => {
+  updateModal.classList.remove('hidden');
+  document.getElementById('updStatus').textContent = '';
+  document.getElementById('updApply').classList.add('hidden');
+  checkUpdates();
+});
+document.getElementById('updateClose').addEventListener('click', () => updateModal.classList.add('hidden'));
+updateModal.addEventListener('click', e => { if (e.target === updateModal) updateModal.classList.add('hidden'); });
+
+async function checkUpdates() {
+  const st = document.getElementById('updStatus');
+  st.textContent = 'checking…';
+  try {
+    const d = await (await authFetch('/api/update/check')).json();
+    document.getElementById('updCurrent').textContent = d.current || '—';
+    if (d.error) { st.textContent = 'check failed: ' + d.error; return; }
+    const apply = document.getElementById('updApply');
+    if (d.available) {
+      st.textContent = `Update available: ${d.latest}`;
+      apply.textContent = `Update hub to ${d.latest}`;
+      apply.classList.remove('hidden');
+    } else {
+      st.textContent = `Up to date (latest ${d.latest || d.current})`;
+      apply.classList.add('hidden');
+    }
+  } catch (e) { st.textContent = 'check error: ' + e; }
+}
+document.getElementById('updCheck').addEventListener('click', checkUpdates);
+document.getElementById('updApply').addEventListener('click', async () => {
+  const st = document.getElementById('updStatus');
+  if (!confirm('Update the hub now? It downloads the new version and restarts (brief downtime).')) return;
+  st.textContent = 'updating… the hub will restart';
+  try {
+    const r = await authFetch('/api/update/apply', 'POST');
+    const d = await r.json().catch(() => ({}));
+    st.textContent = (d.message || 'updating…') + ' — reload the page in ~15s';
+  } catch (e) { st.textContent = 'the hub is restarting… reload in ~15s'; }
+});
+document.getElementById('updPush').addEventListener('click', async () => {
+  const st = document.getElementById('updStatus');
+  st.textContent = 'notifying hosts…';
+  try {
+    const d = await (await authFetch('/api/update/push', 'POST')).json();
+    st.textContent = `Told ${d.notified} online host${d.notified === 1 ? '' : 's'} to update.`;
+  } catch (e) { st.textContent = 'push error: ' + e; }
+});
+
 tokenBtn.title = 'Sign in / out';
 tokenBtn.addEventListener('click', () => {
   if (token() && confirm('Sign out of autormm?')) { localStorage.removeItem(TOKEN_KEY); }

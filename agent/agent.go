@@ -44,8 +44,13 @@ type Agent struct {
 	arch      string
 	dialer    *websocket.Dialer
 	onStatus  func(bool)    // optional: connection-state callback (for the tray)
+	onUpdate  func()        // optional: run a self-update check (set by the main)
 	reconnect chan struct{} // Refresh() pokes this to force an immediate reconnect
 }
+
+// SetUpdateHook registers a function that checks the hub for a newer agent and
+// self-updates. Called when the hub pushes an update-now request.
+func (a *Agent) SetUpdateHook(fn func()) { a.onUpdate = fn }
 
 // Hostname returns the agent's reported host name.
 func (a *Agent) Hostname() string { return a.hostname }
@@ -211,6 +216,10 @@ func (a *Agent) session(ctx context.Context) error {
 			var req protocol.ProcRestartRequest
 			if json.Unmarshal(data, &req) == nil {
 				go a.restartProc(ctx, out, req)
+			}
+		case protocol.TypeUpdateNow:
+			if a.onUpdate != nil {
+				go a.onUpdate()
 			}
 		}
 	}
