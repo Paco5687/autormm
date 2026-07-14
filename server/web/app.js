@@ -10,6 +10,8 @@ function token() { return localStorage.getItem(TOKEN_KEY) || ''; }
 // ---- login ----
 const loginModal = document.getElementById('loginModal');
 async function showLogin() {
+  const wasHidden = loginModal.classList.contains('hidden');
+  if (!wasHidden) return; // already open — don't re-fetch or steal focus (poll runs on a timer)
   document.getElementById('loginErr').textContent = '';
   document.getElementById('loginForgotBox').classList.add('hidden');
   loginModal.classList.remove('hidden');
@@ -191,7 +193,7 @@ function fmtUptime(s) {
 }
 
 async function poll() {
-  if (!token()) { showLogin(); return; }
+  if (!token()) { if (loginModal.classList.contains('hidden')) showLogin(); return; }
   try {
     const res = await fetch('/api/hosts', { headers: { Authorization: 'Bearer ' + token() } });
     if (res.status === 401) { localStorage.removeItem(TOKEN_KEY); showLogin(); return; }
