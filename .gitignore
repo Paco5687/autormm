@@ -8,8 +8,5 @@
 /autormm-client
 /codec-lab
 
-# build artifacts
+# build artifacts (anchored to repo root so they don't match cmd/ source dirs)
 *.exe
-autormm-agent
-autormm-server
-autormm-client
