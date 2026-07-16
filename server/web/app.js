@@ -665,6 +665,7 @@ function renderFacts(h) {
   if (f.kernel_version) items.push(['Kernel', f.kernel_version]);
   if (f.virtualization) items.push(['Virtualization', f.virtualization]);
   items.push(['Agent', (h && h.agent_version) || '—']);
+  if (h && h.elevated) items.push(['Admin helper', 'installed ✓']);
   mFacts.innerHTML = items
     .map(([k, v]) => `<div class="fact"><span class="fk">${k}</span><span class="fv">${escapeHtml(v)}</span></div>`)
     .join('');
@@ -755,6 +756,7 @@ async function openEnroll() {
     document.getElementById('cmdLinux').textContent = d.commands.linux;
     document.getElementById('cmdLinuxDesktop').textContent = d.commands.linux_desktop;
     document.getElementById('cmdWindows').textContent = d.commands.windows;
+    document.getElementById('cmdWindowsElevated').textContent = d.commands.windows_elevated;
     if (!d.bundled) {
       note.textContent = 'Note: this hub build does not bundle agent binaries — rebuild with `make` so hosts can download the agent from the hub.';
     }

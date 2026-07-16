@@ -26,7 +26,7 @@ func (s *Server) runOnAgent(agentID, command, shell string, timeoutSecs int) (*e
 	if !s.store.canExec(agentID) {
 		return nil, fmt.Errorf("host offline or command execution disabled")
 	}
-	conn := s.store.connFor(agentID)
+	conn := s.store.execConn(agentID) // prefer the elevated (SYSTEM/root) helper
 	if conn == nil {
 		return nil, fmt.Errorf("host offline")
 	}

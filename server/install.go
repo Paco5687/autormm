@@ -111,6 +111,18 @@ func (s *Server) handleInstallPS1(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(out))
 }
 
+func (s *Server) handleInstallElevatedPS1(w http.ResponseWriter, r *http.Request) {
+	token := r.URL.Query().Get("token")
+	w.Header().Set("Content-Type", "text/plain")
+	if token == "" {
+		w.Write([]byte("Write-Error 'missing enroll token'\n"))
+		return
+	}
+	out := strings.ReplaceAll(installElevatedPs1, "__SERVER__", baseURL(r))
+	out = strings.ReplaceAll(out, "__TOKEN__", token)
+	w.Write([]byte(out))
+}
+
 // handleEnroll returns the ready-to-paste install commands for the dashboard.
 func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 	if !s.checkAdmin(r) {
@@ -126,9 +138,10 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 		"enroll_token": tok,
 		"bundled":      haveLinux || haveWin,
 		"commands": map[string]string{
-			"linux":         fmt.Sprintf(`curl -fsSL "%s/install.sh?token=%s" | sudo sh`, base, tok),
-			"linux_desktop": fmt.Sprintf(`curl -fsSL "%s/install.sh?token=%s&desktop=1" | sh`, base, tok),
-			"windows":       fmt.Sprintf(`iwr -useb "%s/install.ps1?token=%s" | iex`, base, tok),
+			"linux":            fmt.Sprintf(`curl -fsSL "%s/install.sh?token=%s" | sudo sh`, base, tok),
+			"linux_desktop":    fmt.Sprintf(`curl -fsSL "%s/install.sh?token=%s&desktop=1" | sh`, base, tok),
+			"windows":          fmt.Sprintf(`iwr -useb "%s/install.ps1?token=%s" | iex`, base, tok),
+			"windows_elevated": fmt.Sprintf(`iwr -useb "%s/install-elevated.ps1?token=%s" | iex`, base, tok),
 		},
 	})
 }
@@ -225,4 +238,27 @@ Write-Host "Downloading autormm agent from $Server ..."
 Invoke-WebRequest -Uri "$Server/download/agent?os=windows&arch=amd64&kind=tray&token=$Token" -OutFile $dest -UseBasicParsing
 Start-Process -FilePath $dest -ArgumentList "-server $Server -token $Token"
 Write-Host 'autormm agent installed. A tray icon will appear, and it will start automatically at logon.'
+`
+
+// installElevatedPs1 installs the privileged helper as a LocalSystem Windows
+// service, so the hub can run admin actions (service control, elevated commands)
+// on this host. Requires a one-time elevated PowerShell.
+const installElevatedPs1 = `# autormm elevated helper installer for Windows. Run in an ELEVATED PowerShell.
+$ErrorActionPreference = 'Stop'
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $isAdmin) { Write-Warning 'autormm: run this in an ELEVATED PowerShell (Start > right-click Windows PowerShell > Run as administrator).'; return }
+$Server = '__SERVER__'
+$Token  = '__TOKEN__'
+$dir = Join-Path $env:ProgramData 'autormm'
+New-Item -ItemType Directory -Force -Path $dir | Out-Null
+$dest = Join-Path $dir 'autormm-agent-svc.exe'
+if (Get-Service autormm-elevated -ErrorAction SilentlyContinue) { Stop-Service autormm-elevated -Force -ErrorAction SilentlyContinue; sc.exe delete autormm-elevated | Out-Null; Start-Sleep -Milliseconds 700 }
+Write-Host "Downloading autormm helper from $Server ..."
+Invoke-WebRequest -Uri "$Server/download/agent?os=windows&arch=amd64&token=$Token" -OutFile $dest -UseBasicParsing
+$bin = '"' + $dest + '" -server ' + $Server + ' -token ' + $Token + ' -elevated'
+New-Service -Name autormm-elevated -DisplayName 'autormm elevated helper' -BinaryPathName $bin -StartupType Automatic | Out-Null
+# Auto-restart on exit (e.g. after a self-update swaps the binary).
+sc.exe failure autormm-elevated reset= 86400 actions= restart/5000/restart/5000/restart/5000 | Out-Null
+Start-Service autormm-elevated
+Write-Host 'autormm elevated helper installed (runs as SYSTEM). Admin actions (service control, elevated commands) are now available for this host.'
 `

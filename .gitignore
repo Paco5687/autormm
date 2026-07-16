@@ -7,3 +7,9 @@
 /autormm-agent
 /autormm-client
 /codec-lab
+
+# build artifacts
+*.exe
+autormm-agent
+autormm-server
+autormm-client

@@ -17,7 +17,8 @@ type host struct {
 	metrics  *protocol.Metrics
 	cpuHist  []float64
 	memHist  []float64
-	conn     *agentConn // control connection; nil when offline
+	conn     *agentConn // interactive control connection (tray/user session); nil when offline
+	elevConn *agentConn // optional privileged (SYSTEM/root) helper connection
 }
 
 // Store keeps the live registry of hosts.
@@ -49,13 +50,20 @@ func (s *Store) register(reg protocol.Register, conn *agentConn) (old *agentConn
 	if h == nil {
 		h = &host{}
 		s.hosts[reg.AgentID] = h
+	}
+	h.lastSeen = time.Now()
+	if reg.Elevated {
+		old = h.elevConn
+		h.elevConn = conn
+		if h.conn == nil {
+			h.reg = reg // no interactive agent yet — adopt this identity
+		}
 	} else {
 		old = h.conn
+		h.conn = conn
+		h.reg = reg
 	}
-	h.reg = reg
-	h.conn = conn
-	h.online = true
-	h.lastSeen = time.Now()
+	h.online = h.conn != nil || h.elevConn != nil
 	return old
 }
 
@@ -64,10 +72,16 @@ func (s *Store) disconnect(agentID string, conn *agentConn) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	h := s.hosts[agentID]
-	if h != nil && h.conn == conn {
-		h.online = false
+	if h == nil {
+		return
+	}
+	if h.conn == conn {
 		h.conn = nil
 	}
+	if h.elevConn == conn {
+		h.elevConn = nil
+	}
+	h.online = h.conn != nil || h.elevConn != nil
 }
 
 // updateMetrics stores the latest snapshot and appends to history ring buffers.
@@ -101,8 +115,11 @@ func (s *Store) onlineConns() []*agentConn {
 	defer s.mu.RUnlock()
 	var conns []*agentConn
 	for _, h := range s.hosts {
-		if h.online && h.conn != nil {
+		if h.conn != nil {
 			conns = append(conns, h.conn)
+		}
+		if h.elevConn != nil {
+			conns = append(conns, h.elevConn)
 		}
 	}
 	return conns
@@ -116,12 +133,40 @@ func (s *Store) canStream(agentID string) bool {
 	return h != nil && h.online && h.reg.CanStream
 }
 
-// canExec reports whether a host is online and permits command execution.
+// canExec reports whether a host can run commands (via its elevated helper if
+// present, else the interactive agent).
 func (s *Store) canExec(agentID string) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	h := s.hosts[agentID]
-	return h != nil && h.online && h.reg.CanExec
+	if h == nil {
+		return false
+	}
+	return h.elevConn != nil || (h.online && h.reg.CanExec)
+}
+
+// execConn returns the connection to run commands on — the privileged helper
+// when attached (so exec/service/patch run as SYSTEM/root), else the interactive
+// agent.
+func (s *Store) execConn(agentID string) *agentConn {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	h := s.hosts[agentID]
+	if h == nil {
+		return nil
+	}
+	if h.elevConn != nil {
+		return h.elevConn
+	}
+	return h.conn
+}
+
+// hasElevated reports whether a privileged helper is attached to the host.
+func (s *Store) hasElevated(agentID string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	h := s.hosts[agentID]
+	return h != nil && h.elevConn != nil
 }
 
 // osFor returns a host's reported OS ("linux", "windows", …), or "" if unknown.
@@ -170,7 +215,8 @@ func (s *Store) viewLocked(h *host) protocol.HostView {
 		Arch:         h.reg.Arch,
 		AgentVersion: h.reg.AgentVersion,
 		CanStream:    h.reg.CanStream,
-		CanExec:      h.reg.CanExec,
+		CanExec:      h.reg.CanExec || h.elevConn != nil,
+		Elevated:     h.elevConn != nil,
 		Facts:        h.reg.Facts,
 		Tags:         h.reg.Tags,
 		Online:       h.online,

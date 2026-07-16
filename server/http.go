@@ -53,6 +53,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	// One-command host enrollment.
 	mux.HandleFunc("/install.sh", s.handleInstallScript)
 	mux.HandleFunc("/install.ps1", s.handleInstallPS1)
+	mux.HandleFunc("/install-elevated.ps1", s.handleInstallElevatedPS1)
 	mux.HandleFunc("/download/agent", s.handleDownloadAgent)
 	mux.HandleFunc("/api/enroll", s.handleEnroll)
 

@@ -32,6 +32,7 @@ func main() {
 	interval := flag.Duration("interval", 5*time.Second, "metrics interval")
 	insecure := flag.Bool("insecure", os.Getenv("AUTORMM_INSECURE") == "1", "skip TLS verification (self-signed certs)")
 	allowExec := flag.Bool("allow-exec", os.Getenv("AUTORMM_NO_EXEC") != "1", "permit remote command execution from the server")
+	elevated := flag.Bool("elevated", os.Getenv("AUTORMM_ELEVATED") == "1", "run as the privileged (SYSTEM/root) helper channel")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	noUpdate := flag.Bool("no-auto-update", os.Getenv("AUTORMM_NO_AUTO_UPDATE") == "1", "disable self-update to match the hub")
 	flag.Parse()
@@ -52,6 +53,7 @@ func main() {
 		Interval:    *interval,
 		Insecure:    *insecure,
 		AllowExec:   *allowExec,
+		Elevated:    *elevated,
 	}
 	a := agent.New(cfg)
 
@@ -80,9 +82,14 @@ func main() {
 		go selfupdate.Loop(updateCfg, 20*time.Second, 6*time.Hour)
 	}
 
+	runAgent(a) // on Windows, runs under the SCM when launched as a service
+}
+
+// runInteractive runs the agent until SIGINT/SIGTERM. Used for foreground runs
+// and (on Windows) when not launched by the service control manager.
+func runInteractive(a *agent.Agent) {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-
 	if err := a.Run(ctx); err != nil && ctx.Err() == nil {
 		log.Fatalf("agent: %v", err)
 	}

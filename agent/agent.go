@@ -32,6 +32,7 @@ type Config struct {
 	Interval    time.Duration // metrics push interval
 	Insecure    bool          // skip TLS verify (self-signed homelab certs)
 	AllowExec   bool          // permit remote command execution
+	Elevated    bool          // this is the privileged (SYSTEM/root) helper channel
 }
 
 // Agent is a running host agent.
@@ -155,8 +156,9 @@ func (a *Agent) session(ctx context.Context) error {
 		Platform:     a.platform,
 		Arch:         a.arch,
 		AgentVersion: Version,
-		CanStream:    capture.Available(),
+		CanStream:    capture.Available() && !a.cfg.Elevated, // the elevated helper (session 0) has no user desktop
 		CanExec:      a.cfg.AllowExec,
+		Elevated:     a.cfg.Elevated,
 		EncoderCaps:  capture.EncoderCaps(), // jpeg-tile always; webcodecs-h264 if ffmpeg present
 		Facts:        metrics.Facts(),
 		Tags:         a.cfg.Tags,
