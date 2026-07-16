@@ -376,6 +376,7 @@ function openDetail(agentID) {
   mTitle.textContent = h ? (h.hostname || agentID) : agentID;
   mSub.textContent = h ? `${h.platform || h.os} · ${h.arch}` : '';
   renderFacts(h);
+  renderPatchPanel(h);
   resetInventory();
   loadHistory();
 }
@@ -609,6 +610,48 @@ document.querySelectorAll('#mServices button[data-svc]').forEach(b => b.addEvent
   if (!name) return;
   hostAction({ kind: 'service', action: b.dataset.svc, service: name }, `${b.dataset.svc} ${name}`);
 }));
+
+// ---- patches (#55) ----
+function renderPatchPanel(h) {
+  const linux = h && h.os === 'linux';
+  document.getElementById('patchInstall').disabled = !linux;
+  document.getElementById('patchReboot').disabled = !linux;
+  document.getElementById('patchStatus').textContent = linux ? '' : 'Linux hosts only for now (Windows needs an elevated agent).';
+  document.getElementById('patchOut').textContent = '';
+}
+document.getElementById('patchCheck').addEventListener('click', async () => {
+  const h = hostByID(detail.agent); if (!h) return;
+  const st = document.getElementById('patchStatus'); st.textContent = 'checking…';
+  try {
+    const r = await authFetch('/api/patch/status?agent_id=' + encodeURIComponent(h.agent_id));
+    if (r.status === 401) { showLogin(); return; }
+    const d = await r.json();
+    if (!d.supported) { st.textContent = d.note || 'not supported'; return; }
+    st.textContent = `${d.updates} update${d.updates === 1 ? '' : 's'} available`
+      + (d.security ? `, ${d.security} security` : '')
+      + (d.reboot_required ? ' · reboot required' : '');
+  } catch (e) { st.textContent = 'check error: ' + e; }
+});
+document.getElementById('patchInstall').addEventListener('click', async () => {
+  const h = hostByID(detail.agent); if (!h) return;
+  if (!confirm(`Install all available updates on ${h.hostname || h.agent_id}? This can take several minutes.`)) return;
+  const st = document.getElementById('patchStatus'), out = document.getElementById('patchOut');
+  st.textContent = 'installing… (may take several minutes)'; out.textContent = '';
+  try {
+    const r = await authFetch('/api/patch/install', 'POST', { agent_id: h.agent_id });
+    const d = await r.json().catch(() => ({}));
+    st.textContent = (r.ok && d.ok) ? 'done' : `finished (exit ${d.exit_code})`;
+    out.textContent = d.output || '';
+  } catch (e) { st.textContent = 'install error: ' + e; }
+});
+document.getElementById('patchReboot').addEventListener('click', async () => {
+  const h = hostByID(detail.agent); if (!h) return;
+  if (!confirm(`Reboot ${h.hostname || h.agent_id} now?`)) return;
+  try {
+    const r = await authFetch('/api/patch/reboot', 'POST', { agent_id: h.agent_id });
+    document.getElementById('patchStatus').textContent = r.ok ? 'reboot sent' : 'reboot failed';
+  } catch (e) { document.getElementById('patchStatus').textContent = 'reboot error: ' + e; }
+});
 
 const mFacts = document.getElementById('mFacts');
 function renderFacts(h) {

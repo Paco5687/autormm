@@ -53,6 +53,16 @@
         <button class="btn" data-svc="stop">Stop</button>
         <button class="btn" data-svc="restart">Restart</button>
       </div>
+      <div id="mPatch" class="mpatch">
+        <div class="mpatch-row">
+          <b>Patches</b>
+          <button id="patchCheck" class="btn ghost">Check for updates</button>
+          <button id="patchInstall" class="btn">Install updates</button>
+          <button id="patchReboot" class="btn ghost">Reboot</button>
+          <span id="patchStatus" class="muted"></span>
+        </div>
+        <pre id="patchOut" class="mpatch-out"></pre>
+      </div>
       <div class="software">
         <div class="software-head">
           <button id="mInvBtn" class="btn">Load software inventory</button>

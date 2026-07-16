@@ -118,6 +118,10 @@ body {
 .proc-table .proc-kill, .proc-table .proc-restart { padding: 0 7px; font-size: 12px; line-height: 1.5; }
 .msvc { display: flex; gap: 6px; align-items: center; margin: 12px 0 0; flex-wrap: wrap; }
 .msvc .inv-filter { max-width: 260px; }
+.mpatch { margin-top: 12px; }
+.mpatch-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.mpatch-out { white-space: pre-wrap; font-family: var(--mono); font-size: 11px; color: var(--muted); max-height: 170px; overflow: auto; margin: 8px 0 0; }
+.mpatch-out:empty { display: none; }
 .no-data { color: var(--muted); text-align: center; padding: 24px; font-size: 13px; }
 .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 5px 18px; margin: 10px 0 4px; }
 .facts .fact { display: flex; gap: 8px; font-size: 12px; }
