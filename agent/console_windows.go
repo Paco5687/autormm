@@ -132,10 +132,17 @@ func (a *Agent) launchConsoleWorker(session uint32) (*os.Process, error) {
 	var si windows.StartupInfo
 	si.Cb = uint32(unsafe.Sizeof(si))
 	si.Desktop = desktop
+	// Hide the worker's window. It is a console binary launched into an
+	// interactive session, so without this it shows a visible console window on
+	// the user's desktop.
+	si.Flags = windows.STARTF_USESHOWWINDOW
+	si.ShowWindow = windows.SW_HIDE
 	var pi windows.ProcessInformation
 	// nil environment => inherit the launcher's (SYSTEM) block, which is enough
-	// for the worker to run; it needs only its command-line flags.
-	flags := uint32(windows.CREATE_NO_WINDOW | windows.CREATE_NEW_CONSOLE)
+	// for the worker to run; it needs only its command-line flags. CREATE_NO_WINDOW
+	// runs the console binary with no console window at all (do NOT combine with
+	// CREATE_NEW_CONSOLE, which forces a visible one).
+	flags := uint32(windows.CREATE_NO_WINDOW)
 	if err := windows.CreateProcessAsUser(token, appName, cmdLine, nil, nil, false,
 		flags, nil, nil, &si, &pi); err != nil {
 		return nil, err
