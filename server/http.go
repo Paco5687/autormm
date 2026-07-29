@@ -426,13 +426,17 @@ func (s *Server) handleAgentControl(w http.ResponseWriter, r *http.Request) {
 
 	conn := newAgentConn(reg.AgentID, ws, s.execReg, s.invReg)
 	if old := s.store.register(reg, conn); old != nil {
+		// Displacing a live connection in the same slot is the usual cause of an
+		// agent seeing repeated abnormal closures — log it so that churn is
+		// visible from the hub side.
+		log.Printf("agent %s: displaced previous connection (elevated=%v console=%v)", reg.AgentID, reg.Elevated, reg.Console)
 		old.close()
 	}
-	log.Printf("agent registered: %s (%s, %s) stream=%v", reg.AgentID, reg.Hostname, reg.Platform, reg.CanStream)
+	log.Printf("agent registered: %s (%s, %s) stream=%v elevated=%v console=%v", reg.AgentID, reg.Hostname, reg.Platform, reg.CanStream, reg.Elevated, reg.Console)
 
 	go conn.writePump()
 	conn.readLoop(s.store) // blocks until the connection drops
-	log.Printf("agent disconnected: %s", reg.AgentID)
+	log.Printf("agent disconnected: %s (elevated=%v console=%v)", reg.AgentID, reg.Elevated, reg.Console)
 }
 
 // ---- media sockets ----

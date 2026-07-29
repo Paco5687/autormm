@@ -87,7 +87,11 @@ func newInjector() (Injector, error) { return &winInjector{}, nil }
 
 func systemMetric(i int) int {
 	r, _, _ := procGetSystemMet.Call(uintptr(i))
-	return int(r)
+	// GetSystemMetrics returns a 32-bit signed int. Metrics like
+	// SM_?VIRTUALSCREEN are negative when a monitor sits left of / above the
+	// primary; int(r) zero-extends the DWORD and turns e.g. -2067 into
+	// 4294965229, which wrecks the coordinate mapping. Sign-extend via int32.
+	return int(int32(r))
 }
 
 // SendInput targets the calling thread's desktop, so in console-worker mode

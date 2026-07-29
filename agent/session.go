@@ -159,6 +159,7 @@ func (a *Agent) frameLoop(ctx context.Context, write func(int, []byte) error, ca
 	interval := time.Second / time.Duration(fps)
 	const keyframeEvery = 4 * time.Second
 	lastKey := time.Time{}
+	captureFails := 0
 	for {
 		if ctx.Err() != nil {
 			return
@@ -167,9 +168,23 @@ func (a *Agent) frameLoop(ctx context.Context, write func(int, []byte) error, ca
 		force := start.Sub(lastKey) >= keyframeEvery
 		img, err := cap.Capture()
 		if err != nil {
-			log.Printf("capture error: %v", err)
-			return
+			// Capture fails transiently — a desktop switch (lock / sign-in / UAC)
+			// or a mode change makes BitBlt fail for a moment. Skip the frame and
+			// retry instead of ending the session, so the picture resumes on its
+			// own. Force a keyframe next success so the viewer refreshes fully.
+			captureFails++
+			if captureFails%30 == 1 { // ~ every 3s at 10fps, not every frame
+				log.Printf("capture error (skipping frame): %v", err)
+			}
+			lastKey = time.Time{}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(interval):
+			}
+			continue
 		}
+		captureFails = 0
 		if force {
 			lastKey = start
 		}
