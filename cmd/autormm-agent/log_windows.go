@@ -3,6 +3,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -12,10 +13,8 @@ import (
 // elevated helper and console worker (which have no console) leave a trail.
 //
 // It writes next to the executable — C:\ProgramData\autormm — rather than under
-// LOCALAPPDATA: the console worker inherits the SYSTEM helper's environment
-// (LOCALAPPDATA points at the systemprofile) but runs as the signed-in user, who
-// can't write there. ProgramData is created by the installer and readable by
-// everyone, so the logs are both writable by the worker and easy to fetch.
+// LOCALAPPDATA, which for these SYSTEM-launched roles points into the
+// systemprofile and is awkward to read back from an ordinary terminal.
 func setupFileLog(role string) {
 	var dir string
 	if exe, err := os.Executable(); err == nil {
@@ -33,5 +32,8 @@ func setupFileLog(role string) {
 		return
 	}
 	log.SetOutput(f)
-	log.Printf("=== %s log start (pid %d) ===", role, os.Getpid())
+	// Tag every line with the pid: the roles share a log directory, and a
+	// duplicated (orphaned) worker is otherwise invisible in interleaved output.
+	log.SetPrefix(fmt.Sprintf("[%d] ", os.Getpid()))
+	log.Printf("=== %s log start ===", role)
 }

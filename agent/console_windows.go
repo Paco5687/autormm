@@ -6,6 +6,7 @@ import (
 	"context"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -43,6 +44,13 @@ func (a *Agent) superviseConsole(ctx context.Context) {
 		session = invalidSession
 	}
 	defer stop()
+
+	// Earlier builds orphaned workers on self-update (os.Exit skips cleanup), so a
+	// host can already have several running, all capturing the screen. Reap them
+	// once at startup; the job object prevents new ones from accumulating.
+	if n := killStrayWorkers(); n > 0 {
+		log.Printf("console worker: reaped %d orphaned worker(s) from a previous run", n)
+	}
 
 	t := time.NewTicker(5 * time.Second)
 	defer t.Stop()
@@ -95,6 +103,16 @@ func processAlive(p *os.Process) bool {
 // worker re-attaches itself to whichever desktop holds input, including the
 // secure one, once it is running.
 func (a *Agent) launchConsoleWorker(session uint32) (*os.Process, error) {
+	// Tie the worker's lifetime to this process. Self-update exits via os.Exit,
+	// which skips every defer — without this the worker survived, the restarted
+	// helper spawned another, and the orphans accumulated: several processes all
+	// capturing the screen (slow, jittery) and displacing each other's hub
+	// connection. A job object with KILL_ON_JOB_CLOSE is enforced by the kernel
+	// when our handle closes, however abruptly we die.
+	if err := ensureWorkerJob(); err != nil {
+		log.Printf("console worker: job object unavailable (%v) -- continuing without it", err)
+	}
+
 	token, err := consoleSessionToken(session)
 	if err != nil {
 		return nil, err
@@ -142,14 +160,91 @@ func (a *Agent) launchConsoleWorker(session uint32) (*os.Process, error) {
 	// for the worker to run; it needs only its command-line flags. CREATE_NO_WINDOW
 	// runs the console binary with no console window at all (do NOT combine with
 	// CREATE_NEW_CONSOLE, which forces a visible one).
-	flags := uint32(windows.CREATE_NO_WINDOW)
+	// CREATE_BREAKAWAY_FROM_JOB is deliberately NOT set: the child must stay in
+	// our job so kill-on-close applies. CREATE_SUSPENDED lets us assign it to the
+	// job before it runs, closing the window where it could escape.
+	flags := uint32(windows.CREATE_NO_WINDOW | windows.CREATE_SUSPENDED)
 	if err := windows.CreateProcessAsUser(token, appName, cmdLine, nil, nil, false,
 		flags, nil, nil, &si, &pi); err != nil {
 		return nil, err
 	}
-	windows.CloseHandle(pi.Thread)
-	windows.CloseHandle(pi.Process)
+	defer windows.CloseHandle(pi.Thread)
+	defer windows.CloseHandle(pi.Process)
+	if workerJob != 0 {
+		if err := windows.AssignProcessToJobObject(workerJob, pi.Process); err != nil {
+			log.Printf("console worker: AssignProcessToJobObject: %v", err)
+		}
+	}
+	if _, err := windows.ResumeThread(pi.Thread); err != nil {
+		windows.TerminateProcess(pi.Process, 1)
+		return nil, err
+	}
 	return os.FindProcess(int(pi.ProcessId))
+}
+
+// killStrayWorkers terminates leftover console workers from a previous run of
+// this helper and returns how many it stopped.
+//
+// It only targets our own executable running outside session 0: the helper (this
+// process) is the session-0 instance, and workers are the copies it launched into
+// the console session. The tray agent is a different binary, so it is untouched.
+func killStrayWorkers() int {
+	self, err := os.Executable()
+	if err != nil {
+		return 0
+	}
+	want := strings.ToLower(filepath.Base(self))
+	me := uint32(os.Getpid())
+
+	snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
+	if err != nil {
+		return 0
+	}
+	defer windows.CloseHandle(snap)
+
+	var e windows.ProcessEntry32
+	e.Size = uint32(unsafe.Sizeof(e))
+	killed := 0
+	for err = windows.Process32First(snap, &e); err == nil; err = windows.Process32Next(snap, &e) {
+		if e.ProcessID == me || strings.ToLower(windows.UTF16ToString(e.ExeFile[:])) != want {
+			continue
+		}
+		var sid uint32
+		if windows.ProcessIdToSessionId(e.ProcessID, &sid) != nil || sid == 0 {
+			continue // session 0 is a helper, not a worker
+		}
+		h, err := windows.OpenProcess(windows.PROCESS_TERMINATE, false, e.ProcessID)
+		if err != nil {
+			continue
+		}
+		if windows.TerminateProcess(h, 0) == nil {
+			killed++
+		}
+		windows.CloseHandle(h)
+	}
+	return killed
+}
+
+// workerJob holds the console workers so they die with this process.
+var workerJob windows.Handle
+
+func ensureWorkerJob() error {
+	if workerJob != 0 {
+		return nil
+	}
+	h, err := windows.CreateJobObject(nil, nil)
+	if err != nil {
+		return err
+	}
+	var info windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION
+	info.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+	if _, err := windows.SetInformationJobObject(h, windows.JobObjectExtendedLimitInformation,
+		uintptr(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info))); err != nil {
+		windows.CloseHandle(h)
+		return err
+	}
+	workerJob = h
+	return nil
 }
 
 // consoleSessionToken returns a primary SYSTEM token bound to the console
