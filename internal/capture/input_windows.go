@@ -19,6 +19,7 @@ var (
 	user32           = syscall.NewLazyDLL("user32.dll")
 	procSendInput    = user32.NewProc("SendInput")
 	procGetSystemMet = user32.NewProc("GetSystemMetrics")
+	procSetCursorPos = user32.NewProc("SetCursorPos")
 )
 
 const (
@@ -109,33 +110,17 @@ func sendKey(e *keyInputEvent) {
 func (in *winInjector) MouseMove(x, y int) error {
 	in.mu.Lock()
 	defer in.mu.Unlock()
-	// Everything runs on the desktop-following thread (a no-op for the ordinary
-	// agent). The virtual-screen metrics MUST be read there too: GetSystemMetrics
-	// reflects the calling thread's desktop, and reading them off the console
-	// worker's default-desktop goroutine returned zeroes, which collapsed the
-	// coordinate mapping and pinned the pointer to a screen edge.
+	// SetCursorPos takes exact virtual-desktop pixels (x,y already include the
+	// captured region's origin), so there is no 0..65535 normalisation to get
+	// wrong — the earlier SendInput/VIRTUALDESK mapping collapsed one axis when
+	// the virtual-screen metrics came back off. It must still run on the
+	// desktop-following thread (a no-op for the ordinary agent) or it targets the
+	// wrong desktop. Negative coordinates (a monitor left of/above the primary)
+	// pass through correctly as int32 in the low word.
 	onInputDesktop(func() {
-		// Map absolute virtual-desktop pixels to the 0..65535 range SendInput
-		// wants, normalised against the whole virtual screen (all monitors) so
-		// any display, at any offset, lands correctly. DPI-independent.
-		vx := systemMetric(smXVirtualScreen)
-		vy := systemMetric(smYVirtualScreen)
-		vw := systemMetric(smCXVirtualScreen)
-		vh := systemMetric(smCYVirtualScreen)
-		if vw < 2 {
-			vw = 2
-		}
-		if vh < 2 {
-			vh = 2
-		}
-		ax := int32((x - vx) * 65535 / (vw - 1))
-		ay := int32((y - vy) * 65535 / (vh - 1))
-		e := &mouseInputEvent{dx: ax, dy: ay, dwFlags: mouseeventfMove | mouseeventfAbsolute | mouseeventfVirtualDesk}
-		e.typ = inputMouse
-		n, _, _ := procSendInput.Call(1, uintptr(unsafe.Pointer(e)), unsafe.Sizeof(*e))
+		r, _, _ := procSetCursorPos.Call(uintptr(uint32(int32(x))), uintptr(uint32(int32(y))))
 		firstMoveLog.Do(func() {
-			log.Printf("input: first mouse move src=(%d,%d) vscreen=(%d,%d %dx%d) -> abs=(%d,%d) injected=%d following=%v",
-				x, y, vx, vy, vw, vh, ax, ay, n, isFollowing())
+			log.Printf("input: first mouse move -> SetCursorPos(%d,%d) ok=%v following=%v", x, y, r != 0, isFollowing())
 		})
 	})
 	return nil
