@@ -15,12 +15,15 @@ Go binaries with no runtime dependencies:
 
 ## Features
 
-- **Remote desktop** in the browser — multi-monitor picker, live resolution switching, remote-cursor overlay, clipboard sync, file transfer, and an opt-in H.264 codec with JPEG-tile fallback.
+- **Remote desktop** in the browser — multi-monitor picker, live resolution switching (with optional auto-fit), remote-cursor overlay, clipboard sync, file transfer, an on-screen keyboard for phones/tablets, and an opt-in H.264 codec with JPEG-tile fallback.
 - **Terminal** — a real shell in the browser: `bash`/`$SHELL` on Linux/macOS, **PowerShell** on Windows (ConPTY).
 - **Monitoring** — live metrics with historical graphs, top processes, and threshold alerts with notifications.
 - **Actions** — kill or restart a process, start/stop/restart a service, run one-off commands, and schedule scripts.
+- **Patching** — check, install, and reboot for OS updates from the host panel (Linux `apt`/`dnf` today; Windows Update is in progress).
 - **Inventory & device info** — installed software plus IP/MAC, CPU, RAM, kernel, and virtualization per host.
-- **Fleet ops** — one-command onboarding from the dashboard; agents **auto-update** to match the hub (validated download, with rollback).
+- **Fleet ops** — one-command onboarding from the dashboard; agents **auto-update** to match the hub (validated download, with rollback), and the hub can update *itself* and push updates fleet-wide from the UI.
+- **Login accounts** — username + password (argon2id) with first-run setup, on top of the admin token.
+- **Windows elevated helper** (optional) — a LocalSystem service alongside the user-session agent, so the hub can run admin actions like service control.
 
 Key properties:
 
@@ -76,8 +79,10 @@ agents use (it's baked into the Add-host command for you). Both are saved to
 `~/.config/autormm/server.env`. (Prefer a binary? `./deploy/install-server.sh
 --bin ./autormm-server`, or just run `autormm-server` in the foreground.)
 
-**2. Open the dashboard.** Go to `http://<hub-ip>:8765`, click the **🔑** icon,
-and paste the admin token. You're in.
+**2. Open the dashboard.** Go to `http://<hub-ip>:8765`. A fresh hub greets you
+with a **setup screen** — create your admin username + password and you're in.
+(Passwords are argon2id-hashed on the hub. You can also sign in with the admin
+token any time via **🔑 → Use an access token**.)
 
 **3. Add a host.** Click **＋ Add host** and copy the one-liner for the machine's
 OS. Run it on that machine — it downloads the agent *from your hub* and connects
@@ -92,6 +97,16 @@ curl -fsSL "http://<hub-ip>:8765/install.sh?token=<enroll>" | sudo sh
 
 On Windows the agent installs as a small **system-tray app** (status icon,
 starts at logon, no admin, no scheduled task); on Linux it's a systemd service.
+
+Because the tray agent runs as the logged-in user, it can't touch system
+services. For those, install the optional **elevated helper** once from an
+administrator PowerShell (the command is in **Add host**) — it adds a LocalSystem
+service that the hub routes admin actions to, while the tray keeps doing
+screen, input, and terminal:
+
+```powershell
+iwr -useb "http://<hub-ip>:8765/install-elevated.ps1?token=<enroll>" | iex
+```
 
 **4. That's your client.** You don't install a separate client — the dashboard
 *is* the client. Click a host for graphs, then **Terminal** for a shell or
@@ -281,13 +296,14 @@ network — when history is enabled via `--db`) and its top processes.
 | `AUTORMM_TAGS` | `-tags` | free-form labels |
 | `AUTORMM_INSECURE` | `-insecure` | skip TLS verify (self-signed) |
 | `AUTORMM_NO_EXEC=1` | `-allow-exec=false` | disable remote command execution on this host |
+| | `-elevated` | run as the privileged helper (Windows LocalSystem service): the hub routes admin actions here and this instance does not stream the screen |
 | | `-interval` | metrics interval (default 5s) |
 
 ## Security model
 
 - **Transport:** run behind a TLS reverse proxy, or use `-tls-cert`/`-tls-key`, whenever traffic leaves a trusted link. Agents verify certs unless `--insecure`.
 - **Agents** present the enroll token to open the control socket.
-- **Clients/dashboard** present the admin token for `/api/*`.
+- **Clients/dashboard** present the admin token for `/api/*`, or a signed 12-hour session token from a username/password login (argon2id hashes in `~/.config/autormm/admins.json`).
 - **Media sockets** require a short-lived HMAC-signed ticket (60s to open, bound to session id + agent id), so viewer URLs can't be replayed later.
 - Keep the hub on your LAN (`IP:port`) or behind a zero-trust overlay — never on the open internet. This tool grants full remote control of hosts; treat the tokens like root passwords. See [SECURITY.md](SECURITY.md).
 
