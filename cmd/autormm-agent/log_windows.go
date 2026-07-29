@@ -8,17 +8,23 @@ import (
 	"path/filepath"
 )
 
-// setupFileLog redirects the standard logger to a role-specific file under the
-// process's LOCALAPPDATA. For SYSTEM processes (the elevated helper and the
-// console worker) that resolves to
-// C:\Windows\System32\config\systemprofile\AppData\Local\autormm, so their logs
-// survive even though they have no console.
+// setupFileLog redirects the standard logger to a role-specific file, so the
+// elevated helper and console worker (which have no console) leave a trail.
+//
+// It writes next to the executable — C:\ProgramData\autormm — rather than under
+// LOCALAPPDATA: the console worker inherits the SYSTEM helper's environment
+// (LOCALAPPDATA points at the systemprofile) but runs as the signed-in user, who
+// can't write there. ProgramData is created by the installer and readable by
+// everyone, so the logs are both writable by the worker and easy to fetch.
 func setupFileLog(role string) {
-	dir := os.Getenv("LOCALAPPDATA")
-	if dir == "" {
+	var dir string
+	if exe, err := os.Executable(); err == nil {
+		dir = filepath.Dir(exe)
+	} else if la := os.Getenv("LOCALAPPDATA"); la != "" {
+		dir = filepath.Join(la, "autormm")
+	} else {
 		return
 	}
-	dir = filepath.Join(dir, "autormm")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return
 	}
