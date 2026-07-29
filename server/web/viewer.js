@@ -280,15 +280,33 @@ function drawFrame(dv) {
 // ---- input ----
 function send(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); }
 
+let lastPos = { x: 0, y: 0 };
 function toRemote(e) {
   const r = canvas.getBoundingClientRect();
   const x = Math.round((e.clientX - r.left) * (canvas.width / r.width));
   const y = Math.round((e.clientY - r.top) * (canvas.height / r.height));
-  return { x: Math.max(0, Math.min(remoteW - 1, x)), y: Math.max(0, Math.min(remoteH - 1, y)) };
+  lastPos = { x: Math.max(0, Math.min(remoteW - 1, x)), y: Math.max(0, Math.min(remoteH - 1, y)) };
+  return lastPos;
 }
 
+function overCanvas(e) {
+  const r = canvas.getBoundingClientRect();
+  return e.clientX >= r.left && e.clientX < r.right && e.clientY >= r.top && e.clientY < r.bottom;
+}
+
+// Buttons currently held on the host. Move and release are tracked on the
+// window, not the canvas: pressing inside the view and releasing over the top
+// bar (always visible) or outside the browser never reaches a canvas-only
+// 'mouseup', which would leave the host button stuck down — from then on every
+// move is a drag, and dragging into the top edge snaps windows. Window-level
+// tracking also keeps a drag alive while the pointer is briefly outside.
+const heldButtons = new Set();
+
 let lastMove = 0;
-canvas.addEventListener('mousemove', e => {
+window.addEventListener('mousemove', e => {
+  // Off-canvas moves only matter mid-drag; otherwise reaching for the top bar
+  // would slide the host cursor to a clamped edge.
+  if (!heldButtons.size && !overCanvas(e)) return;
   const now = performance.now();
   if (now - lastMove < 16) return; // ~60 Hz cap
   lastMove = now;
@@ -297,14 +315,22 @@ canvas.addEventListener('mousemove', e => {
 });
 canvas.addEventListener('mousedown', e => {
   e.preventDefault();
+  heldButtons.add(e.button);
   const p = toRemote(e);
   send({ t: 'mdown', x: p.x, y: p.y, button: e.button });
 });
-canvas.addEventListener('mouseup', e => {
-  e.preventDefault();
+window.addEventListener('mouseup', e => {
+  if (!heldButtons.delete(e.button)) return; // not a press that started in the view
   const p = toRemote(e);
   send({ t: 'mup', x: p.x, y: p.y, button: e.button });
 });
+// A drag that ends while the tab is hidden/unfocused never delivers 'mouseup'
+// (e.g. alt-tab, or the release lands on another window), so release manually.
+function releaseHeldButtons() {
+  for (const b of heldButtons) send({ t: 'mup', x: lastPos.x, y: lastPos.y, button: b });
+  heldButtons.clear();
+}
+window.addEventListener('blur', releaseHeldButtons);
 canvas.addEventListener('contextmenu', e => e.preventDefault());
 canvas.addEventListener('wheel', e => {
   e.preventDefault();
