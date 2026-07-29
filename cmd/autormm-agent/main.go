@@ -46,6 +46,16 @@ func main() {
 		log.Fatal("both --server and --token are required (or set AUTORMM_SERVER / AUTORMM_ENROLL_TOKEN)")
 	}
 
+	// The elevated helper and console worker run as SYSTEM services/children with
+	// no console, so their stderr is discarded. Send logs to a role-specific file
+	// so they can actually be inspected.
+	switch {
+	case *consoleWorker:
+		setupFileLog("console-worker")
+	case *elevated:
+		setupFileLog("elevated")
+	}
+
 	cfg := agent.Config{
 		Server:      *server,
 		EnrollToken: *token,

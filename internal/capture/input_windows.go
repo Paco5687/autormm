@@ -10,16 +10,16 @@ import (
 	"unsafe"
 )
 
-// firstMoveLog logs the virtual-screen metrics the first time a pointer move is
-// injected, so a mis-mapped cursor (e.g. pinned to an edge) is diagnosable from
-// the agent log without guesswork.
-var firstMoveLog sync.Once
+// moveLogN counts how many pointer moves have been logged; the first few carry
+// the virtual-screen metrics and computed absolute coords so a mis-mapped cursor
+// (e.g. pinned to an edge) is diagnosable from the agent log. Guarded by the
+// injector mutex that MouseMove already holds.
+var moveLogN int
 
 var (
 	user32           = syscall.NewLazyDLL("user32.dll")
 	procSendInput    = user32.NewProc("SendInput")
 	procGetSystemMet = user32.NewProc("GetSystemMetrics")
-	procSetCursorPos = user32.NewProc("SetCursorPos")
 )
 
 const (
@@ -110,18 +110,32 @@ func sendKey(e *keyInputEvent) {
 func (in *winInjector) MouseMove(x, y int) error {
 	in.mu.Lock()
 	defer in.mu.Unlock()
-	// SetCursorPos takes exact virtual-desktop pixels (x,y already include the
-	// captured region's origin), so there is no 0..65535 normalisation to get
-	// wrong — the earlier SendInput/VIRTUALDESK mapping collapsed one axis when
-	// the virtual-screen metrics came back off. It must still run on the
-	// desktop-following thread (a no-op for the ordinary agent) or it targets the
-	// wrong desktop. Negative coordinates (a monitor left of/above the primary)
-	// pass through correctly as int32 in the low word.
+	// SendInput with MOUSEEVENTF_ABSOLUTE|VIRTUALDESK reaches the secure desktop
+	// (SetCursorPos does not reliably), but needs the pixels normalised to
+	// 0..65535 over the virtual screen. Run the whole thing on the
+	// desktop-following thread so the metrics reflect the active desktop.
 	onInputDesktop(func() {
-		r, _, _ := procSetCursorPos.Call(uintptr(uint32(int32(x))), uintptr(uint32(int32(y))))
-		firstMoveLog.Do(func() {
-			log.Printf("input: first mouse move -> SetCursorPos(%d,%d) ok=%v following=%v", x, y, r != 0, isFollowing())
-		})
+		vx := systemMetric(smXVirtualScreen)
+		vy := systemMetric(smYVirtualScreen)
+		vw := systemMetric(smCXVirtualScreen)
+		vh := systemMetric(smCYVirtualScreen)
+		dw, dh := vw, vh
+		if dw < 2 {
+			dw = 2
+		}
+		if dh < 2 {
+			dh = 2
+		}
+		ax := int32((x - vx) * 65535 / (dw - 1))
+		ay := int32((y - vy) * 65535 / (dh - 1))
+		e := &mouseInputEvent{dx: ax, dy: ay, dwFlags: mouseeventfMove | mouseeventfAbsolute | mouseeventfVirtualDesk}
+		e.typ = inputMouse
+		n, _, _ := procSendInput.Call(1, uintptr(unsafe.Pointer(e)), unsafe.Sizeof(*e))
+		if moveLogN < 6 { // log the first few moves so a bad mapping is visible
+			moveLogN++
+			log.Printf("input move #%d: src=(%d,%d) vscreen=(x%d y%d w%d h%d) -> abs=(%d,%d) injected=%d following=%v",
+				moveLogN, x, y, vx, vy, vw, vh, ax, ay, n, isFollowing())
+		}
 	})
 	return nil
 }

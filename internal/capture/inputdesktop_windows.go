@@ -3,6 +3,7 @@
 package capture
 
 import (
+	"log"
 	"runtime"
 	"sync"
 )
@@ -60,16 +61,23 @@ func desktopThread(ready chan<- struct{}) {
 		}
 		h, _, _ := procOpenInputDesktop.Call(0, 0, desktopGenericAll)
 		if h == 0 {
+			log.Printf("desktop-follow: OpenInputDesktop(%q) failed", name)
 			return
 		}
-		if r, _, _ := procSetThreadDesktop.Call(h); r == 0 {
-			procCloseDesktop.Call(h) // keep the thread where it is
+		// SetThreadDesktop fails (ERROR_BUSY) if the thread still holds GDI/DC
+		// state on its current desktop, which is exactly the case after a capture
+		// — the symptom is a thread stuck on Winlogon after unlock, so the screen
+		// and pointer freeze. Log it so that failure is visible.
+		if r, _, err := procSetThreadDesktop.Call(h); r == 0 {
+			log.Printf("desktop-follow: SetThreadDesktop(%q) failed: %v (staying on %q)", name, err, currentName)
+			procCloseDesktop.Call(h)
 			return
 		}
 		if current != 0 {
 			procCloseDesktop.Call(current)
 		}
 		current, currentName = h, name
+		log.Printf("desktop-follow: now on %q", name)
 	}
 
 	attach()
