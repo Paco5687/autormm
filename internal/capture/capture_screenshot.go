@@ -70,7 +70,12 @@ func (c *screenCapturer) Bounds() image.Rectangle {
 }
 
 func (c *screenCapturer) Capture() (*image.RGBA, error) {
-	return screenshot.CaptureRect(c.Bounds())
+	// In console-worker mode this runs on the thread attached to the active
+	// input desktop, so the lock / sign-in screen captures like any other.
+	var img *image.RGBA
+	var err error
+	onInputDesktop(func() { img, err = screenshot.CaptureRect(c.Bounds()) })
+	return img, err
 }
 
 func (c *screenCapturer) Close() error { return nil }

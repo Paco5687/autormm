@@ -83,14 +83,21 @@ func systemMetric(i int) int {
 	return int(r)
 }
 
+// SendInput targets the calling thread's desktop, so in console-worker mode
+// these must run on the thread following the input desktop — otherwise clicks
+// and keystrokes vanish at the lock screen.
 func sendMouse(e *mouseInputEvent) {
 	e.typ = inputMouse
-	procSendInput.Call(1, uintptr(unsafe.Pointer(e)), unsafe.Sizeof(*e))
+	onInputDesktop(func() {
+		procSendInput.Call(1, uintptr(unsafe.Pointer(e)), unsafe.Sizeof(*e))
+	})
 }
 
 func sendKey(e *keyInputEvent) {
 	e.typ = inputKeyboard
-	procSendInput.Call(1, uintptr(unsafe.Pointer(e)), unsafe.Sizeof(*e))
+	onInputDesktop(func() {
+		procSendInput.Call(1, uintptr(unsafe.Pointer(e)), unsafe.Sizeof(*e))
+	})
 }
 
 func (in *winInjector) MouseMove(x, y int) error {

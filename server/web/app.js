@@ -682,6 +682,7 @@ function renderFacts(h) {
   if (f.virtualization) items.push(['Virtualization', f.virtualization]);
   items.push(['Agent', (h && h.agent_version) || '—']);
   if (h && h.elevated) items.push(['Admin helper', 'installed ✓']);
+  if (h && h.console) items.push(['Lock screen', 'capturable ✓']);
   mFacts.innerHTML = items
     .map(([k, v]) => `<div class="fact"><span class="fk">${k}</span><span class="fv">${escapeHtml(v)}</span></div>`)
     .join('');

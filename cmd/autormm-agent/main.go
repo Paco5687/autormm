@@ -33,6 +33,7 @@ func main() {
 	insecure := flag.Bool("insecure", os.Getenv("AUTORMM_INSECURE") == "1", "skip TLS verification (self-signed certs)")
 	allowExec := flag.Bool("allow-exec", os.Getenv("AUTORMM_NO_EXEC") != "1", "permit remote command execution from the server")
 	elevated := flag.Bool("elevated", os.Getenv("AUTORMM_ELEVATED") == "1", "run as the privileged (SYSTEM/root) helper channel")
+	consoleWorker := flag.Bool("console-worker", false, "internal: SYSTEM screen worker launched into the console session by the elevated helper")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	noUpdate := flag.Bool("no-auto-update", os.Getenv("AUTORMM_NO_AUTO_UPDATE") == "1", "disable self-update to match the hub")
 	flag.Parse()
@@ -54,6 +55,7 @@ func main() {
 		Insecure:    *insecure,
 		AllowExec:   *allowExec,
 		Elevated:    *elevated,
+		Console:     *consoleWorker,
 	}
 	a := agent.New(cfg)
 
@@ -73,7 +75,9 @@ func main() {
 			return nil
 		},
 	}
-	if !*noUpdate {
+	// The console worker is a transient child of the elevated helper, which owns
+	// updates for the shared binary; a second updater would fight it.
+	if !*noUpdate && !*consoleWorker {
 		a.SetUpdateHook(func() {
 			if err := selfupdate.CheckOnce(updateCfg); err != nil {
 				log.Printf("update check: %v", err)

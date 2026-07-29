@@ -33,6 +33,7 @@ type Config struct {
 	Insecure    bool          // skip TLS verify (self-signed homelab certs)
 	AllowExec   bool          // permit remote command execution
 	Elevated    bool          // this is the privileged (SYSTEM/root) helper channel
+	Console     bool          // this is the SYSTEM console worker (follows the input desktop; can capture the lock screen)
 }
 
 // Agent is a running host agent.
@@ -104,6 +105,16 @@ func New(cfg Config) *Agent {
 
 // Run connects and reconnects until ctx is cancelled.
 func (a *Agent) Run(ctx context.Context) error {
+	if a.cfg.Console {
+		// This process serves the screen from the console session; make capture
+		// and input follow the active input desktop (lock / sign-in included).
+		capture.FollowInputDesktop()
+	}
+	if a.cfg.Elevated {
+		// The session-0 helper can't capture a desktop itself, but it can launch
+		// and babysit a worker inside the console session that can.
+		go a.superviseConsole(ctx)
+	}
 	backoff := time.Second
 	for {
 		if ctx.Err() != nil {
@@ -156,12 +167,16 @@ func (a *Agent) session(ctx context.Context) error {
 		Platform:     a.platform,
 		Arch:         a.arch,
 		AgentVersion: Version,
-		CanStream:    capture.Available() && !a.cfg.Elevated, // the elevated helper (session 0) has no user desktop
-		CanExec:      a.cfg.AllowExec,
-		Elevated:     a.cfg.Elevated,
-		EncoderCaps:  capture.EncoderCaps(), // jpeg-tile always; webcodecs-h264 if ffmpeg present
-		Facts:        metrics.Facts(),
-		Tags:         a.cfg.Tags,
+		// The session-0 elevated helper has no desktop; the console worker does
+		// (it follows the input desktop) and streams the screen, lock screen
+		// included.
+		CanStream:   capture.Available() && (!a.cfg.Elevated || a.cfg.Console),
+		CanExec:     a.cfg.AllowExec,
+		Elevated:    a.cfg.Elevated,
+		Console:     a.cfg.Console,
+		EncoderCaps: capture.EncoderCaps(), // jpeg-tile always; webcodecs-h264 if ffmpeg present
+		Facts:       metrics.Facts(),
+		Tags:        a.cfg.Tags,
 	}
 	if err := ws.WriteJSON(reg); err != nil {
 		return err

@@ -101,6 +101,7 @@ type Register struct {
 	CanStream    bool      `json:"can_stream"`             // screen capture available on this host
 	CanExec      bool      `json:"can_exec"`               // remote command execution enabled
 	Elevated     bool      `json:"elevated,omitempty"`     // this is the privileged (SYSTEM/root) helper channel
+	Console      bool      `json:"console,omitempty"`      // SYSTEM worker on the console session's input desktop (can capture the lock screen)
 	EncoderCaps  []string  `json:"encoder_caps,omitempty"` // video codecs this agent can produce
 	Facts        HostFacts `json:"facts,omitempty"`        // static device info
 	Tags         string    `json:"tags,omitempty"`
@@ -292,6 +293,7 @@ type HostView struct {
 	CanStream    bool      `json:"can_stream"`
 	CanExec      bool      `json:"can_exec"`
 	Elevated     bool      `json:"elevated,omitempty"` // an elevated (SYSTEM) helper is attached
+	Console      bool      `json:"console,omitempty"`  // a console worker is attached (can capture the lock screen)
 	Tags         string    `json:"tags,omitempty"`
 	Online       bool      `json:"online"`
 	LastSeen     time.Time `json:"last_seen"`

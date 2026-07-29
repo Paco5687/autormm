@@ -17,6 +17,8 @@ var (
 const (
 	uoiName            = 2
 	desktopReadObjects = 0x0001
+	// Capturing and injecting on a desktop needs far more than read access.
+	desktopGenericAll = 0x10000000
 )
 
 // inputDesktopName returns the name of the desktop currently receiving input.
@@ -47,7 +49,14 @@ func inputDesktopName() (string, bool) {
 //
 // OpenInputDesktop failing is itself the answer: a process on the Default
 // desktop is denied a handle to the secure desktop, so treat that as locked.
+//
+// The console worker follows the input desktop, so it can capture the secure
+// desktop too — for it, nothing is ever "locked out", and reporting false keeps
+// the viewer from showing a lock-screen notice over a perfectly good picture.
 func screenLocked() bool {
+	if isFollowing() {
+		return false
+	}
 	name, ok := inputDesktopName()
 	if !ok {
 		return true

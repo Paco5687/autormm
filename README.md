@@ -23,7 +23,7 @@ Go binaries with no runtime dependencies:
 - **Inventory & device info** — installed software plus IP/MAC, CPU, RAM, kernel, and virtualization per host.
 - **Fleet ops** — one-command onboarding from the dashboard; agents **auto-update** to match the hub (validated download, with rollback), and the hub can update *itself* and push updates fleet-wide from the UI.
 - **Login accounts** — username + password (argon2id) with first-run setup, on top of the admin token.
-- **Windows elevated helper** (optional) — a LocalSystem service alongside the user-session agent, so the hub can run admin actions like service control.
+- **Windows elevated helper** (optional) — a LocalSystem service alongside the user-session agent, so the hub can run admin actions like service control, Windows Update, and **remote into the lock / sign-in screen** (a SYSTEM console worker that follows the secure desktop).
 
 Key properties:
 

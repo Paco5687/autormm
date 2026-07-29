@@ -85,6 +85,46 @@ func TestCanStreamFalseWithoutInteractiveConn(t *testing.T) {
 	}
 }
 
+// The SYSTEM console worker follows the input desktop, so it must serve screen
+// sessions in preference to the user-session agent — that is what lets Remote
+// see the lock / sign-in screen. Exec still goes to the elevated helper.
+func TestConsoleWorkerPreferredForScreen(t *testing.T) {
+	s := NewStore(10, time.Minute, nil)
+	tray := &agentConn{}
+	elev := &agentConn{}
+	cons := &agentConn{}
+	s.register(protocol.Register{AgentID: "win11", CanStream: true}, tray)
+	s.register(protocol.Register{AgentID: "win11", Elevated: true, CanExec: true}, elev)
+	s.register(protocol.Register{AgentID: "win11", Console: true, CanStream: true}, cons)
+
+	if got := s.connFor("win11"); got != cons {
+		t.Errorf("screen session bound to the wrong connection; want the console worker")
+	}
+	if got := s.execConn("win11"); got != elev {
+		t.Errorf("exec should still prefer the elevated helper, not the console worker")
+	}
+	if !s.canStream("win11") {
+		t.Errorf("canStream = false with a console worker attached")
+	}
+
+	// The console worker can capture the lock screen, so streaming survives the
+	// user logging out — unlike a plain tray-only host.
+	s.disconnect("win11", tray)
+	if got := s.connFor("win11"); got != cons {
+		t.Errorf("console worker dropped when the user session ended")
+	}
+	if !s.canStream("win11") {
+		t.Errorf("canStream = false after logout despite the console worker")
+	}
+
+	// Losing the console worker falls back to the user-session agent.
+	s.register(protocol.Register{AgentID: "win11", CanStream: true}, tray)
+	s.disconnect("win11", cons)
+	if got := s.connFor("win11"); got != tray {
+		t.Errorf("did not fall back to the user-session agent after the console worker dropped")
+	}
+}
+
 // Losing the elevated helper must not take the interactive connection down.
 func TestElevatedDisconnectKeepsInteractive(t *testing.T) {
 	s := NewStore(10, time.Minute, nil)

@@ -19,6 +19,11 @@ type host struct {
 	memHist  []float64
 	conn     *agentConn // interactive control connection (tray/user session); nil when offline
 	elevConn *agentConn // optional privileged (SYSTEM/root) helper connection
+	// consConn is a SYSTEM worker running in the console session, attached to
+	// whichever desktop currently has input. It is preferred for screen sessions
+	// because it can also capture the lock / sign-in screen, which the
+	// user-session agent is denied access to.
+	consConn *agentConn
 }
 
 // Store keeps the live registry of hosts.
@@ -52,19 +57,42 @@ func (s *Store) register(reg protocol.Register, conn *agentConn) (old *agentConn
 		s.hosts[reg.AgentID] = h
 	}
 	h.lastSeen = time.Now()
-	if reg.Elevated {
+	switch {
+	case reg.Console:
+		old = h.consConn
+		h.consConn = conn
+		if h.conn == nil {
+			h.reg = reg // no user-session agent yet — adopt this identity
+		}
+	case reg.Elevated:
 		old = h.elevConn
 		h.elevConn = conn
 		if h.conn == nil {
-			h.reg = reg // no interactive agent yet — adopt this identity
+			h.reg = reg
 		}
-	} else {
+	default:
 		old = h.conn
 		h.conn = conn
 		h.reg = reg
 	}
-	h.online = h.conn != nil || h.elevConn != nil
+	h.online = h.anyConn()
 	return old
+}
+
+// anyConn reports whether any of the host's channels are connected.
+func (h *host) anyConn() bool {
+	return h.conn != nil || h.elevConn != nil || h.consConn != nil
+}
+
+// screenConn returns the connection that should serve a screen session. The
+// console worker wins when present: it follows the active input desktop, so it
+// keeps working across lock / sign-in / UAC, which the user-session agent
+// cannot.
+func (h *host) screenConn() *agentConn {
+	if h.consConn != nil {
+		return h.consConn
+	}
+	return h.conn
 }
 
 // disconnect marks a host offline if the given connection is still the current one.
@@ -81,7 +109,10 @@ func (s *Store) disconnect(agentID string, conn *agentConn) {
 	if h.elevConn == conn {
 		h.elevConn = nil
 	}
-	h.online = h.conn != nil || h.elevConn != nil
+	if h.consConn == conn {
+		h.consConn = nil
+	}
+	h.online = h.anyConn()
 }
 
 // updateMetrics stores the latest snapshot and appends to history ring buffers.
@@ -99,12 +130,13 @@ func (s *Store) updateMetrics(agentID string, m *protocol.Metrics) {
 	s.history.Insert(agentID, m) // no-op when history is nil
 }
 
-// connFor returns the live control connection for a host, or nil.
+// connFor returns the connection that serves screen sessions for a host (the
+// console worker when one is attached, else the user-session agent), or nil.
 func (s *Store) connFor(agentID string) *agentConn {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if h := s.hosts[agentID]; h != nil {
-		return h.conn
+		return h.screenConn()
 	}
 	return nil
 }
@@ -121,6 +153,9 @@ func (s *Store) onlineConns() []*agentConn {
 		if h.elevConn != nil {
 			conns = append(conns, h.elevConn)
 		}
+		if h.consConn != nil {
+			conns = append(conns, h.consConn)
+		}
 	}
 	return conns
 }
@@ -132,7 +167,7 @@ func (s *Store) canStream(agentID string) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	h := s.hosts[agentID]
-	return h != nil && h.conn != nil && h.reg.CanStream
+	return h != nil && h.screenConn() != nil && h.reg.CanStream
 }
 
 // canExec reports whether a host can run commands (via its elevated helper if
@@ -220,9 +255,10 @@ func (s *Store) viewLocked(h *host) protocol.HostView {
 		// only possible while one is live. Without this the elevated helper
 		// alone keeps the host "online" with a stale registration, and Remote
 		// stays clickable after the user logs out — opening onto a black canvas.
-		CanStream:  h.reg.CanStream && h.conn != nil,
+		CanStream:  h.reg.CanStream && h.screenConn() != nil,
 		CanExec:    h.reg.CanExec || h.elevConn != nil,
 		Elevated:   h.elevConn != nil,
+		Console:    h.consConn != nil,
 		Facts:      h.reg.Facts,
 		Tags:       h.reg.Tags,
 		Online:     h.online,
