@@ -153,16 +153,23 @@ func (a *Agent) launchConsoleWorker(session uint32) (*os.Process, error) {
 }
 
 // consoleSessionToken returns a primary SYSTEM token bound to the console
-// session.
+// session, so the worker runs as SYSTEM there.
 //
-// WTSQueryUserToken covers the common case, including a locked desktop, because
-// the user is still signed in. At the sign-in screen there is no user token
-// yet, so fall back to duplicating winlogon.exe's own token from that session.
+// Running as SYSTEM (not the signed-in user) is deliberate: SYSTEM can capture
+// and inject on any desktop — the user's, the lock screen, and UAC — and can
+// write its log, whereas a user-identity worker inheriting the service's
+// environment could do none of those reliably. The helper is already SYSTEM, so
+// we duplicate our own token and retarget it at the console session; winlogon's
+// token is a fallback if that ever fails.
 func consoleSessionToken(session uint32) (windows.Token, error) {
-	var user windows.Token
-	if err := windows.WTSQueryUserToken(session, &user); err == nil {
-		defer user.Close()
-		return duplicatePrimary(user, session)
+	var self windows.Token
+	err := windows.OpenProcessToken(windows.CurrentProcess(),
+		windows.TOKEN_DUPLICATE|windows.TOKEN_QUERY|windows.TOKEN_ASSIGN_PRIMARY, &self)
+	if err == nil {
+		defer self.Close()
+		if tok, derr := duplicatePrimary(self, session); derr == nil {
+			return tok, nil
+		}
 	}
 	src, err := winlogonToken(session)
 	if err != nil {
