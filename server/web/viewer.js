@@ -225,6 +225,15 @@ function codecStringFromAU(au) {
   return 'avc1.42E01E';
 }
 
+// A notice explains a stream that is running but showing nothing (the Windows
+// lock screen). An empty message means the condition cleared.
+function showNotice(text) {
+  const el = document.getElementById('notice');
+  if (!el) return;
+  el.textContent = text || '';
+  el.classList.toggle('hidden', !text);
+}
+
 function updateCursor(m) {
   if (!m.vis) { rcursor.classList.add('hidden'); return; }
   const r = canvas.getBoundingClientRect();
@@ -238,6 +247,7 @@ function onMessage(ev) {
     try {
       const msg = JSON.parse(ev.data);
       if (msg.t === 'error') { stateEl.textContent = msg.message; stateEl.className = 'pill dead'; }
+      else if (msg.t === 'notice') showNotice(msg.message);
       else if (msg.t === 'cursor') updateCursor(msg);
       else if (msg.t === 'displays') renderDisplays(msg);
       else if (msg.t === 'caps') renderCodecs(msg);

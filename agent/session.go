@@ -147,6 +147,7 @@ func (a *Agent) startSession(parent context.Context, ss protocol.StartSession) {
 		log.Printf("session %s: codec -> %s", ss.Session, codec)
 	}
 
+	go watchLockScreen(ctx, writeMsg)
 	go a.frameLoop(ctx, writeMsg, cptr, encoders, fps)
 	go a.cursorLoop(ctx, writeMsg, cursor, cptr)
 	go a.clipboardLoop(ctx, writeMsg)
@@ -297,6 +298,35 @@ func (a *Agent) inputLoop(ws *websocket.Conn, in capture.Injector, encoders *enc
 			continue
 		}
 		applyInput(ev, in, cptr)
+	}
+}
+
+// watchLockScreen tells the viewer when the host switches to a desktop this
+// agent cannot capture (Windows lock / sign-in screen), so a blank stream is
+// explained rather than looking like a broken connection. It keeps streaming:
+// the frames resume by themselves once someone signs back in.
+func watchLockScreen(ctx context.Context, writeMsg func(int, []byte) error) {
+	const lockedNote = "This host is locked. Windows shows the sign-in screen on a separate secure desktop that the agent cannot capture — sign in at the machine (or via RDP) to resume the view."
+	t := time.NewTicker(2 * time.Second)
+	defer t.Stop()
+	sent := false
+	for {
+		locked := capture.ScreenLocked()
+		if locked != sent {
+			msg := ""
+			if locked {
+				msg = lockedNote
+			}
+			if b, err := json.Marshal(protocol.NoticeMsg{T: "notice", Message: msg}); err == nil {
+				writeMsg(websocket.TextMessage, b)
+			}
+			sent = locked
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
 	}
 }
 

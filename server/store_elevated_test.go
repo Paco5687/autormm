@@ -54,6 +54,37 @@ func TestElevatedHelperDoesNotStealInteractiveConn(t *testing.T) {
 	}
 }
 
+// With only the elevated helper attached the host is still online (exec and
+// service control work), but there is no user desktop to stream. If CanStream
+// stayed true off the stale registration, Remote would still be clickable and
+// open onto a black canvas — the session has nothing to bind to.
+func TestCanStreamFalseWithoutInteractiveConn(t *testing.T) {
+	s := NewStore(10, time.Minute, nil)
+	tray, elev := &agentConn{}, &agentConn{}
+	s.register(protocol.Register{AgentID: "win11", CanStream: true}, tray)
+	s.register(protocol.Register{AgentID: "win11", Elevated: true, CanExec: true}, elev)
+
+	// The user logs out (or reboots): the tray drops, the SYSTEM service stays.
+	s.disconnect("win11", tray)
+
+	v := s.viewLocked(s.hosts["win11"])
+	if !v.Online {
+		t.Errorf("Online = false; the elevated helper is still connected")
+	}
+	if v.CanStream {
+		t.Errorf("CanStream = true with no interactive connection — Remote would open a black screen")
+	}
+	if !v.CanExec {
+		t.Errorf("CanExec = false; the elevated helper can still run commands")
+	}
+
+	// Logging back in restores streaming.
+	s.register(protocol.Register{AgentID: "win11", CanStream: true}, &agentConn{})
+	if v := s.viewLocked(s.hosts["win11"]); !v.CanStream {
+		t.Errorf("CanStream = false after the interactive agent reconnected")
+	}
+}
+
 // Losing the elevated helper must not take the interactive connection down.
 func TestElevatedDisconnectKeepsInteractive(t *testing.T) {
 	s := NewStore(10, time.Minute, nil)

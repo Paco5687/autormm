@@ -125,12 +125,14 @@ func (s *Store) onlineConns() []*agentConn {
 	return conns
 }
 
-// canStream reports whether a host is online and supports screen capture.
+// canStream reports whether a host can serve a screen session right now. It
+// needs the interactive connection specifically: the elevated helper keeps a
+// host online but runs in session 0, with no user desktop to capture.
 func (s *Store) canStream(agentID string) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	h := s.hosts[agentID]
-	return h != nil && h.online && h.reg.CanStream
+	return h != nil && h.conn != nil && h.reg.CanStream
 }
 
 // canExec reports whether a host can run commands (via its elevated helper if
@@ -214,16 +216,20 @@ func (s *Store) viewLocked(h *host) protocol.HostView {
 		Platform:     h.reg.Platform,
 		Arch:         h.reg.Arch,
 		AgentVersion: h.reg.AgentVersion,
-		CanStream:    h.reg.CanStream,
-		CanExec:      h.reg.CanExec || h.elevConn != nil,
-		Elevated:     h.elevConn != nil,
-		Facts:        h.reg.Facts,
-		Tags:         h.reg.Tags,
-		Online:       h.online,
-		LastSeen:     h.lastSeen,
-		Metrics:      h.metrics,
-		CPUHistory:   append([]float64(nil), h.cpuHist...),
-		MemHistory:   append([]float64(nil), h.memHist...),
+		// Screen sessions bind to the interactive connection, so streaming is
+		// only possible while one is live. Without this the elevated helper
+		// alone keeps the host "online" with a stale registration, and Remote
+		// stays clickable after the user logs out — opening onto a black canvas.
+		CanStream:  h.reg.CanStream && h.conn != nil,
+		CanExec:    h.reg.CanExec || h.elevConn != nil,
+		Elevated:   h.elevConn != nil,
+		Facts:      h.reg.Facts,
+		Tags:       h.reg.Tags,
+		Online:     h.online,
+		LastSeen:   h.lastSeen,
+		Metrics:    h.metrics,
+		CPUHistory: append([]float64(nil), h.cpuHist...),
+		MemHistory: append([]float64(nil), h.memHist...),
 	}
 	v.Alerts = computeAlerts(h, s.offlineAfter)
 	return v

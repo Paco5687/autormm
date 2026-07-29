@@ -37,6 +37,11 @@ type Injector interface {
 // Available reports whether screen capture is supported on this OS.
 func Available() bool { return captureAvailable() }
 
+// ScreenLocked reports whether the host is currently showing a desktop this
+// process cannot capture (the Windows lock/sign-in screen). Callers use it to
+// explain a blank stream instead of sending black frames.
+func ScreenLocked() bool { return screenLocked() }
+
 // NewCapturer constructs a screen capturer for this platform.
 func NewCapturer() (Capturer, error) { return newScreenCapturer() }
 

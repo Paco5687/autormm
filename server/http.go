@@ -479,7 +479,13 @@ func (s *Server) handleClientSession(w http.ResponseWriter, r *http.Request) {
 
 	agentControl := s.store.connFor(sess.agentID)
 	if agentControl == nil {
-		writeWSError(clientWS, "host is offline")
+		// Distinguish "nothing connected" from "only the SYSTEM helper is
+		// connected", which happens whenever nobody is logged in.
+		if s.store.hasElevated(sess.agentID) {
+			writeWSError(clientWS, "no interactive session on this host — is anyone logged in? (the elevated helper alone cannot capture a screen)")
+		} else {
+			writeWSError(clientWS, "host is offline")
+		}
 		return
 	}
 
