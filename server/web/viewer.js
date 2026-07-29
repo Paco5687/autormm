@@ -89,12 +89,21 @@ const rcursor = document.getElementById('rcursor');
 const displaysEl = document.getElementById('displays');
 const resPick = document.getElementById('resPick');
 let selectedDisplay = -1;
+let userDisplayChoice = null; // the operator's explicit display pick; survives reconnects
 let displaysList = [];
 
 function renderDisplays(m) {
   const list = m.list || [];
   displaysList = list;
   selectedDisplay = typeof m.current === 'number' ? m.current : -1;
+  // A fresh session (including an auto-reconnect after a lock/sign-in handoff)
+  // always reports "All". If the operator had picked a single display, restore
+  // it instead of snapping back to the whole desktop.
+  if (userDisplayChoice !== null && userDisplayChoice !== selectedDisplay &&
+      (userDisplayChoice < 0 || list.some(d => d.index === userDisplayChoice))) {
+    selectedDisplay = userDisplayChoice;
+    send({ t: 'display', display: userDisplayChoice });
+  }
   if (list.length <= 1) {
     displaysEl.innerHTML = ''; // single monitor: no display picker
   } else {
@@ -108,6 +117,7 @@ function renderDisplays(m) {
 }
 
 function selectDisplay(idx) {
+  userDisplayChoice = idx; // remembered so reconnects don't snap back to "All"
   selectedDisplay = idx;
   displaysEl.querySelectorAll('button').forEach(b => b.classList.toggle('active', parseInt(b.dataset.d, 10) === idx));
   send({ t: 'display', display: idx });
