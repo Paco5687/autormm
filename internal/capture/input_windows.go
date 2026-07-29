@@ -3,11 +3,17 @@
 package capture
 
 import (
+	"log"
 	"sync"
 	"syscall"
 	"unicode/utf16"
 	"unsafe"
 )
+
+// firstMoveLog logs the virtual-screen metrics the first time a pointer move is
+// injected, so a mis-mapped cursor (e.g. pinned to an edge) is diagnosable from
+// the agent log without guesswork.
+var firstMoveLog sync.Once
 
 var (
 	user32           = syscall.NewLazyDLL("user32.dll")
@@ -103,22 +109,35 @@ func sendKey(e *keyInputEvent) {
 func (in *winInjector) MouseMove(x, y int) error {
 	in.mu.Lock()
 	defer in.mu.Unlock()
-	// Map absolute virtual-desktop pixels to the 0..65535 range SendInput wants,
-	// normalised against the whole virtual screen (all monitors) so any display,
-	// at any offset, lands correctly. This fraction is DPI-independent.
-	vx := systemMetric(smXVirtualScreen)
-	vy := systemMetric(smYVirtualScreen)
-	vw := systemMetric(smCXVirtualScreen)
-	vh := systemMetric(smCYVirtualScreen)
-	if vw < 2 {
-		vw = 2
-	}
-	if vh < 2 {
-		vh = 2
-	}
-	ax := int32((x - vx) * 65535 / (vw - 1))
-	ay := int32((y - vy) * 65535 / (vh - 1))
-	sendMouse(&mouseInputEvent{dx: ax, dy: ay, dwFlags: mouseeventfMove | mouseeventfAbsolute | mouseeventfVirtualDesk})
+	// Everything runs on the desktop-following thread (a no-op for the ordinary
+	// agent). The virtual-screen metrics MUST be read there too: GetSystemMetrics
+	// reflects the calling thread's desktop, and reading them off the console
+	// worker's default-desktop goroutine returned zeroes, which collapsed the
+	// coordinate mapping and pinned the pointer to a screen edge.
+	onInputDesktop(func() {
+		// Map absolute virtual-desktop pixels to the 0..65535 range SendInput
+		// wants, normalised against the whole virtual screen (all monitors) so
+		// any display, at any offset, lands correctly. DPI-independent.
+		vx := systemMetric(smXVirtualScreen)
+		vy := systemMetric(smYVirtualScreen)
+		vw := systemMetric(smCXVirtualScreen)
+		vh := systemMetric(smCYVirtualScreen)
+		if vw < 2 {
+			vw = 2
+		}
+		if vh < 2 {
+			vh = 2
+		}
+		ax := int32((x - vx) * 65535 / (vw - 1))
+		ay := int32((y - vy) * 65535 / (vh - 1))
+		e := &mouseInputEvent{dx: ax, dy: ay, dwFlags: mouseeventfMove | mouseeventfAbsolute | mouseeventfVirtualDesk}
+		e.typ = inputMouse
+		n, _, _ := procSendInput.Call(1, uintptr(unsafe.Pointer(e)), unsafe.Sizeof(*e))
+		firstMoveLog.Do(func() {
+			log.Printf("input: first mouse move src=(%d,%d) vscreen=(%d,%d %dx%d) -> abs=(%d,%d) injected=%d following=%v",
+				x, y, vx, vy, vw, vh, ax, ay, n, isFollowing())
+		})
+	})
 	return nil
 }
 

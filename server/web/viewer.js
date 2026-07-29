@@ -1,9 +1,10 @@
 // autormm remote-desktop viewer: decodes binary screen frames and forwards input.
 const params = new URLSearchParams(location.search);
-const tokenParam = params.get('token');
+let tokenParam = params.get('token'); // refreshed on reconnect
 const hostName = params.get('host') || 'remote';
 const agentId = params.get('agent') || hostName;
 const autofitKey = 'autofit:' + agentId;
+const ADMIN_TOKEN_KEY = 'autormm_token'; // same key the dashboard uses (same origin)
 
 const canvas = document.getElementById('screen');
 const ctx = canvas.getContext('2d', { alpha: false });
@@ -20,6 +21,16 @@ let ws;
 let remoteW = canvas.width, remoteH = canvas.height;
 let frames = 0;
 
+// The screen source can change under us — most notably a Windows host handing
+// off between the user-session agent and the SYSTEM console worker as it locks
+// or someone signs in. That drops the media socket. Rather than make the
+// operator reopen the viewer, mint a fresh session and reconnect in place, so it
+// feels like one continuous session across lock / sign-in transitions.
+let userClosing = false;
+let reconnectTimer = null;
+let reconnectAttempts = 0;
+window.addEventListener('beforeunload', () => { userClosing = true; });
+
 function connect() {
   // Start on JPEG-tile (the safe default); H.264 is opt-in via the codec toggle.
   currentCodec = 'jpeg-tile';
@@ -31,10 +42,47 @@ function connect() {
   ws = new WebSocket(`${proto}://${location.host}/client/session?token=${encodeURIComponent(tokenParam)}&caps=${caps}`);
   ws.binaryType = 'arraybuffer';
 
-  ws.onopen = () => { stateEl.textContent = 'live'; stateEl.className = 'pill live'; };
-  ws.onclose = () => { stateEl.textContent = 'disconnected'; stateEl.className = 'pill dead'; };
-  ws.onerror = () => { stateEl.textContent = 'error'; stateEl.className = 'pill dead'; };
+  ws.onopen = () => {
+    reconnectAttempts = 0;
+    stateEl.textContent = 'live';
+    stateEl.className = 'pill live';
+  };
+  ws.onclose = () => scheduleReconnect();
+  ws.onerror = () => {}; // onclose always follows; reconnect is handled there
   ws.onmessage = onMessage;
+}
+
+// mintSession asks the hub for a fresh screen-session ticket for this host,
+// using the dashboard's stored admin token (same-origin localStorage).
+async function mintSession() {
+  const adminTok = localStorage.getItem(ADMIN_TOKEN_KEY) || '';
+  const res = await fetch('/api/session', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + adminTok, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ agent_id: agentId, fps: 12, quality: 60 }),
+  });
+  if (!res.ok) throw new Error('session mint failed (' + res.status + ')');
+  return (await res.json()).token;
+}
+
+function scheduleReconnect() {
+  if (userClosing || reconnectTimer) return;
+  reconnectAttempts++;
+  // Fast for the first tries (a lock/sign-in handoff is only a couple of
+  // seconds), then back off so an actually-offline host isn't hammered.
+  const delay = Math.min(3000, 250 * reconnectAttempts);
+  stateEl.textContent = 'reconnecting…';
+  stateEl.className = 'pill';
+  showNotice('');
+  reconnectTimer = setTimeout(async () => {
+    reconnectTimer = null;
+    try {
+      tokenParam = await mintSession();
+      connect();
+    } catch (e) {
+      scheduleReconnect(); // keep trying; the host may just be mid-handoff
+    }
+  }, delay);
 }
 
 const rcursor = document.getElementById('rcursor');
