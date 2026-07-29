@@ -12,7 +12,9 @@ import (
 
 const (
 	execDefaultTimeout = 30 * time.Second
-	execMaxTimeout     = 10 * time.Minute
+	// Long enough for a full Windows Update install; the hub picks the actual
+	// per-command timeout and this is only the backstop.
+	execMaxTimeout = 60 * time.Minute
 )
 
 // runExec runs a command from the server and streams its output back through

@@ -11,6 +11,10 @@ import (
 	"github.com/Paco5687/autormm/internal/protocol"
 )
 
+// maxExecTimeoutSecs bounds how long a single remote command may run. Installing
+// Windows updates is the long pole and routinely runs past ten minutes.
+const maxExecTimeoutSecs = 3600
+
 // execResult is the outcome of running a command on a host.
 type execResult struct {
 	Stdout    string
@@ -30,8 +34,13 @@ func (s *Server) runOnAgent(agentID, command, shell string, timeoutSecs int) (*e
 	if conn == nil {
 		return nil, fmt.Errorf("host offline")
 	}
-	if timeoutSecs <= 0 || timeoutSecs > 600 {
+	// Clamp rather than reset: asking for more than the cap used to silently
+	// fall back to 30s, which cut off long jobs like a Windows Update install.
+	if timeoutSecs <= 0 {
 		timeoutSecs = 30
+	}
+	if timeoutSecs > maxExecTimeoutSecs {
+		timeoutSecs = maxExecTimeoutSecs
 	}
 	execID := auth.RandomID(12)
 	col := s.execReg.create(execID)

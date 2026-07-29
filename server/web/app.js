@@ -613,10 +613,17 @@ document.querySelectorAll('#mServices button[data-svc]').forEach(b => b.addEvent
 
 // ---- patches (#55) ----
 function renderPatchPanel(h) {
-  const linux = h && h.os === 'linux';
-  document.getElementById('patchInstall').disabled = !linux;
-  document.getElementById('patchReboot').disabled = !linux;
-  document.getElementById('patchStatus').textContent = linux ? '' : 'Linux hosts only for now (Windows needs an elevated agent).';
+  const os = h && h.os;
+  const supported = os === 'linux' || os === 'windows';
+  // Windows Update needs SYSTEM, so installing requires the elevated helper.
+  const canInstall = supported && (os !== 'windows' || !!h.elevated);
+  document.getElementById('patchCheck').disabled = !supported;
+  document.getElementById('patchInstall').disabled = !canInstall;
+  document.getElementById('patchReboot').disabled = !canInstall;
+  let note = '';
+  if (!supported) note = os ? `patching is not supported on ${os} hosts` : '';
+  else if (!canInstall) note = 'install the elevated helper to apply updates (Add host → Windows elevated helper)';
+  document.getElementById('patchStatus').textContent = note;
   document.getElementById('patchOut').textContent = '';
 }
 document.getElementById('patchCheck').addEventListener('click', async () => {
@@ -627,20 +634,29 @@ document.getElementById('patchCheck').addEventListener('click', async () => {
     if (r.status === 401) { showLogin(); return; }
     const d = await r.json();
     if (!d.supported) { st.textContent = d.note || 'not supported'; return; }
+    if (d.error) { st.textContent = 'check failed: ' + d.error; return; }
     st.textContent = `${d.updates} update${d.updates === 1 ? '' : 's'} available`
       + (d.security ? `, ${d.security} security` : '')
-      + (d.reboot_required ? ' · reboot required' : '');
+      + (d.reboot_required ? ' · reboot required' : '')
+      + (d.note ? ` · ${d.note}` : '');
   } catch (e) { st.textContent = 'check error: ' + e; }
 });
 document.getElementById('patchInstall').addEventListener('click', async () => {
   const h = hostByID(detail.agent); if (!h) return;
-  if (!confirm(`Install all available updates on ${h.hostname || h.agent_id}? This can take several minutes.`)) return;
+  const slow = h.os === 'windows'; // Windows Update routinely runs for tens of minutes
+  if (!confirm(`Install all available updates on ${h.hostname || h.agent_id}?`
+    + (slow ? ' Windows Update can take 30+ minutes — leave this tab open.' : ' This can take several minutes.'))) return;
   const st = document.getElementById('patchStatus'), out = document.getElementById('patchOut');
-  st.textContent = 'installing… (may take several minutes)'; out.textContent = '';
+  st.textContent = slow ? 'installing… Windows Update can take 30+ minutes' : 'installing… (may take several minutes)';
+  out.textContent = '';
   try {
     const r = await authFetch('/api/patch/install', 'POST', { agent_id: h.agent_id });
+    if (!r.ok) { // errors come back as plain text (http.Error), not JSON
+      st.textContent = 'install failed: ' + ((await r.text().catch(() => '')).trim() || r.status);
+      return;
+    }
     const d = await r.json().catch(() => ({}));
-    st.textContent = (r.ok && d.ok) ? 'done' : `finished (exit ${d.exit_code})`;
+    st.textContent = d.ok ? 'done' : `finished (exit ${d.exit_code})`;
     out.textContent = d.output || '';
   } catch (e) { st.textContent = 'install error: ' + e; }
 });

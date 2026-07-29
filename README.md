@@ -19,7 +19,7 @@ Go binaries with no runtime dependencies:
 - **Terminal** — a real shell in the browser: `bash`/`$SHELL` on Linux/macOS, **PowerShell** on Windows (ConPTY).
 - **Monitoring** — live metrics with historical graphs, top processes, and threshold alerts with notifications.
 - **Actions** — kill or restart a process, start/stop/restart a service, run one-off commands, and schedule scripts.
-- **Patching** — check, install, and reboot for OS updates from the host panel (Linux `apt`/`dnf` today; Windows Update is in progress).
+- **Patching** — check, install, and reboot for OS updates from the host panel: `apt`/`dnf` on Linux and the built-in Windows Update agent on Windows (software updates only; drivers are left alone).
 - **Inventory & device info** — installed software plus IP/MAC, CPU, RAM, kernel, and virtualization per host.
 - **Fleet ops** — one-command onboarding from the dashboard; agents **auto-update** to match the hub (validated download, with rollback), and the hub can update *itself* and push updates fleet-wide from the UI.
 - **Login accounts** — username + password (argon2id) with first-run setup, on top of the admin token.
