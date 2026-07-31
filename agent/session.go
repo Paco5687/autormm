@@ -132,9 +132,18 @@ func (a *Agent) startSession(parent context.Context, ss protocol.StartSession) {
 	if cm, err := json.Marshal(protocol.CapsMsg{T: "caps", Codecs: capture.EncoderCaps()}); err == nil {
 		writeMsg(websocket.TextMessage, cm)
 	}
-	if dl, err := json.Marshal(protocol.DisplaysMsg{T: "displays", List: cptr.Displays(), Current: cptr.Selected()}); err == nil {
-		writeMsg(websocket.TextMessage, dl)
+	// sendDisplays publishes the current layout. It is re-sent whenever the
+	// selection or a resolution changes: without that the viewer keeps the
+	// figures from session start, so its "current mode" is wrong and Fit
+	// compares against a stale size and decides there is nothing to do.
+	sendDisplays := func() {
+		if dl, err := json.Marshal(protocol.DisplaysMsg{
+			T: "displays", List: cptr.Displays(), Current: cptr.Selected(),
+		}); err == nil {
+			writeMsg(websocket.TextMessage, dl)
+		}
 	}
+	sendDisplays()
 
 	// Swap the encoder when the viewer requests a codec change (opt-in H.264 /
 	// fall back to JPEG-tile).
@@ -151,7 +160,7 @@ func (a *Agent) startSession(parent context.Context, ss protocol.StartSession) {
 	go a.frameLoop(ctx, writeMsg, cptr, encoders, fps)
 	go a.cursorLoop(ctx, writeMsg, cursor, cptr)
 	go a.clipboardLoop(ctx, writeMsg)
-	a.inputLoop(ws, injector, encoders, cptr, switchCodec) // blocks until socket closes
+	a.inputLoop(ws, injector, encoders, cptr, switchCodec, sendDisplays) // blocks until socket closes
 	log.Printf("session %s: ended", ss.Session)
 }
 
@@ -289,7 +298,7 @@ func (a *Agent) clipboardLoop(ctx context.Context, write func(int, []byte) error
 	}
 }
 
-func (a *Agent) inputLoop(ws *websocket.Conn, in capture.Injector, encoders *encHolder, cptr capture.Capturer, switchCodec func(string)) {
+func (a *Agent) inputLoop(ws *websocket.Conn, in capture.Injector, encoders *encHolder, cptr capture.Capturer, switchCodec func(string), sendDisplays func()) {
 	for {
 		ws.SetReadDeadline(time.Now().Add(90 * time.Second))
 		mt, data, err := ws.ReadMessage()
@@ -306,6 +315,7 @@ func (a *Agent) inputLoop(ws *websocket.Conn, in capture.Injector, encoders *enc
 		switch ev.T {
 		case protocol.InputDisplay:
 			cptr.Select(ev.Display) // -1 all, 0..N-1 one; encoder re-keyframes on size change
+			sendDisplays()          // the selection moved; refresh the viewer's view of it
 			continue
 		case protocol.InputSetCodec:
 			switchCodec(ev.Codec)
@@ -319,6 +329,9 @@ func (a *Agent) inputLoop(ws *websocket.Conn, in capture.Injector, encoders *enc
 					log.Printf("set resolution %dx%d on display %d: %v", ev.W, ev.H, ev.Display, err)
 				} else {
 					cptr.Select(ev.Display) // refresh the captured region to the new size
+					// Report the new geometry, or the viewer keeps offering the
+					// mode it just left and Fit sees nothing to change.
+					sendDisplays()
 				}
 			}
 			continue

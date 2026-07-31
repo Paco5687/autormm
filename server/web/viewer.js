@@ -161,6 +161,16 @@ autofitEl.addEventListener('change', () => {
   if (autofitEl.checked) fitToWindow();
 });
 
+// With auto on, follow the window: resizing the browser re-fits the host, which
+// is what makes it feel automatic rather than a one-shot at connect. Debounced
+// so dragging a window edge doesn't fire a mode change per pixel.
+let refitTimer = null;
+window.addEventListener('resize', () => {
+  if (!autofitEl.checked) return;
+  clearTimeout(refitTimer);
+  refitTimer = setTimeout(fitToWindow, 600);
+});
+
 // bestMode picks the host mode that best fits this window: the largest one whose
 // pixels fit the viewer's device-pixel area (crisp, no upscaling), preferring a
 // matching aspect ratio; if none fit, the smallest available.
@@ -168,7 +178,10 @@ function bestMode(d) {
   if (!d || !d.modes || !d.modes.length) return null;
   const dpr = window.devicePixelRatio || 1;
   const availW = Math.round(window.innerWidth * dpr);
-  const availH = Math.round((window.innerHeight - 34) * dpr); // minus the top bar
+  // Measure the bar rather than assuming its height: it has grown controls and
+  // can wrap, and guessing low made Fit pick a mode taller than the viewport.
+  const barH = (barEl && barEl.offsetHeight) || 34;
+  const availH = Math.round((window.innerHeight - barH) * dpr);
   const targetAR = availW / Math.max(1, availH);
   const fitting = d.modes.filter(m => m.w <= availW && m.h <= availH);
   const pool = (fitting.length ? fitting : d.modes).slice();
@@ -183,9 +196,31 @@ function bestMode(d) {
 function fitToWindow() {
   const d = activeResDisplay();
   const m = bestMode(d);
-  if (m && (m.w !== d.w || m.h !== d.h)) send({ t: 'setres', display: d.index, w: m.w, h: m.h });
+  if (!m) { flashState('no modes reported'); return; }
+  // Compare against the size we are actually receiving, not the figures from
+  // session start — those go stale the moment the resolution changes.
+  const curW = remoteW || d.w, curH = remoteH || d.h;
+  if (m.w === curW && m.h === curH) {
+    flashState(`already ${m.w}×${m.h}`);
+    return;
+  }
+  send({ t: 'setres', display: d.index, w: m.w, h: m.h });
+  flashState(`fitting to ${m.w}×${m.h}…`);
 }
 fitBtn.addEventListener('click', fitToWindow);
+
+// flashState shows a short message in the status pill, then restores it, so
+// buttons that legitimately do nothing don't look broken.
+let flashTimer = null;
+function flashState(msg) {
+  const prev = stateEl.textContent, prevClass = stateEl.className;
+  stateEl.textContent = msg;
+  clearTimeout(flashTimer);
+  flashTimer = setTimeout(() => {
+    stateEl.textContent = prev;
+    stateEl.className = prevClass;
+  }, 1800);
+}
 
 function renderRes() {
   const d = activeResDisplay();
