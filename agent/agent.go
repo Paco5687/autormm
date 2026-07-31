@@ -48,6 +48,10 @@ type Agent struct {
 	onStatus  func(bool)    // optional: connection-state callback (for the tray)
 	onUpdate  func()        // optional: run a self-update check (set by the main)
 	reconnect chan struct{} // Refresh() pokes this to force an immediate reconnect
+	// rootCtx is the agent's whole lifetime. Media sessions hang off this, not
+	// off the per-connection context: a control-socket blip must not tear down a
+	// remote-desktop session that is streaming perfectly well on its own socket.
+	rootCtx context.Context
 }
 
 // SetUpdateHook registers a function that checks the hub for a newer agent and
@@ -105,6 +109,7 @@ func New(cfg Config) *Agent {
 
 // Run connects and reconnects until ctx is cancelled.
 func (a *Agent) Run(ctx context.Context) error {
+	a.rootCtx = ctx
 	if a.cfg.Console {
 		// This process serves the screen from the console session; make capture
 		// and input follow the active input desktop (lock / sign-in included).
@@ -144,6 +149,15 @@ func (a *Agent) Run(ctx context.Context) error {
 			backoff *= 2
 		}
 	}
+}
+
+// sessionCtx returns the context media sessions should use: the agent's
+// lifetime, so they survive control-channel reconnects.
+func (a *Agent) sessionCtx() context.Context {
+	if a.rootCtx != nil {
+		return a.rootCtx
+	}
+	return context.Background()
 }
 
 // session runs one connected lifetime of the control channel.
@@ -221,7 +235,8 @@ func (a *Agent) session(ctx context.Context) error {
 		case protocol.TypeStartSession:
 			var ss protocol.StartSession
 			if json.Unmarshal(data, &ss) == nil {
-				go a.safeStartSession(ctx, ss)
+				// Deliberately the root context, not this connection's.
+				go a.safeStartSession(a.sessionCtx(), ss)
 			}
 		case protocol.TypeStopSession:
 			// media sockets close on their own when the relay ends; nothing to do

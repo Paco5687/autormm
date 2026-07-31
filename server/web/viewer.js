@@ -14,6 +14,7 @@ const fpsEl = document.getElementById('fps');
 const titleEl = document.getElementById('title');
 const barEl = document.getElementById('bar');
 const qualityEl = document.getElementById('quality');
+const vwrap = document.querySelector('.viewer-wrap');
 titleEl.textContent = hostName;
 document.title = 'autormm — ' + hostName;
 
@@ -279,6 +280,7 @@ function initDecoder() {
     output: f => {
       if (f.displayWidth !== canvas.width || f.displayHeight !== canvas.height) {
         canvas.width = f.displayWidth; canvas.height = f.displayHeight;
+        layoutCanvas();
         remoteW = f.displayWidth; remoteH = f.displayHeight;
         resEl.textContent = `${f.displayWidth}×${f.displayHeight}`;
       }
@@ -391,6 +393,7 @@ function drawFrame(dv) {
   if (w !== remoteW || h !== remoteH) {
     remoteW = w; remoteH = h;
     canvas.width = w; canvas.height = h;
+    layoutCanvas();
     resEl.textContent = `${w}×${h}`;
   }
   let off = 10;
@@ -409,6 +412,22 @@ function drawFrame(dv) {
 
 // ---- input ----
 function send(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); }
+
+// The canvas has the host's pixel dimensions, which may be smaller OR larger
+// than the viewport. Size the *element* to the largest box with the same aspect
+// ratio that fits the wrapper, so a lower host resolution is scaled up to fill
+// the window instead of sitting in a letterboxed island. Keeping the element box
+// equal to the picture (rather than using object-fit) means
+// getBoundingClientRect still maps pointer coordinates correctly.
+function layoutCanvas() {
+  if (!vwrap || !remoteW || !remoteH) return;
+  const availW = vwrap.clientWidth, availH = vwrap.clientHeight;
+  if (availW <= 0 || availH <= 0) return;
+  const scale = Math.min(availW / remoteW, availH / remoteH);
+  canvas.style.width = Math.max(1, Math.round(remoteW * scale)) + 'px';
+  canvas.style.height = Math.max(1, Math.round(remoteH * scale)) + 'px';
+}
+window.addEventListener('resize', layoutCanvas);
 
 let lastPos = { x: 0, y: 0 };
 function toRemote(e) {
@@ -478,7 +497,6 @@ const softkbd = document.getElementById('softkbd');
 const kbdbar = document.getElementById('kbdbar');
 let lastKbdVal = '';
 function keyTap(code) { send({ t: 'kdown', code }); send({ t: 'kup', code }); }
-const vwrap = document.querySelector('.viewer-wrap');
 function toggleKbd(show) {
   if (show === undefined) show = kbdbar.classList.contains('hidden');
   kbdbar.classList.toggle('hidden', !show);
@@ -500,6 +518,7 @@ function updateKbdLayout() {
     kbdbar.style.bottom = '';
     vwrap.style.bottom = '';
   }
+  layoutCanvas(); // the wrapper just changed size
 }
 if (window.visualViewport) {
   window.visualViewport.addEventListener('resize', updateKbdLayout);
