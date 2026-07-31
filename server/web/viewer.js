@@ -294,12 +294,33 @@ function showNotice(text) {
   el.classList.toggle('hidden', !text);
 }
 
+// The pointer is drawn as an overlay, and the host echoes its real position back
+// — which costs a full round trip plus the agent's poll interval. Waiting for
+// that echo is what makes the mouse feel laggy even when the video is smooth, so
+// while the operator is actively moving we draw at the local position
+// immediately and let the host's reports take over once they stop.
+let localCursorUntil = 0;
+
+function placeCursor(x, y) {
+  const r = canvas.getBoundingClientRect();
+  rcursor.style.left = (r.left + x * (r.width / canvas.width)) + 'px';
+  rcursor.style.top = (r.top + y * (r.height / canvas.height)) + 'px';
+  rcursor.classList.remove('hidden');
+}
+
+// predictCursor draws the pointer where the operator just moved it, without
+// waiting for the host to confirm.
+function predictCursor(p) {
+  localCursorUntil = performance.now() + 250;
+  placeCursor(p.x, p.y);
+}
+
 function updateCursor(m) {
   if (!m.vis) { rcursor.classList.add('hidden'); return; }
-  const r = canvas.getBoundingClientRect();
-  rcursor.style.left = (r.left + m.x * (r.width / canvas.width)) + 'px';
-  rcursor.style.top = (r.top + m.y * (r.height / canvas.height)) + 'px';
-  rcursor.classList.remove('hidden');
+  // Ignore stale echoes of our own movement; they lag behind the local position
+  // and would drag the pointer backwards.
+  if (performance.now() < localCursorUntil) return;
+  placeCursor(m.x, m.y);
 }
 
 function onMessage(ev) {
@@ -381,12 +402,14 @@ window.addEventListener('mousemove', e => {
   if (now - lastMove < 16) return; // ~60 Hz cap
   lastMove = now;
   const p = toRemote(e);
+  predictCursor(p); // draw immediately; don't wait for the host to echo back
   send({ t: 'mmove', x: p.x, y: p.y });
 });
 canvas.addEventListener('mousedown', e => {
   e.preventDefault();
   heldButtons.add(e.button);
   const p = toRemote(e);
+  predictCursor(p);
   send({ t: 'mdown', x: p.x, y: p.y, button: e.button });
 });
 window.addEventListener('mouseup', e => {

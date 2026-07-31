@@ -20,6 +20,7 @@ var (
 	user32           = syscall.NewLazyDLL("user32.dll")
 	procSendInput    = user32.NewProc("SendInput")
 	procGetSystemMet = user32.NewProc("GetSystemMetrics")
+	procSetCursorPos = user32.NewProc("SetCursorPos")
 )
 
 const (
@@ -135,10 +136,17 @@ func (in *winInjector) MouseMove(x, y int) error {
 		e := &mouseInputEvent{dx: ax, dy: ay, dwFlags: mouseeventfMove | mouseeventfAbsolute | mouseeventfVirtualDesk}
 		e.typ = inputMouse
 		n, _, _ := procSendInput.Call(1, uintptr(unsafe.Pointer(e)), unsafe.Sizeof(*e))
+		// Also place the pointer directly. SendInput is what the ordinary desktop
+		// honours, but it does not reliably move the pointer on the Winlogon
+		// secure desktop (keyboard injection there works, mouse movement does
+		// not) — and SetCursorPos covers that case. Both set the same absolute
+		// position, so issuing both is idempotent rather than fighting.
+		sc, _, _ := procSetCursorPos.Call(uintptr(uint32(int32(x))), uintptr(uint32(int32(y))))
 		if moveLogN < 6 { // log the first few moves so a bad mapping is visible
 			moveLogN++
-			log.Printf("input move #%d: src=(%d,%d) vscreen=(x%d y%d w%d h%d) -> abs=(%d,%d) injected=%d following=%v",
-				moveLogN, x, y, vx, vy, vw, vh, ax, ay, n, isFollowing())
+			desktop, _ := inputDesktopName()
+			log.Printf("input move #%d: src=(%d,%d) vscreen=(x%d y%d w%d h%d) -> abs=(%d,%d) sendinput=%d setcursorpos=%v desktop=%q following=%v",
+				moveLogN, x, y, vx, vy, vw, vh, ax, ay, n, sc != 0, desktop, isFollowing())
 		}
 	})
 	return nil
