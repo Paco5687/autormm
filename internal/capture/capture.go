@@ -8,6 +8,7 @@
 package capture
 
 import (
+	"errors"
 	"image"
 
 	"github.com/Paco5687/autormm/internal/protocol"
@@ -48,3 +49,8 @@ func NewCapturer() (Capturer, error) { return newScreenCapturer() }
 
 // NewInjector constructs an input injector for this platform.
 func NewInjector() (Injector, error) { return newInjector() }
+
+// ErrNoChange is returned by a Capturer when the desktop has not been repainted
+// since the previous frame. Callers should skip encoding rather than re-sending
+// an identical picture; it is not a failure.
+var ErrNoChange = errors.New("capture: no change")

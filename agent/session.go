@@ -167,6 +167,22 @@ func (a *Agent) frameLoop(ctx context.Context, write func(int, []byte) error, ca
 		start := time.Now()
 		force := start.Sub(lastKey) >= keyframeEvery
 		img, err := cap.Capture()
+		if err == capture.ErrNoChange {
+			// Nothing was repainted. The accelerated backend already blocked
+			// waiting for a change, so loop straight back rather than encoding an
+			// identical picture — an idle desktop then costs almost nothing. The
+			// floor is insurance: a backend that reports "no change" instantly
+			// (e.g. while its duplication is being rebuilt) must not spin.
+			captureFails = 0
+			if spent := time.Since(start); spent < 2*time.Millisecond {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(2 * time.Millisecond):
+				}
+			}
+			continue
+		}
 		if err != nil {
 			// Capture fails transiently — a desktop switch (lock / sign-in / UAC)
 			// or a mode change makes BitBlt fail for a moment. Skip the frame and
