@@ -17,11 +17,23 @@ import (
 var moveLogN int
 
 var (
-	user32           = syscall.NewLazyDLL("user32.dll")
-	procSendInput    = user32.NewProc("SendInput")
-	procGetSystemMet = user32.NewProc("GetSystemMetrics")
-	procSetCursorPos = user32.NewProc("SetCursorPos")
+	user32             = syscall.NewLazyDLL("user32.dll")
+	procSendInput      = user32.NewProc("SendInput")
+	procGetSystemMet   = user32.NewProc("GetSystemMetrics")
+	procSetCursorPos   = user32.NewProc("SetCursorPos")
+	procMapVirtualKeyW = user32.NewProc("MapVirtualKeyW")
 )
+
+// extendedKeys are the keys Windows marks with KEYEVENTF_EXTENDEDKEY. Without
+// the flag their scan codes collide with the numeric keypad, so arrows and
+// navigation keys arrive as numbers in some applications.
+var extendedKeys = map[string]bool{
+	"ArrowUp": true, "ArrowDown": true, "ArrowLeft": true, "ArrowRight": true,
+	"Insert": true, "Delete": true, "Home": true, "End": true,
+	"PageUp": true, "PageDown": true,
+	"ControlRight": true, "AltRight": true,
+	"NumpadEnter": true, "NumpadDivide": true,
+}
 
 const (
 	inputMouse    = 0
@@ -48,8 +60,12 @@ const (
 	mouseeventfWheel       = 0x0800
 	mouseeventfHWheel      = 0x1000
 
-	keyeventfKeyUp   = 0x0002
-	keyeventfUnicode = 0x0004
+	keyeventfExtendedKey = 0x0001
+	keyeventfKeyUp       = 0x0002
+	keyeventfUnicode     = 0x0004
+
+	// MAPVK_VK_TO_VSC
+	mapvkVKToVSC = 0
 
 	wheelDelta = 120
 )
@@ -203,7 +219,15 @@ func (in *winInjector) Key(code string, down bool) error {
 	if !down {
 		flags = keyeventfKeyUp
 	}
-	sendKey(&keyInputEvent{wVk: vk, dwFlags: flags})
+	if extendedKeys[code] {
+		flags |= keyeventfExtendedKey
+	}
+	// Send the scan code alongside the virtual key. Apps that read the keyboard
+	// through scan codes rather than VK state — Chromium/Electron ones in
+	// particular — otherwise miss injected modifiers, so combinations like
+	// Shift+Enter arrive as a bare Enter even though Shift+letter works.
+	scan, _, _ := procMapVirtualKeyW.Call(uintptr(vk), mapvkVKToVSC)
+	sendKey(&keyInputEvent{wVk: vk, wScan: uint16(scan), dwFlags: flags})
 	return nil
 }
 
