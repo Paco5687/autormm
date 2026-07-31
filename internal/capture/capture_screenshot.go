@@ -105,14 +105,15 @@ func (c *screenCapturer) Bounds() image.Rectangle {
 }
 
 func (c *screenCapturer) Capture() (*image.RGBA, error) {
-	// In console-worker mode this runs on the thread attached to the active
-	// input desktop, so the lock / sign-in screen captures like any other. The
-	// accelerated backend must run on that same thread: its device and
-	// duplication are bound to the desktop they were created on.
+	// In console-worker mode this runs on the capture thread, which follows the
+	// active input desktop — so the lock / sign-in screen captures like any
+	// other, and a blocking wait for the next frame never delays input, which
+	// has its own thread. The accelerated backend is pinned here because its
+	// device and duplication belong to the desktop they were created on.
 	var img *image.RGBA
 	var err error
 	region := c.Bounds()
-	onInputDesktop(func() {
+	onCaptureDesktop(func() {
 		if c.fast != nil {
 			img, err = c.fast.grab(region)
 			if err == nil || err == ErrNoChange {
