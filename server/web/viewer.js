@@ -46,6 +46,10 @@ function connect() {
     reconnectAttempts = 0;
     stateEl.textContent = 'live';
     stateEl.className = 'pill live';
+    // A modifier left down before the session dropped would still be held on the
+    // host, so start every session from a known-clean keyboard state.
+    heldKeys.clear();
+    for (const code of MODIFIER_CODES) send({ t: 'kup', code });
   };
   ws.onclose = () => scheduleReconnect();
   ws.onerror = () => {}; // onclose always follows; reconnect is handled there
@@ -491,6 +495,16 @@ softkbd.addEventListener('keydown', e => {
   if (special.includes(e.code)) { e.preventDefault(); keyTap(e.code); }
 });
 
+// Keys currently held on the host. The browser stops delivering keyup the
+// moment the window loses focus — alt-tab while holding Shift and the host
+// keeps it down forever, which is the classic "everything is in CAPS" stuck
+// modifier. Track what is down so it can be released explicitly.
+const heldKeys = new Set();
+const MODIFIER_CODES = [
+  'ShiftLeft', 'ShiftRight', 'ControlLeft', 'ControlRight',
+  'AltLeft', 'AltRight', 'MetaLeft', 'MetaRight',
+];
+
 window.addEventListener('keydown', e => {
   if (document.activeElement === softkbd) return; // soft keyboard handles its own input
   // Let Ctrl/Cmd+V raise a browser 'paste' event (handled below) so we can push
@@ -498,12 +512,30 @@ window.addEventListener('keydown', e => {
   // here — the paste handler sends it once the clipboard is synced.
   if ((e.ctrlKey || e.metaKey) && e.code === 'KeyV') return;
   e.preventDefault();
+  heldKeys.add(e.code);
   send({ t: 'kdown', code: e.code });
 });
 window.addEventListener('keyup', e => {
-  if (document.activeElement === softkbd) return;
+  // Always release a key we pressed, even if focus moved into the soft-keyboard
+  // box in between — otherwise it stays held on the host. Keys we never
+  // forwarded (the soft keyboard's own) are left alone so we don't inject a
+  // release for something that was never pressed.
+  const wasHeld = heldKeys.delete(e.code);
+  if (!wasHeld && document.activeElement === softkbd) return;
   e.preventDefault();
   send({ t: 'kup', code: e.code });
+});
+
+function releaseHeldKeys() {
+  for (const code of heldKeys) send({ t: 'kup', code });
+  heldKeys.clear();
+}
+
+// Focus loss, tab switch, and page hide all end key delivery without a keyup.
+window.addEventListener('blur', releaseHeldKeys);
+window.addEventListener('pagehide', releaseHeldKeys);
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) releaseHeldKeys();
 });
 
 // ---- clipboard sync ----
