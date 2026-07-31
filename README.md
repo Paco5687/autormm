@@ -28,7 +28,7 @@ Go binaries with no runtime dependencies:
 Key properties:
 
 - **Agents dial out** over a single WebSocket — no inbound ports or port-forwards on the hosts, NAT-friendly.
-- **Built-in screen streaming.** The agent captures the screen and sends changed tiles as JPEG; the browser viewer reconstructs them on a `<canvas>` and forwards mouse/keyboard. No VNC/RDP server required on the host. Multi-monitor hosts get a display picker (all displays or one), the remote cursor is drawn as an overlay, and an **opt-in H.264 codec** (WebCodecs, auto-fallback to JPEG) is offered when the host has ffmpeg.
+- **Built-in screen streaming.** The agent captures the screen and sends changed tiles as JPEG; the browser viewer reconstructs them on a `<canvas>` and forwards mouse/keyboard. No VNC/RDP server required on the host. Multi-monitor hosts get a display picker (one display at a time), the remote cursor is drawn as an overlay, and an **opt-in H.264 codec** (WebCodecs, auto-fallback to JPEG) is offered when the host has ffmpeg.
 - **Cross-platform, CGO-free.** Single static binary per platform; cross-compiles cleanly for Linux and Windows.
 - **Token auth + signed session tickets.** Runs as plain `IP:port` on your LAN — no reverse proxy required; reach it from afar over a zero-trust overlay.
 
@@ -313,7 +313,7 @@ network — when history is enabled via `--db`) and its top processes.
 - The Linux agent needs access to the X session (`DISPLAY`/`XAUTHORITY`); the provided user service handles this. Headless servers register as **not streamable** and are monitor-only.
 - **Keyboard** mapping covers the common physical keys (letters, digits, punctuation, modifiers, arrows, F-keys, numpad). Exotic keys/layouts may not map.
 - The default codec is **JPEG tile-deltas** (changed 128px tiles only) — efficient for typical desktop use, not tuned for full-screen video/gaming. An **opt-in H.264 codec** does much better on video/motion; it needs `ffmpeg` on the host (encode) and a WebCodecs browser like Chrome/Edge (decode), and silently falls back to JPEG if either is missing.
-- **Multi-monitor** hosts are supported: the viewer shows all displays by default, with a picker to isolate one.
+- **Multi-monitor** hosts are supported: the viewer streams one display at a time (starting on the primary), with a picker to switch between them. Capturing all monitors as one frame is deliberately not offered — it is too large to stream smoothly.
 
 ## Layout
 

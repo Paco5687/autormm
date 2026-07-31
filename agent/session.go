@@ -132,7 +132,7 @@ func (a *Agent) startSession(parent context.Context, ss protocol.StartSession) {
 	if cm, err := json.Marshal(protocol.CapsMsg{T: "caps", Codecs: capture.EncoderCaps()}); err == nil {
 		writeMsg(websocket.TextMessage, cm)
 	}
-	if dl, err := json.Marshal(protocol.DisplaysMsg{T: "displays", List: cptr.Displays(), Current: -1}); err == nil {
+	if dl, err := json.Marshal(protocol.DisplaysMsg{T: "displays", List: cptr.Displays(), Current: cptr.Selected()}); err == nil {
 		writeMsg(websocket.TextMessage, dl)
 	}
 

@@ -97,18 +97,20 @@ function renderDisplays(m) {
   displaysList = list;
   selectedDisplay = typeof m.current === 'number' ? m.current : -1;
   // A fresh session (including an auto-reconnect after a lock/sign-in handoff)
-  // always reports "All". If the operator had picked a single display, restore
-  // it instead of snapping back to the whole desktop.
+  // starts on the host's primary display. Restore the operator's pick so a
+  // reconnect doesn't jump them back to another monitor mid-task.
   if (userDisplayChoice !== null && userDisplayChoice !== selectedDisplay &&
-      (userDisplayChoice < 0 || list.some(d => d.index === userDisplayChoice))) {
+      list.some(d => d.index === userDisplayChoice)) {
     selectedDisplay = userDisplayChoice;
     send({ t: 'display', display: userDisplayChoice });
   }
   if (list.length <= 1) {
     displaysEl.innerHTML = ''; // single monitor: no display picker
   } else {
+    // One display at a time — the union of several monitors is far too large a
+    // frame to stream smoothly, so this is a switcher rather than a toggle.
     const btn = (idx, label) => `<button data-d="${idx}" class="${idx === selectedDisplay ? 'active' : ''}">${label}</button>`;
-    let html = btn(-1, 'All');
+    let html = '';
     for (const d of list) html += btn(d.index, `Display ${d.index + 1}${d.primary ? ' ★' : ''}`);
     displaysEl.innerHTML = html;
     displaysEl.querySelectorAll('button').forEach(b => b.onclick = () => selectDisplay(parseInt(b.dataset.d, 10)));
@@ -124,9 +126,9 @@ function selectDisplay(idx) {
   renderRes();
 }
 
-// The display whose resolution the dropdown controls: the selected one, or the
-// only display when viewing "All". "All" across multiple monitors has no single
-// resolution, so the dropdown hides.
+// The display whose resolution the dropdown controls. Exactly one display is
+// captured at a time, so this is simply the selected one (falling back to the
+// only display before the first 'displays' message arrives).
 function activeResDisplay() {
   if (selectedDisplay >= 0) return displaysList.find(d => d.index === selectedDisplay) || null;
   return displaysList.length === 1 ? displaysList[0] : null;

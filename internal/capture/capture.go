@@ -19,6 +19,7 @@ type Capturer interface {
 	Capture() (*image.RGBA, error)
 	Displays() []protocol.Display
 	Select(index int) error // -1 = all displays (virtual desktop), 0..N-1 = one
+	Selected() int          // the display currently captured
 	Close() error
 }
 

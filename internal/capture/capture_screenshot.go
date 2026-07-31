@@ -25,8 +25,22 @@ func newScreenCapturer() (Capturer, error) {
 		return nil, fmt.Errorf("capture: no active display (is a graphical session running / DISPLAY set?)")
 	}
 	c := &screenCapturer{}
-	c.Select(-1) // default: the whole desktop (all displays)
+	// Default to one display rather than the union of all of them: streaming a
+	// multi-monitor desktop as a single frame is enormous (two 4K panels is ~21
+	// megapixels) and too slow to be usable. The viewer switches between them.
+	c.Select(primaryDisplay())
 	return c, nil
+}
+
+// primaryDisplay returns the index of the display at the virtual-desktop origin,
+// falling back to the first one.
+func primaryDisplay() int {
+	for i, n := 0, screenshot.NumActiveDisplays(); i < n; i++ {
+		if b := screenshot.GetDisplayBounds(i); b.Min.X == 0 && b.Min.Y == 0 {
+			return i
+		}
+	}
+	return 0
 }
 
 // Displays enumerates the active monitors.
@@ -61,6 +75,14 @@ func (c *screenCapturer) Select(index int) error {
 	c.region, c.sel = region, index
 	c.mu.Unlock()
 	return nil
+}
+
+// Selected returns the display index currently being captured (-1 if the whole
+// desktop, which the viewer no longer offers but the protocol still allows).
+func (c *screenCapturer) Selected() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.sel
 }
 
 func (c *screenCapturer) Bounds() image.Rectangle {
