@@ -177,6 +177,44 @@ func (c *Collector) Collect() *protocol.Metrics {
 	return m
 }
 
+// pseudoFilesystems never represent real, fillable storage. squashfs is the
+// big one: every installed snap loop-mounts one read-only, and a read-only
+// image is 100% used by definition — so a stock Ubuntu desktop reports a
+// couple of dozen "disk almost full" alerts that mean nothing.
+// Deliberately absent: tmpfs and overlay. A full /tmp or a container's overlay
+// root is a real problem worth alerting on.
+var pseudoFilesystems = map[string]bool{
+	"squashfs": true, "iso9660": true,
+	"ramfs": true, "devtmpfs": true, "devfs": true,
+	"autofs": true, "fuse.snapfuse": true, "fuse.portal": true,
+	"fuse.gvfsd-fuse": true, "cgroup": true, "cgroup2": true,
+	"proc": true, "sysfs": true, "debugfs": true, "tracefs": true,
+	"securityfs": true, "pstore": true, "efivarfs": true, "bpf": true,
+	"configfs": true, "mqueue": true, "hugetlbfs": true, "binfmt_misc": true,
+	"nsfs": true, "fusectl": true,
+}
+
+// skipFilesystem reports whether a mount should be left out of disk reporting.
+func skipFilesystem(fstype, mount string, opts []string) bool {
+	if pseudoFilesystems[strings.ToLower(fstype)] {
+		return true
+	}
+	// Read-only mounts cannot fill up, so warning about them is never actionable.
+	for _, o := range opts {
+		if strings.TrimSpace(o) == "ro" {
+			return true
+		}
+	}
+	// Snap and container images mount under well-known paths even when the
+	// filesystem type is reported oddly.
+	for _, prefix := range []string{"/snap/", "/var/lib/snapd/snap/", "/var/lib/docker/", "/run/snapd/"} {
+		if strings.HasPrefix(mount, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 func collectDisks() []protocol.Disk {
 	parts, err := disk.Partitions(false)
 	if err != nil {
@@ -185,7 +223,7 @@ func collectDisks() []protocol.Disk {
 	var out []protocol.Disk
 	seen := map[string]bool{}
 	for _, p := range parts {
-		if seen[p.Mountpoint] {
+		if seen[p.Mountpoint] || skipFilesystem(p.Fstype, p.Mountpoint, p.Opts) {
 			continue
 		}
 		seen[p.Mountpoint] = true
