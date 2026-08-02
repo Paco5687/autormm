@@ -5,6 +5,24 @@ const summaryEl = document.getElementById('summary');
 const tokenBtn = document.getElementById('tokenBtn');
 
 const TOKEN_KEY = 'autormm_token';
+
+// ---- installed-app (PWA) support ----
+// Registering a service worker is what makes the dashboard installable. It
+// caches nothing; see sw.js. Requires a secure context (https or localhost),
+// so over a plain-http LAN address this simply no-ops.
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  });
+}
+
+// standalone means we are running as an installed app rather than a browser
+// tab, so there is no browser chrome to spend screen space on.
+function isStandalone() {
+  return window.matchMedia('(display-mode: standalone)').matches ||
+    window.matchMedia('(display-mode: fullscreen)').matches ||
+    navigator.standalone === true;
+}
 function token() { return localStorage.getItem(TOKEN_KEY) || ''; }
 
 // ---- login ----
@@ -347,7 +365,14 @@ async function openSession(h, body, page, features) {
     });
     if (!res.ok) { alert('Could not start session: ' + (await res.text())); return; }
     const s = await res.json();
-    const url = `${page}?token=${encodeURIComponent(s.token)}&host=${encodeURIComponent(h.hostname || h.agent_id)}&agent=${encodeURIComponent(h.agent_id)}`;
+    let url = `${page}?token=${encodeURIComponent(s.token)}&host=${encodeURIComponent(h.hostname || h.agent_id)}&agent=${encodeURIComponent(h.agent_id)}`;
+    if (isStandalone()) {
+      // Installed app: a new window would come back as a plain browser window
+      // with all its chrome, which defeats the point. Navigate in place and let
+      // the page go fullscreen — the dashboard is one Back away.
+      location.href = url + '&app=1';
+      return;
+    }
     if (features) {
       window.open(url, 'autormm_' + (body.kind || 'session') + '_' + h.agent_id, features);
     } else {

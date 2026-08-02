@@ -2,9 +2,16 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
   <title>autormm — remote</title>
   <link rel="stylesheet" href="/static/style.css">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#12141a">
+  <link rel="icon" href="/static/icons/icon-192.png">
+  <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 </head>
 <body class="viewer-body">
   <div class="viewer-bar" id="bar">
@@ -23,6 +30,8 @@
     </label>
     <button class="btn" id="kbd" title="Show keyboard (for touch devices)">⌨</button>
     <button class="btn" id="taskMgr" title="Open Task Manager (Ctrl+Shift+Esc)">Task Mgr</button>
+    <button class="btn" id="fsBtn" title="Toggle fullscreen">⛶</button>
+    <button class="btn ghost hidden" id="backBtn" title="Back to the dashboard">✕</button>
   </div>
   <div class="viewer-wrap">
     <canvas id="screen" width="1280" height="720"></canvas>

@@ -44,6 +44,11 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("/viewer", s.handlePage(sub, "viewer.html"))
 	mux.HandleFunc("/terminal", s.handlePage(sub, "terminal.html"))
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(sub))))
+	// PWA. Both must be served from the root: a service worker's scope is capped
+	// by the path it is served from, so /static/sw.js could only control
+	// /static/ and the app would not be installable.
+	mux.HandleFunc("/sw.js", s.handleAsset(sub, "sw.js", "application/javascript"))
+	mux.HandleFunc("/manifest.webmanifest", s.handleAsset(sub, "manifest.webmanifest", "application/manifest+json"))
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
 	// The version this hub was built at; agents self-update to match it.
 	mux.HandleFunc("/version", func(w http.ResponseWriter, r *http.Request) {
@@ -94,6 +99,22 @@ func (s *Server) handleIndex(sub fs.FS) http.HandlerFunc {
 			return
 		}
 		page(w, r)
+	}
+}
+
+// handleAsset serves one embedded file with an explicit content type, for the
+// few assets that must live at the site root rather than under /static/.
+func (s *Server) handleAsset(sub fs.FS, name, contentType string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		b, err := fs.ReadFile(sub, name)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", contentType)
+		// The hub updates in place; never let a proxy pin these.
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Write(b)
 	}
 }
 

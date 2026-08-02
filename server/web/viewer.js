@@ -592,6 +592,45 @@ document.addEventListener('visibilitychange', () => {
   if (document.hidden) releaseHeldKeys();
 });
 
+// ---- fullscreen / installed-app mode ----
+// Opened from the installed app, the viewer replaces the dashboard in the same
+// window, so it offers a way back and takes the whole screen — the point of app
+// mode being that there is no browser chrome eating space.
+const appMode = params.get('app') === '1';
+const fsBtn = document.getElementById('fsBtn');
+const backBtn = document.getElementById('backBtn');
+
+function toggleFullscreen() {
+  if (document.fullscreenElement) {
+    document.exitFullscreen().catch(() => {});
+  } else {
+    document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(() => {});
+  }
+}
+fsBtn.addEventListener('click', () => { toggleFullscreen(); fsBtn.blur(); });
+
+if (appMode) {
+  backBtn.classList.remove('hidden');
+  backBtn.addEventListener('click', () => {
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    location.href = '/';
+  });
+  // Fullscreen needs a user gesture, and the click that opened this page does
+  // not carry over across navigation — so take the first interaction here.
+  const grab = () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(() => {});
+    }
+    window.removeEventListener('pointerdown', grab);
+    window.removeEventListener('keydown', grab);
+  };
+  window.addEventListener('pointerdown', grab);
+  window.addEventListener('keydown', grab);
+}
+
+// Entering or leaving fullscreen changes the wrapper size.
+document.addEventListener('fullscreenchange', layoutCanvas);
+
 // ---- clipboard sync ----
 let lastClip = null;
 
