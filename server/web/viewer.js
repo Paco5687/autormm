@@ -500,9 +500,23 @@ function keyTap(code) { send({ t: 'kdown', code }); send({ t: 'kup', code }); }
 function toggleKbd(show) {
   if (show === undefined) show = kbdbar.classList.contains('hidden');
   kbdbar.classList.toggle('hidden', !show);
-  if (show) { softkbd.value = ''; lastKbdVal = ''; softkbd.focus(); } else { softkbd.blur(); }
+  if (show) {
+    softkbd.disabled = false; // must be enabled before it can take focus
+    softkbd.value = '';
+    lastKbdVal = '';
+    softkbd.focus();
+  } else {
+    softkbd.blur();
+    // Blur alone is not enough: a hidden-but-focusable input is still the page's
+    // last editable element, so mobile browsers re-raise the on-screen keyboard
+    // on the next tap anywhere on the screen. A disabled input cannot take focus
+    // at all, so the keyboard stays down until ⌨ is pressed again.
+    softkbd.disabled = true;
+  }
   updateKbdLayout();
 }
+// The bar starts hidden, so the input must start unfocusable too.
+softkbd.disabled = true;
 // When the on-screen keyboard is up, shrink the remote view to fit the space
 // above it (like Parsec) so the whole screen stays visible, and float the input
 // bar just above the OS keyboard. Uses visualViewport to know the visible area.
