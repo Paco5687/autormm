@@ -483,6 +483,47 @@ function releaseHeldButtons() {
 }
 window.addEventListener('blur', releaseHeldButtons);
 canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+// ---- touch: two-finger drag scrolls ----
+// A single finger stays a click (the browser synthesises mouse events from it,
+// which the handlers above already consume). Two fingers scroll, matching the
+// gesture people expect from a trackpad, since a touch device has no wheel.
+const SCROLL_PX_PER_NOTCH = 40; // finger travel for one wheel click
+let twoFinger = null;
+let scrollAccum = 0;
+
+function touchMid(t) {
+  return { x: (t[0].clientX + t[1].clientX) / 2, y: (t[0].clientY + t[1].clientY) / 2 };
+}
+
+canvas.addEventListener('touchstart', e => {
+  if (e.touches.length === 2) {
+    e.preventDefault(); // stop the browser treating it as pan/zoom
+    twoFinger = touchMid(e.touches);
+    scrollAccum = 0;
+  }
+}, { passive: false });
+
+canvas.addEventListener('touchmove', e => {
+  if (e.touches.length !== 2 || !twoFinger) return;
+  e.preventDefault();
+  const mid = touchMid(e.touches);
+  // Dragging up scrolls down, as on a phone. Accumulate so slow drags still
+  // move eventually instead of rounding away to nothing.
+  scrollAccum += (twoFinger.y - mid.y) / SCROLL_PX_PER_NOTCH;
+  twoFinger = mid;
+  const notches = Math.trunc(scrollAccum);
+  if (notches !== 0) {
+    scrollAccum -= notches;
+    send({ t: 'scroll', dx: 0, dy: notches });
+  }
+}, { passive: false });
+
+function endTwoFinger(e) {
+  if (!e.touches || e.touches.length < 2) { twoFinger = null; scrollAccum = 0; }
+}
+canvas.addEventListener('touchend', endTwoFinger);
+canvas.addEventListener('touchcancel', endTwoFinger);
 canvas.addEventListener('wheel', e => {
   e.preventDefault();
   const scale = e.deltaMode === 0 ? 1 / 100 : 1;
@@ -535,7 +576,16 @@ function updateKbdLayout() {
   layoutCanvas(); // the wrapper just changed size
 }
 if (window.visualViewport) {
-  window.visualViewport.addEventListener('resize', updateKbdLayout);
+  window.visualViewport.addEventListener('resize', () => {
+    // The OS keyboard can be dismissed by the system back/down gesture, which
+    // never reaches our hide button. The viewport growing back to (nearly) full
+    // height is the signal; close our bar so the input does not sit focused,
+    // silently re-raising the keyboard on the next tap.
+    const vv = window.visualViewport;
+    const kbH = window.innerHeight - vv.height - vv.offsetTop;
+    if (!kbdbar.classList.contains('hidden') && kbH < 100) { toggleKbd(false); return; }
+    updateKbdLayout();
+  });
   window.visualViewport.addEventListener('scroll', updateKbdLayout);
 }
 document.getElementById('kbd').addEventListener('click', () => toggleKbd());
@@ -593,6 +643,14 @@ window.addEventListener('keyup', e => {
   e.preventDefault();
   send({ t: 'kup', code: e.code });
 });
+
+// Tapping the remote screen dismisses the on-screen keyboard. Without this the
+// input keeps focus and mobile browsers re-raise the OS keyboard on every
+// subsequent tap — especially after the keyboard was dismissed with the system
+// back/down gesture, which never runs our hide path.
+canvas.addEventListener('pointerdown', () => {
+  if (!kbdbar.classList.contains('hidden')) toggleKbd(false);
+}, { passive: true });
 
 function releaseHeldKeys() {
   for (const code of heldKeys) send({ t: 'kup', code });
