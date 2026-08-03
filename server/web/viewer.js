@@ -481,49 +481,141 @@ function releaseHeldButtons() {
   for (const b of heldButtons) send({ t: 'mup', x: lastPos.x, y: lastPos.y, button: b });
   heldButtons.clear();
 }
-window.addEventListener('blur', releaseHeldButtons);
+window.addEventListener('blur', () => {
+  releaseHeldButtons();
+  cancelTouch(); // backgrounding mid-drag never delivers touchcancel
+});
 canvas.addEventListener('contextmenu', e => e.preventDefault());
 
-// ---- touch: two-finger drag scrolls ----
-// A single finger stays a click (the browser synthesises mouse events from it,
-// which the handlers above already consume). Two fingers scroll, matching the
-// gesture people expect from a trackpad, since a touch device has no wheel.
-const SCROLL_PX_PER_NOTCH = 40; // finger travel for one wheel click
+// ---- touch gestures ----
+// A touch device has no buttons and no wheel, so the whole mouse has to come
+// from gestures. We take over single-finger touch entirely (preventDefault
+// stops the browser synthesising its own mouse events, which would double up
+// with ours) and send the clicks ourselves:
+//
+//   tap                 left click
+//   double tap          right click
+//   press and hold      grab, then drag until you lift
+//   one-finger drag     move the pointer (no button held)
+//   two-finger drag     scroll
+const SCROLL_PX_PER_NOTCH = 40;  // finger travel for one wheel click
+const LONG_PRESS_MS = 450;       // hold this long to grab
+const TAP_MOVE_TOL = 12;         // px of drift still counted as a tap, not a drag
+const DOUBLE_TAP_MS = 300;
+const DOUBLE_TAP_TOL = 40;       // px between taps to still count as a double
+
 let twoFinger = null;
 let scrollAccum = 0;
+let touch = null;                // the in-flight single-finger gesture
+let lastTapAt = 0, lastTapX = 0, lastTapY = 0;
 
 function touchMid(t) {
   return { x: (t[0].clientX + t[1].clientX) / 2, y: (t[0].clientY + t[1].clientY) / 2 };
 }
 
+function moveTo(t) {
+  const p = toRemote(t);
+  predictCursor(p);
+  send({ t: 'mmove', x: p.x, y: p.y });
+  return p;
+}
+
+function cancelTouch() {
+  if (touch) {
+    clearTimeout(touch.timer);
+    if (touch.dragging) send({ t: 'mup', x: lastPos.x, y: lastPos.y, button: 0 });
+    touch = null;
+  }
+}
+
 canvas.addEventListener('touchstart', e => {
   if (e.touches.length === 2) {
-    e.preventDefault(); // stop the browser treating it as pan/zoom
+    e.preventDefault();      // stop the browser treating it as pan/zoom
+    cancelTouch();           // a second finger ends any single-finger gesture
     twoFinger = touchMid(e.touches);
     scrollAccum = 0;
+    return;
   }
+  if (e.touches.length !== 1) return;
+  e.preventDefault();
+  const t = e.touches[0];
+  moveTo(t);                 // put the pointer under the finger before anything else
+  touch = {
+    x: t.clientX, y: t.clientY,
+    moved: false, dragging: false,
+    timer: setTimeout(() => {
+      // Held still long enough: press and keep holding, so the next movement
+      // drags whatever is under the pointer.
+      if (!touch || touch.moved) return;
+      touch.dragging = true;
+      send({ t: 'mdown', x: lastPos.x, y: lastPos.y, button: 0 });
+      if (navigator.vibrate) navigator.vibrate(15); // confirm the grab
+    }, LONG_PRESS_MS),
+  };
 }, { passive: false });
 
 canvas.addEventListener('touchmove', e => {
-  if (e.touches.length !== 2 || !twoFinger) return;
-  e.preventDefault();
-  const mid = touchMid(e.touches);
-  // Dragging up scrolls down, as on a phone. Accumulate so slow drags still
-  // move eventually instead of rounding away to nothing.
-  scrollAccum += (twoFinger.y - mid.y) / SCROLL_PX_PER_NOTCH;
-  twoFinger = mid;
-  const notches = Math.trunc(scrollAccum);
-  if (notches !== 0) {
-    scrollAccum -= notches;
-    send({ t: 'scroll', dx: 0, dy: notches });
+  if (e.touches.length === 2 && twoFinger) {
+    e.preventDefault();
+    const mid = touchMid(e.touches);
+    // Dragging up scrolls down, as on a phone. Accumulate so slow drags still
+    // move eventually instead of rounding away to nothing.
+    scrollAccum += (twoFinger.y - mid.y) / SCROLL_PX_PER_NOTCH;
+    twoFinger = mid;
+    const notches = Math.trunc(scrollAccum);
+    if (notches !== 0) {
+      scrollAccum -= notches;
+      send({ t: 'scroll', dx: 0, dy: notches });
+    }
+    return;
   }
+  if (e.touches.length !== 1 || !touch) return;
+  e.preventDefault();
+  const t = e.touches[0];
+  if (!touch.moved &&
+      (Math.abs(t.clientX - touch.x) > TAP_MOVE_TOL || Math.abs(t.clientY - touch.y) > TAP_MOVE_TOL)) {
+    touch.moved = true;
+    if (!touch.dragging) clearTimeout(touch.timer); // moved first: not a hold
+  }
+  moveTo(t);
 }, { passive: false });
 
-function endTwoFinger(e) {
-  if (!e.touches || e.touches.length < 2) { twoFinger = null; scrollAccum = 0; }
-}
-canvas.addEventListener('touchend', endTwoFinger);
-canvas.addEventListener('touchcancel', endTwoFinger);
+canvas.addEventListener('touchend', e => {
+  if (!e.touches.length) { twoFinger = null; scrollAccum = 0; }
+  if (!touch) return;
+  e.preventDefault();
+  clearTimeout(touch.timer);
+  const g = touch;
+  touch = null;
+
+  if (g.dragging) {                       // release whatever was grabbed
+    send({ t: 'mup', x: lastPos.x, y: lastPos.y, button: 0 });
+    return;
+  }
+  if (g.moved) return;                    // that was a pointer move, not a click
+
+  const now = performance.now();
+  const isDouble = now - lastTapAt < DOUBLE_TAP_MS &&
+    Math.abs(g.x - lastTapX) < DOUBLE_TAP_TOL && Math.abs(g.y - lastTapY) < DOUBLE_TAP_TOL;
+  if (isDouble) {
+    lastTapAt = 0;                        // don't let a third tap chain
+    send({ t: 'mdown', x: lastPos.x, y: lastPos.y, button: 2 });
+    send({ t: 'mup', x: lastPos.x, y: lastPos.y, button: 2 });
+    return;
+  }
+  lastTapAt = now; lastTapX = g.x; lastTapY = g.y;
+  // Sent immediately rather than waiting out the double-tap window: a quarter
+  // second of lag on every tap is far more annoying than the stray left click
+  // that precedes a right click.
+  send({ t: 'mdown', x: lastPos.x, y: lastPos.y, button: 0 });
+  send({ t: 'mup', x: lastPos.x, y: lastPos.y, button: 0 });
+}, { passive: false });
+
+canvas.addEventListener('touchcancel', () => {
+  cancelTouch();
+  twoFinger = null;
+  scrollAccum = 0;
+});
 canvas.addEventListener('wheel', e => {
   e.preventDefault();
   const scale = e.deltaMode === 0 ? 1 / 100 : 1;
@@ -659,7 +751,7 @@ function releaseHeldKeys() {
 
 // Focus loss, tab switch, and page hide all end key delivery without a keyup.
 window.addEventListener('blur', releaseHeldKeys);
-window.addEventListener('pagehide', releaseHeldKeys);
+window.addEventListener('pagehide', () => { releaseHeldKeys(); cancelTouch(); });
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) releaseHeldKeys();
 });
