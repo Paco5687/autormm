@@ -285,6 +285,7 @@ network — when history is enabled via `--db`) and its top processes.
 | | `-alert-for` | `2m` | sustained duration before a resource alert fires |
 | | `-alert-offline` | `1m` | offline duration before an offline alert fires |
 | `AUTORMM_NOTIFY_WEBHOOK` / `_NTFY` / `_DISCORD` | `-notify-webhook` / `-notify-ntfy` / `-notify-discord` | *(none)* | alert notification sinks |
+| `AUTORMM_FFMPEG_URL` | `-ffmpeg-url` | *(upstream)* | where hosts download ffmpeg when installing the H.264 encoder from the dashboard |
 | `AUTORMM_TLS_CERT`/`_KEY` | `-tls-cert`/`-tls-key` | *(none)* | optional built-in TLS |
 
 **Agent**:

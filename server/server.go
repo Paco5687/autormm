@@ -27,6 +27,7 @@ type Config struct {
 	TLSCert      string        // optional; empty => plain HTTP (e.g. behind Traefik)
 	TLSKey       string
 	AdminStore   string // path to admins.json for username/password login
+	FFmpegURL    string // where hosts fetch ffmpeg for H.264; empty => DefaultFFmpegURL
 }
 
 // Server is the running hub.

@@ -166,6 +166,24 @@ async function checkUpdates() {
     }
   } catch (e) { st.textContent = 'check error: ' + e; }
 }
+// Install the H.264 encoder fleet-wide. ffmpeg is not shipped with the agent
+// (a libx264 build is GPL), so hosts fetch it from upstream on request.
+document.getElementById('codecInstall').addEventListener('click', async () => {
+  const st = document.getElementById('updStatus');
+  if (!confirm('Download and install the H.264 encoder (ffmpeg) on every online streaming host?')) return;
+  st.textContent = 'installing ffmpeg… this downloads ~30 MB per host and can take a few minutes';
+  try {
+    const r = await authFetch('/api/codec/install-all', 'POST', {});
+    if (!r.ok) { st.textContent = 'install failed: ' + ((await r.text().catch(() => '')).trim() || r.status); return; }
+    const d = await r.json();
+    const rs = d.results || [];
+    if (!rs.length) { st.textContent = 'no online streaming hosts to install on'; return; }
+    const ok = rs.filter(x => x.ok).length;
+    st.textContent = `H.264 encoder: ${ok}/${rs.length} host${rs.length === 1 ? '' : 's'} ready`
+      + (ok < rs.length ? ' — ' + rs.filter(x => !x.ok).map(x => (x.hostname || x.agent_id) + ': ' + (x.detail || 'failed')).join('; ') : '');
+  } catch (e) { st.textContent = 'install error: ' + e; }
+});
+
 document.getElementById('updCheck').addEventListener('click', checkUpdates);
 document.getElementById('updApply').addEventListener('click', async () => {
   if (!confirm('Update the hub now? It downloads the new version and restarts (brief downtime).')) return;

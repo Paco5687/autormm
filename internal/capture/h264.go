@@ -4,7 +4,10 @@ import (
 	"fmt"
 	"image"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"sync"
 
@@ -12,13 +15,43 @@ import (
 )
 
 var (
-	ffmpegOnce sync.Once
-	ffmpegBin  string
+	ffmpegMu  sync.Mutex
+	ffmpegBin string
 )
 
-// ffmpegPath returns the ffmpeg binary path (cached), or "" if not installed.
+// ffmpegPath returns the ffmpeg binary, or "" if it is not installed.
+//
+// A copy sitting beside the agent binary wins over PATH: the hub can install a
+// private one there without touching the host's PATH or needing a package
+// manager. A *negative* result is deliberately never cached, so a host that
+// gains ffmpeg later advertises H.264 on its next session instead of having to
+// be restarted — the viewer's codec list comes from the per-session caps
+// message, which is recomputed each time.
 func ffmpegPath() string {
-	ffmpegOnce.Do(func() { ffmpegBin, _ = exec.LookPath("ffmpeg") })
+	ffmpegMu.Lock()
+	defer ffmpegMu.Unlock()
+
+	if ffmpegBin != "" {
+		if _, err := os.Stat(ffmpegBin); err == nil {
+			return ffmpegBin
+		}
+		ffmpegBin = "" // it was removed; look again
+	}
+
+	name := "ffmpeg"
+	if runtime.GOOS == "windows" {
+		name = "ffmpeg.exe"
+	}
+	if exe, err := os.Executable(); err == nil {
+		beside := filepath.Join(filepath.Dir(exe), name)
+		if fi, err := os.Stat(beside); err == nil && !fi.IsDir() {
+			ffmpegBin = beside
+			return ffmpegBin
+		}
+	}
+	if p, err := exec.LookPath("ffmpeg"); err == nil {
+		ffmpegBin = p
+	}
 	return ffmpegBin
 }
 

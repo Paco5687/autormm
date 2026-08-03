@@ -40,6 +40,7 @@ func main() {
 	}
 
 	addr := flag.String("addr", env("AUTORMM_ADDR", ":8765"), "listen address")
+	ffmpegURL := flag.String("ffmpeg-url", env("AUTORMM_FFMPEG_URL", ""), "where hosts download ffmpeg for H.264 (empty = upstream default)")
 	admin := flag.String("admin-token", env("AUTORMM_ADMIN_TOKEN", ""), "client/dashboard bearer token")
 	enroll := flag.String("enroll-token", env("AUTORMM_ENROLL_TOKEN", ""), "agent enrollment token")
 	secret := flag.String("secret", env("AUTORMM_SECRET", ""), "HMAC secret for session tickets")
@@ -97,6 +98,7 @@ func main() {
 		TLSCert:    *tlsCert,
 		TLSKey:     *tlsKey,
 		AdminStore: adminStorePath(),
+		FFmpegURL:  *ffmpegURL,
 	})
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

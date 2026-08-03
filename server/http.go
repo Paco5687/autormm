@@ -73,6 +73,8 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/runs", s.handleRuns)
 	mux.HandleFunc("/api/session", s.handleCreateSession)
 	mux.HandleFunc("/api/action", s.handleAction)
+	mux.HandleFunc("/api/codec/install", s.handleFFmpegInstall)
+	mux.HandleFunc("/api/codec/install-all", s.handleFFmpegInstallAll)
 	mux.HandleFunc("/api/patch/status", s.handlePatchStatus)
 	mux.HandleFunc("/api/patch/install", s.handlePatchInstall)
 	mux.HandleFunc("/api/patch/reboot", s.handlePatchReboot)
