@@ -1,11 +1,17 @@
 package server
 
 import (
+	"log"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
+
+// idleTimeout bounds how long a relayed socket may go without sending anything.
+// Both the viewer and the terminal page send an application-level ping well
+// inside this, so tripping it means the peer really is gone.
+const idleTimeout = 90 * time.Second
 
 // session tracks one remote-desktop relay between a viewer and an agent.
 type session struct {
@@ -75,24 +81,31 @@ func relay(a, b *websocket.Conn) {
 	a.SetReadLimit(maxMsg)
 	b.SetReadLimit(maxMsg)
 	done := make(chan struct{}, 2)
-	go pump(a, b, done)
-	go pump(b, a, done)
+	go pump(a, b, done, "viewer->agent")
+	go pump(b, a, done, "agent->viewer")
 	<-done
 	a.Close()
 	b.Close()
 	<-done
 }
 
-func pump(src, dst *websocket.Conn, done chan struct{}) {
+// pump copies one direction of a relayed session. It logs why it stopped:
+// sessions ending unexpectedly is otherwise invisible, and "which side gave up,
+// reading or writing" is the whole diagnosis.
+func pump(src, dst *websocket.Conn, done chan struct{}, dir string) {
 	defer func() { done <- struct{}{} }()
 	for {
-		src.SetReadDeadline(time.Now().Add(90 * time.Second))
+		src.SetReadDeadline(time.Now().Add(idleTimeout))
 		mt, data, err := src.ReadMessage()
 		if err != nil {
+			if !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+				log.Printf("relay %s: read ended: %v", dir, err)
+			}
 			return
 		}
 		dst.SetWriteDeadline(time.Now().Add(30 * time.Second))
 		if err := dst.WriteMessage(mt, data); err != nil {
+			log.Printf("relay %s: write ended: %v", dir, err)
 			return
 		}
 	}

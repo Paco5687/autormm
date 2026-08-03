@@ -25,6 +25,12 @@ const dec = new TextDecoder();
 function send(obj) { if (ws.readyState === 1) ws.send(JSON.stringify(obj)); }
 function sendResize() { send({ t: 'resize', cols: term.cols, rows: term.rows }); }
 
+// Keepalive. The hub's relay gives up on a socket that has sent nothing for 90
+// seconds, and an idle shell sends nothing at all — so without this a terminal
+// left alone dies on its own. The agent ignores message types it does not know,
+// so this never reaches the shell.
+setInterval(() => send({ t: 'ping' }), 20000);
+
 ws.onopen = () => {
   stateEl.textContent = 'connected';
   stateEl.className = 'pill live';
