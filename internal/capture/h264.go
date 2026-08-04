@@ -182,16 +182,32 @@ type ffmpegProc struct {
 	closeOnce sync.Once
 }
 
-func startFFmpeg(bin string, w, h, fps int, bitrate string) (*ffmpegProc, error) {
-	cmd := exec.Command(bin,
+// ffmpegArgs builds the encoder command line. Split out from startFFmpeg so the
+// latency-critical flags can be asserted without running ffmpeg.
+func ffmpegArgs(w, h, fps int, bitrate string) []string {
+	return []string{
 		"-hide_banner", "-loglevel", "error",
+		// Don't let the input layer buffer: every frame should go straight to
+		// the encoder.
+		"-fflags", "nobuffer",
 		"-f", "rawvideo", "-pixel_format", "rgba",
 		"-video_size", fmt.Sprintf("%dx%d", w, h), "-framerate", strconv.Itoa(fps), "-i", "pipe:0",
 		"-an", "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
-		"-b:v", bitrate, "-g", strconv.Itoa(fps*2), "-bf", "0",
+		"-flags", "+low_delay",
+		// A long GOP on purpose. Video and input share one TCP connection, so a
+		// periodic multi-hundred-KB keyframe stalls everything queued behind it,
+		// including the click the operator just made. The stream is reliable, so
+		// frequent keyframes buy nothing.
+		"-b:v", bitrate, "-g", strconv.Itoa(fps * 8), "-bf", "0",
 		"-x264-params", "repeat-headers=1:aud=1",
+		// Emit each packet as soon as it exists instead of batching.
+		"-flush_packets", "1",
 		"-f", "h264", "pipe:1",
-	)
+	}
+}
+
+func startFFmpeg(bin string, w, h, fps int, bitrate string) (*ffmpegProc, error) {
+	cmd := exec.Command(bin, ffmpegArgs(w, h, fps, bitrate)...)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -203,7 +219,7 @@ func startFFmpeg(bin string, w, h, fps int, bitrate string) (*ffmpegProc, error)
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	p := &ffmpegProc{stdin: stdin, stdout: stdout, cmd: cmd, frames: make(chan []byte, 3), done: make(chan struct{})}
+	p := &ffmpegProc{stdin: stdin, stdout: stdout, cmd: cmd, frames: make(chan []byte, 1), done: make(chan struct{})}
 	go func() {
 		for {
 			select {
@@ -220,13 +236,33 @@ func startFFmpeg(bin string, w, h, fps int, bitrate string) (*ffmpegProc, error)
 }
 
 // feed queues a copy of the frame, dropping it if ffmpeg is behind.
+// feed hands a frame to ffmpeg, keeping only the newest one queued.
+//
+// The queue used to hold three frames and drop the *newest* when full, which is
+// backwards: at 30fps that parked up to 100ms of stale frames ahead of the one
+// the operator is waiting to see. When the encoder falls behind, the right frame
+// to keep is always the latest.
 func (p *ffmpegProc) feed(frame []byte) {
 	cp := make([]byte, len(frame))
 	copy(cp, frame)
 	select {
 	case p.frames <- cp:
+		return
 	case <-p.done:
-	default: // ffmpeg behind — drop
+		return
+	default:
+	}
+	// Full: discard the stale frame sitting there and take its place.
+	select {
+	case <-p.frames:
+	case <-p.done:
+		return
+	default:
+	}
+	select {
+	case p.frames <- cp:
+	case <-p.done:
+	default: // the encoder goroutine grabbed it first; nothing to do
 	}
 }
 

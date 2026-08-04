@@ -208,6 +208,14 @@ func (a *Agent) startSession(parent context.Context, ss protocol.StartSession) {
 
 func (a *Agent) frameLoop(ctx context.Context, write func(int, []byte) error, cap capture.Capturer, encoders *encHolder, fps int) {
 	interval := time.Second / time.Duration(fps)
+	// With an event-driven capturer the wait already happens inside Capture,
+	// which returns the instant the screen changes. Sleeping the rest of the
+	// frame budget on top of that just delays noticing the *next* change — at
+	// 30fps, up to 33ms of pure input-to-photon latency. Pace only against a
+	// hard ceiling so a 144Hz display cannot drive the encoder flat out.
+	if cap.EventDriven() {
+		interval = time.Second / maxFPS
+	}
 	const keyframeEvery = 4 * time.Second
 	lastKey := time.Time{}
 	captureFails := 0

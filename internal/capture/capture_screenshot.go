@@ -39,6 +39,14 @@ type screenCapturer struct {
 	dirty []image.Rectangle
 }
 
+// EventDriven is true only with an accelerated backend: the screenshot path
+// polls and returns immediately whether or not anything changed.
+func (c *screenCapturer) EventDriven() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.fast != nil
+}
+
 // Dirty reports the regions changed by the most recent Capture.
 func (c *screenCapturer) Dirty() []image.Rectangle {
 	c.mu.Lock()
