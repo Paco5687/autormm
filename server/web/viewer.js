@@ -264,6 +264,11 @@ function renderCodecs(m) {
   // The hub negotiates the starting codec, so trust what it reports rather than
   // assuming the JPEG default — otherwise the toggle highlights the wrong one.
   if (m.active) currentCodec = m.active;
+  // The decoder used to be built only by a button click. Now that the hub can
+  // start a session on H.264 by itself, one has to exist before the first frame
+  // arrives — otherwise decodeH264 drops everything and the screen stays black
+  // until the operator toggles the codec by hand.
+  if (currentCodec === 'webcodecs-h264' && !decoder) initDecoder();
   const canH264 = (m.codecs || []).includes('webcodecs-h264') && ('VideoDecoder' in window);
   if (!canH264) { codecsEl.innerHTML = ''; return; }
   const btn = (c, label) => `<button data-c="${c}" class="${currentCodec === c ? 'active' : ''}">${label}</button>`;
@@ -308,7 +313,12 @@ function fallbackH264() {
 }
 
 function decodeH264(buf) {
-  if (!decoder) return;
+  // Safety net for ordering: if H.264 frames arrive before the caps message
+  // that would have set the decoder up, build it now rather than dropping them.
+  if (!decoder) {
+    initDecoder();
+    if (!decoder) return; // no WebCodecs here; fallbackH264 has taken over
+  }
   const flags = new DataView(buf).getUint8(0);
   const au = new Uint8Array(buf, 1);
   const key = (flags & 1) === 1;
