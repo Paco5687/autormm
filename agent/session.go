@@ -161,6 +161,32 @@ func (a *Agent) startSession(parent context.Context, ss protocol.StartSession) {
 	}
 	sendDisplays()
 
+	// Any resolution this session changes is put back when it ends: a host
+	// shrunk to suit the operator's screen should not stay that way for whoever
+	// is sitting at it.
+	modes := newDisplayModeMemory()
+	defer func() {
+		if !modes.changed() {
+			return
+		}
+		for index, err := range modes.restore(capture.SetDisplayMode) {
+			log.Printf("session %s: could not restore display %d: %v", ss.Session, index, err)
+		}
+		log.Printf("session %s: restored the display mode(s) it changed", ss.Session)
+	}()
+
+	// rememberMode captures a display's current size before we change it. Read
+	// from the capturer so it is the mode actually in effect, not what the
+	// viewer believes.
+	rememberMode := func(index int) {
+		for _, d := range cptr.Displays() {
+			if d.Index == index {
+				modes.remember(index, d.W, d.H)
+				return
+			}
+		}
+	}
+
 	// Swap the encoder when the viewer requests a codec change (opt-in H.264 /
 	// fall back to JPEG-tile).
 	switchCodec := func(codec string) {
@@ -176,7 +202,7 @@ func (a *Agent) startSession(parent context.Context, ss protocol.StartSession) {
 	go a.frameLoop(ctx, writeMsg, cptr, encoders, fps)
 	go a.cursorLoop(ctx, writeMsg, cursor, cptr)
 	go a.clipboardLoop(ctx, writeMsg)
-	a.inputLoop(ws, injector, encoders, cptr, switchCodec, sendDisplays) // blocks until socket closes
+	a.inputLoop(ws, injector, encoders, cptr, switchCodec, sendDisplays, rememberMode) // blocks until socket closes
 	log.Printf("session %s: ended", ss.Session)
 }
 
@@ -316,7 +342,7 @@ func (a *Agent) clipboardLoop(ctx context.Context, write func(int, []byte) error
 	}
 }
 
-func (a *Agent) inputLoop(ws *websocket.Conn, in capture.Injector, encoders *encHolder, cptr capture.Capturer, switchCodec func(string), sendDisplays func()) {
+func (a *Agent) inputLoop(ws *websocket.Conn, in capture.Injector, encoders *encHolder, cptr capture.Capturer, switchCodec func(string), sendDisplays func(), rememberMode func(int)) {
 	for {
 		ws.SetReadDeadline(time.Now().Add(90 * time.Second))
 		mt, data, err := ws.ReadMessage()
@@ -343,6 +369,7 @@ func (a *Agent) inputLoop(ws *websocket.Conn, in capture.Injector, encoders *enc
 			continue
 		case protocol.InputSetRes:
 			if ev.Display >= 0 && ev.W > 0 && ev.H > 0 {
+				rememberMode(ev.Display) // so it can be put back on disconnect
 				if err := capture.SetDisplayMode(ev.Display, ev.W, ev.H); err != nil {
 					log.Printf("set resolution %dx%d on display %d: %v", ev.W, ev.H, ev.Display, err)
 				} else {
