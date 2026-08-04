@@ -21,6 +21,10 @@ type Capturer interface {
 	Displays() []protocol.Display
 	Select(index int) error // -1 = all displays (virtual desktop), 0..N-1 = one
 	Selected() int          // the display currently captured
+	// Dirty reports the regions that changed in the most recent Capture, in
+	// image coordinates. nil means the backend cannot say, so callers must
+	// assume the whole frame changed.
+	Dirty() []image.Rectangle
 	Close() error
 }
 

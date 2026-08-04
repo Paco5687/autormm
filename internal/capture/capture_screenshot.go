@@ -20,6 +20,9 @@ func captureAvailable() bool { return screenshot.NumActiveDisplays() > 0 }
 // directly. grab returns ErrNoChange when the desktop has not been repainted.
 type frameSource interface {
 	grab(region image.Rectangle) (*image.RGBA, error)
+	// dirty reports what changed in the last successful grab, in image
+	// coordinates; nil means "assume everything".
+	dirty() []image.Rectangle
 	close()
 }
 
@@ -31,6 +34,16 @@ type screenCapturer struct {
 	// fast is the accelerated backend, dropped permanently if it ever fails so a
 	// host with a quirky driver degrades to the GDI path instead of breaking.
 	fast frameSource
+	// dirty is what the last Capture reported as changed; nil when the backend
+	// cannot say (the GDI/X11 path never can).
+	dirty []image.Rectangle
+}
+
+// Dirty reports the regions changed by the most recent Capture.
+func (c *screenCapturer) Dirty() []image.Rectangle {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.dirty
 }
 
 func newScreenCapturer() (Capturer, error) {
@@ -117,15 +130,25 @@ func (c *screenCapturer) Capture() (*image.RGBA, error) {
 		if c.fast != nil {
 			img, err = c.fast.grab(region)
 			if err == nil || err == ErrNoChange {
+				c.setDirty(c.fast.dirty())
 				return
 			}
 			log.Printf("capture: accelerated backend failed (%v) -- using GDI from here on", err)
 			c.fast.close()
 			c.fast = nil
 		}
+		// The screenshot path cannot report damage, so the encoder must assume
+		// the whole frame changed.
+		c.setDirty(nil)
 		img, err = screenshot.CaptureRect(region)
 	})
 	return img, err
+}
+
+func (c *screenCapturer) setDirty(d []image.Rectangle) {
+	c.mu.Lock()
+	c.dirty = d
+	c.mu.Unlock()
 }
 
 func (c *screenCapturer) Close() error {

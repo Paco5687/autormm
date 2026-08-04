@@ -39,7 +39,10 @@ function connect() {
   codecsEl.innerHTML = '';
   autoFitDone = false; // auto-fit resolution once per session
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const caps = 'jpeg-tile';
+  // Advertise H.264 when this browser can decode it, so the hub starts the
+  // session on it whenever the host has ffmpeg. JPEG-tile stays the fallback,
+  // both in negotiation and if a decode ever fails mid-stream.
+  const caps = ('VideoDecoder' in window) ? 'jpeg-tile,webcodecs-h264' : 'jpeg-tile';
   ws = new WebSocket(`${proto}://${location.host}/client/session?token=${encodeURIComponent(tokenParam)}&caps=${caps}`);
   ws.binaryType = 'arraybuffer';
 
@@ -64,7 +67,7 @@ async function mintSession() {
   const res = await fetch('/api/session', {
     method: 'POST',
     headers: { Authorization: 'Bearer ' + adminTok, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ agent_id: agentId, fps: 12, quality: 60 }),
+    body: JSON.stringify({ agent_id: agentId, fps: 30, quality: 60 }),
   });
   if (!res.ok) throw new Error('session mint failed (' + res.status + ')');
   return (await res.json()).token;
@@ -258,6 +261,9 @@ let currentCodec = 'jpeg-tile';
 let decoder = null, decoderReady = false, h264ts = 0;
 
 function renderCodecs(m) {
+  // The hub negotiates the starting codec, so trust what it reports rather than
+  // assuming the JPEG default — otherwise the toggle highlights the wrong one.
+  if (m.active) currentCodec = m.active;
   const canH264 = (m.codecs || []).includes('webcodecs-h264') && ('VideoDecoder' in window);
   if (!canH264) { codecsEl.innerHTML = ''; return; }
   const btn = (c, label) => `<button data-c="${c}" class="${currentCodec === c ? 'active' : ''}">${label}</button>`;

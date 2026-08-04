@@ -16,7 +16,11 @@ import (
 	"github.com/Paco5687/autormm/internal/protocol"
 )
 
-const tileSize = 128
+const (
+	tileSize = 128
+	// maxFPS bounds what a viewer may request.
+	maxFPS = 60
+)
 
 // encHolder holds the active encoder so the frame loop and input loop (which
 // can swap the codec mid-session) share it safely.
@@ -91,9 +95,15 @@ func (a *Agent) startSession(parent context.Context, ss protocol.StartSession) {
 		defer injector.Close()
 	}
 
+	// The ceiling used to be 30 and anything above it silently fell back to 10.
+	// Clamp instead, and allow more: with damage-driven encoding an idle desktop
+	// costs nothing and a busy one only pays for what actually changed.
 	fps := ss.FPS
-	if fps <= 0 || fps > 30 {
-		fps = 10
+	if fps <= 0 {
+		fps = 30
+	}
+	if fps > maxFPS {
+		fps = maxFPS
 	}
 	enc0, err := capture.NewEncoder(ss.Codec, tileSize, ss.Quality, fps)
 	if err != nil {
@@ -129,7 +139,13 @@ func (a *Agent) startSession(parent context.Context, ss protocol.StartSession) {
 	}
 
 	// Tell the viewer which codecs this host can produce, and the display layout.
-	if cm, err := json.Marshal(protocol.CapsMsg{T: "caps", Codecs: capture.EncoderCaps()}); err == nil {
+	activeCodec := ss.Codec
+	if activeCodec == "" {
+		activeCodec = protocol.CapJPEGTile
+	}
+	if cm, err := json.Marshal(protocol.CapsMsg{
+		T: "caps", Codecs: capture.EncoderCaps(), Active: activeCodec,
+	}); err == nil {
 		writeMsg(websocket.TextMessage, cm)
 	}
 	// sendDisplays publishes the current layout. It is re-sent whenever the
@@ -213,7 +229,9 @@ func (a *Agent) frameLoop(ctx context.Context, write func(int, []byte) error, ca
 		if force {
 			lastKey = start
 		}
-		msgs, err := encoders.get().Encode(img, force)
+		// Pass the damage the capturer reported: the JPEG-tile encoder then only
+		// examines tiles that actually changed instead of hashing the whole frame.
+		msgs, err := encoders.get().Encode(img, force, cap.Dirty())
 		if err != nil {
 			log.Printf("encode error: %v", err)
 			return

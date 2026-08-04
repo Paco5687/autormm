@@ -87,7 +87,9 @@ func (e *h264Encoder) SetQuality(q int) {
 	// Takes effect when ffmpeg (re)starts, e.g. on the next display/size change.
 }
 
-func (e *h264Encoder) Encode(img *image.RGBA, _ bool) ([][]byte, error) {
+// Dirty regions are ignored: x264 does its own motion estimation over the
+// full frame, and feeding it partial images would corrupt the reference chain.
+func (e *h264Encoder) Encode(img *image.RGBA, _ bool, _ []image.Rectangle) ([][]byte, error) {
 	w, h := img.Bounds().Dx(), img.Bounds().Dy()
 	e.mu.Lock()
 	if e.proc == nil || w != e.w || h != e.h {

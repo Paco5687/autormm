@@ -366,7 +366,7 @@ function sparkline(poly, data) {
 }
 
 async function startRemote(h) {
-  openSession(h, { fps: 12, quality: 60 }, '/viewer');
+  openSession(h, { fps: 30, quality: 60 }, '/viewer');
 }
 
 async function startTerminal(h) {

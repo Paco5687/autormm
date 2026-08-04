@@ -55,7 +55,18 @@ func (s *Streamer) currentQuality() int {
 // Encode turns a captured frame into a JPEG-tile media message (codec 0),
 // sending only changed tiles. Returns nil when nothing changed. force (or a
 // resolution change) makes every tile a keyframe.
-func (s *Streamer) Encode(img *image.RGBA, force bool) ([][]byte, error) {
+// Encode emits the tiles that changed since the last frame.
+//
+// dirty is the decisive optimisation. Without it every tile has to be hashed to
+// discover what moved — at 4K that is ~33MB of hashing per frame, which dwarfs
+// the JPEG work and caps the achievable framerate. DXGI already knows which
+// rectangles changed, so when it tells us we only look at those: a blinking
+// caret touches one tile instead of five hundred.
+//
+// The hash is still applied to the surviving tiles. Dirty rectangles are
+// conservative — a region can be reported as changed while looking identical —
+// and re-sending an unchanged tile costs bandwidth for nothing.
+func (s *Streamer) Encode(img *image.RGBA, force bool, dirty []image.Rectangle) ([][]byte, error) {
 	b := img.Bounds()
 	w, h := b.Dx(), b.Dy()
 	if w != s.w || h != s.h {
@@ -68,31 +79,68 @@ func (s *Streamer) Encode(img *image.RGBA, force bool) ([][]byte, error) {
 	var tiles []protocol.Tile
 	cols := (w + s.tile - 1) / s.tile
 	rows := (h + s.tile - 1) / s.tile
-	for ty := 0; ty < rows; ty++ {
-		for tx := 0; tx < cols; tx++ {
-			x0 := b.Min.X + tx*s.tile
-			y0 := b.Min.Y + ty*s.tile
-			x1 := min(x0+s.tile, b.Max.X)
-			y1 := min(y0+s.tile, b.Max.Y)
-			rect := image.Rect(x0, y0, x1, y1)
-			key := uint32(ty)<<16 | uint32(tx)
-			hash := hashRegion(img, rect)
-			if !force && s.prev[key] == hash {
-				continue
-			}
-			s.prev[key] = hash
-			jpg, err := encodeJPEG(img, rect, q)
-			if err != nil {
-				return nil, err
-			}
-			tiles = append(tiles, protocol.Tile{TX: uint16(tx), TY: uint16(ty), JPEG: jpg})
+
+	for _, c := range s.tilesToScan(force, dirty, cols, rows, b) {
+		x0 := b.Min.X + c.tx*s.tile
+		y0 := b.Min.Y + c.ty*s.tile
+		x1 := min(x0+s.tile, b.Max.X)
+		y1 := min(y0+s.tile, b.Max.Y)
+		rect := image.Rect(x0, y0, x1, y1)
+		key := uint32(c.ty)<<16 | uint32(c.tx)
+		hash := hashRegion(img, rect)
+		if !force && s.prev[key] == hash {
+			continue
 		}
+		s.prev[key] = hash
+		jpg, err := encodeJPEG(img, rect, q)
+		if err != nil {
+			return nil, err
+		}
+		tiles = append(tiles, protocol.Tile{TX: uint16(c.tx), TY: uint16(c.ty), JPEG: jpg})
 	}
 	if !force && len(tiles) == 0 {
 		return nil, nil // nothing changed; caller skips this tick
 	}
 	frame := protocol.EncodeFrame(force, uint16(w), uint16(h), uint16(s.tile), tiles)
 	return [][]byte{protocol.WrapMedia(protocol.MediaJPEGTile, frame)}, nil
+}
+
+type tileCoord struct{ tx, ty int }
+
+// tilesToScan returns the tiles worth examining this frame: every tile for a
+// keyframe or when the backend cannot report damage, otherwise just those
+// overlapping a dirty rectangle (deduplicated, since rectangles can overlap).
+func (s *Streamer) tilesToScan(force bool, dirty []image.Rectangle, cols, rows int, b image.Rectangle) []tileCoord {
+	if force || dirty == nil {
+		out := make([]tileCoord, 0, cols*rows)
+		for ty := 0; ty < rows; ty++ {
+			for tx := 0; tx < cols; tx++ {
+				out = append(out, tileCoord{tx, ty})
+			}
+		}
+		return out
+	}
+	seen := make(map[uint32]bool)
+	var out []tileCoord
+	for _, d := range dirty {
+		// Clamp into the frame: a backend may report a rectangle that runs past
+		// the captured region, and an out-of-range tile index would panic.
+		d = d.Intersect(image.Rect(0, 0, b.Dx(), b.Dy()))
+		if d.Empty() {
+			continue
+		}
+		for ty := d.Min.Y / s.tile; ty <= (d.Max.Y-1)/s.tile && ty < rows; ty++ {
+			for tx := d.Min.X / s.tile; tx <= (d.Max.X-1)/s.tile && tx < cols; tx++ {
+				key := uint32(ty)<<16 | uint32(tx)
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+				out = append(out, tileCoord{tx, ty})
+			}
+		}
+	}
+	return out
 }
 
 func encodeJPEG(img *image.RGBA, rect image.Rectangle, q int) ([]byte, error) {

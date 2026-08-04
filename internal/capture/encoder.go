@@ -11,8 +11,11 @@ import (
 // has ffmpeg, an H.264 encoder. Encode returns zero or more ready-to-send media
 // messages (each already prefixed with its MediaCodec byte); the H.264 pipeline
 // is asynchronous, so a call may return messages for earlier frames.
+// dirty lists the regions that changed since the previous frame, in image
+// coordinates. nil means "unknown — assume everything", which is what the GDI
+// and X11 paths report; DXGI supplies real rectangles.
 type Encoder interface {
-	Encode(img *image.RGBA, force bool) ([][]byte, error)
+	Encode(img *image.RGBA, force bool, dirty []image.Rectangle) ([][]byte, error)
 	SetQuality(q int) // JPEG quality / codec quality hint
 	Close() error
 }

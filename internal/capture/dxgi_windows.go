@@ -157,7 +157,13 @@ type dxgiSource struct {
 	buf    *image.RGBA     // persistent frame; only dirty rows are refreshed
 	meta   []byte          // reusable dirty-rect metadata buffer
 	held   bool            // a frame is acquired and awaiting ReleaseFrame
+	// last is what changed in the most recent frame, converted to image
+	// coordinates for the encoder. nil means "assume everything".
+	last []image.Rectangle
 }
+
+// dirty reports the regions changed by the last grab.
+func (d *dxgiSource) dirty() []image.Rectangle { return d.last }
 
 func newFastSource() frameSource { return &dxgiSource{} }
 
@@ -209,6 +215,7 @@ func (d *dxgiSource) grab(region image.Rectangle) (*image.RGBA, error) {
 	// streamed separately, so there is nothing new to encode.
 	if info.AccumulatedFrames == 0 || info.LastPresentTime == 0 {
 		release(&resource)
+		d.last = nil
 		return nil, ErrNoChange
 	}
 
@@ -225,8 +232,19 @@ func (d *dxgiSource) grab(region image.Rectangle) (*image.RGBA, error) {
 	if r := call(d.ctx, vtCtxMap, d.staging, 0, d3d11MapRead, 0, uintptr(unsafe.Pointer(&mapped))); r != 0 {
 		return nil, fmt.Errorf("dxgi: Map: 0x%x", uint32(r))
 	}
-	d.convert(mapped, d.dirtyRects(info))
+	rects := d.dirtyRects(info)
+	// convert fills the whole buffer when it has just been (re)created — after a
+	// mode change or ACCESS_LOST. Report "everything" then, or the encoder would
+	// send only the driver's rectangles and leave the rest of the viewer's image
+	// stale until the next keyframe.
+	rebuilt := d.buf == nil
+	d.convert(mapped, rects)
 	call(d.ctx, vtCtxUnmap, d.staging, 0)
+	if rebuilt {
+		d.last = nil
+	} else {
+		d.last = toImageRects(rects)
+	}
 	return d.buf, nil
 }
 
@@ -248,6 +266,19 @@ func (d *dxgiSource) dirtyRects(info outduplFrameInfo) []rect {
 	}
 	n := int(used) / int(unsafe.Sizeof(rect{}))
 	return unsafe.Slice((*rect)(unsafe.Pointer(&d.meta[0])), n)
+}
+
+// toImageRects converts DXGI rectangles to image.Rectangle. A nil result means
+// the driver gave no metadata, which the encoder reads as "assume everything".
+func toImageRects(rs []rect) []image.Rectangle {
+	if rs == nil {
+		return nil
+	}
+	out := make([]image.Rectangle, 0, len(rs))
+	for _, r := range rs {
+		out = append(out, image.Rect(int(r.Left), int(r.Top), int(r.Right), int(r.Bottom)))
+	}
+	return out
 }
 
 // convert copies BGRA rows out of the mapped staging texture into the persistent

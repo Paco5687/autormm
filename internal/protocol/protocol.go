@@ -171,6 +171,10 @@ type StartSession struct {
 type CapsMsg struct {
 	T      string   `json:"t"` // always "caps"
 	Codecs []string `json:"codecs"`
+	// Active is the codec the session actually started on, negotiated by the
+	// hub. Without it the viewer cannot tell which of its buttons is live when
+	// the hub picks something other than the default.
+	Active string `json:"active,omitempty"`
 }
 
 // Mode is a selectable display resolution.
