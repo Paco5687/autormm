@@ -2,10 +2,12 @@ package agent
 
 import (
 	"context"
+	"encoding/base64"
 	"os/exec"
 	"runtime"
 	"strings"
 	"time"
+	"unicode/utf16"
 
 	"github.com/Paco5687/autormm/internal/protocol"
 )
@@ -79,15 +81,38 @@ func shellFor(shell, command string) (string, []string) {
 	case "bash":
 		return "bash", []string{"-c", command}
 	case "powershell", "pwsh":
-		return "powershell", []string{"-NoProfile", "-NonInteractive", "-Command", command}
+		return "powershell", psArgs(command)
 	case "cmd":
 		return "cmd", []string{"/c", command}
 	}
 	// default per OS
 	if runtime.GOOS == "windows" {
-		return "powershell", []string{"-NoProfile", "-NonInteractive", "-Command", command}
+		return "powershell", psArgs(command)
 	}
 	return "sh", []string{"-c", command}
+}
+
+// psArgs runs a script via -EncodedCommand rather than -Command.
+//
+// powershell.exe re-parses the raw command line for -Command, so a multi-line
+// script — especially one containing quotes — does not necessarily arrive as
+// written, and fails in ways that look like the script itself is wrong.
+// -EncodedCommand takes base64 of UTF-16LE and is immune to all of it.
+//
+// The whole command line is still capped near 32k by the OS, and base64 of
+// UTF-16 is ~2.7x the source, so scripts beyond ~12KB will not fit either way.
+func psArgs(command string) []string {
+	return []string{"-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(command)}
+}
+
+// encodePowerShell renders a script the way -EncodedCommand expects it.
+func encodePowerShell(s string) string {
+	units := utf16.Encode([]rune(s))
+	buf := make([]byte, 0, len(units)*2)
+	for _, u := range units {
+		buf = append(buf, byte(u), byte(u>>8)) // little-endian
+	}
+	return base64.StdEncoding.EncodeToString(buf)
 }
 
 // chunkWriter forwards each write as an ExecOutput message.
