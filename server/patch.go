@@ -34,6 +34,32 @@ else
   echo "no supported package manager"; exit 1
 fi`
 
+// macOS updates come from softwareupdate(8). Listing works as the logged-in
+// user; installing needs root, and the agent runs as a LaunchAgent in the user
+// session, so the install path reports that plainly instead of failing opaquely.
+const macPatchStatus = `
+OUT=$(softwareupdate -l 2>&1 || true)
+if echo "$OUT" | grep -qi "No new software available"; then
+  echo "MGR=softwareupdate UPDATES=0 SECURITY=0 REBOOT=no"; exit 0
+fi
+N=$(echo "$OUT" | grep -c "^\\s*\\*" || true)
+S=$(echo "$OUT" | grep -i "security\\|safari" | grep -c "" || true)
+R=no
+echo "$OUT" | grep -qi "restart" && R=yes
+echo "MGR=softwareupdate UPDATES=$N SECURITY=$S REBOOT=$R"`
+
+const macPatchInstall = `
+if [ "$(id -u)" != "0" ]; then
+  echo "installing macOS updates needs root, and the agent runs in your login session."
+  echo "run this on the Mac:  sudo softwareupdate -i -a"
+  exit 1
+fi
+softwareupdate -i -a`
+
+const macReboot = `
+if [ "$(id -u)" != "0" ]; then echo "rebooting needs root; run: sudo shutdown -r now"; exit 1; fi
+( sleep 2; shutdown -r now ) >/dev/null 2>&1 & echo "reboot scheduled"`
+
 const linuxReboot = `( sleep 2; systemctl reboot || reboot ) >/dev/null 2>&1 & echo "reboot scheduled"`
 
 // Windows patch scripts drive the Windows Update Agent COM API, which ships
@@ -123,6 +149,11 @@ func patchPlanFor(osName string) (patchPlan, bool) {
 		return patchPlan{
 			shell: "powershell", status: windowsPatchStatus, install: windowsPatchInstall, reboot: windowsReboot,
 			installTimeout: 3600, needsElevated: true,
+		}, true
+	case "darwin":
+		return patchPlan{
+			shell: "sh", status: macPatchStatus, install: macPatchInstall, reboot: macReboot,
+			installTimeout: 3600,
 		}, true
 	}
 	return patchPlan{}, false

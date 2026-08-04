@@ -11,7 +11,7 @@ DIST    := dist
 .PHONY: all build test vet tidy clean dist run-server embed-agents
 
 # Agent binaries the hub embeds and serves for one-command installs.
-AGENT_TARGETS := linux/amd64 linux/arm64 windows/amd64
+AGENT_TARGETS := linux/amd64 linux/arm64 windows/amd64 darwin/amd64 darwin/arm64
 
 all: build
 

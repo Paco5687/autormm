@@ -71,6 +71,18 @@ else echo "no supported package manager"; exit 1
 fi
 ffmpeg -version 2>/dev/null | head -1`
 
+// macFFmpegInstall uses Homebrew, which is how anything gets installed on a Mac
+// dev box. brew refuses to run as root, and the agent is a user LaunchAgent, so
+// this lands in the user's prefix as intended.
+const macFFmpegInstall = `
+if command -v ffmpeg >/dev/null 2>&1; then echo "already installed: $(ffmpeg -version 2>/dev/null | head -1)"; exit 0; fi
+BREW=$(command -v brew || true)
+[ -x /opt/homebrew/bin/brew ] && BREW=/opt/homebrew/bin/brew   # Apple silicon
+[ -z "$BREW" ] && [ -x /usr/local/bin/brew ] && BREW=/usr/local/bin/brew
+if [ -z "$BREW" ]; then echo "Homebrew is not installed; see https://brew.sh"; exit 1; fi
+"$BREW" install ffmpeg
+ffmpeg -version 2>/dev/null | head -1`
+
 // ffmpegInstallFor returns the script and shell that install ffmpeg on an OS.
 func (s *Server) ffmpegInstallFor(osName string) (script, shell string, ok bool) {
 	switch osName {
@@ -82,6 +94,8 @@ func (s *Server) ffmpegInstallFor(osName string) (script, shell string, ok bool)
 		return strings.ReplaceAll(windowsFFmpegInstall, "__URL__", url), "powershell", true
 	case "linux":
 		return linuxFFmpegInstall, "sh", true
+	case "darwin":
+		return macFFmpegInstall, "sh", true
 	}
 	return "", "", false
 }

@@ -817,6 +817,7 @@ async function openEnroll() {
     document.getElementById('cmdLinuxDesktop').textContent = d.commands.linux_desktop;
     document.getElementById('cmdWindows').textContent = d.commands.windows;
     document.getElementById('cmdWindowsElevated').textContent = d.commands.windows_elevated;
+    document.getElementById('cmdMac').textContent = d.commands.macos;
     if (!d.bundled) {
       note.textContent = 'Note: this hub build does not bundle agent binaries — rebuild with `make` so hosts can download the agent from the hub.';
     }

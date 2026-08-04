@@ -14,7 +14,9 @@ func TestPatchPlanFor(t *testing.T) {
 	}{
 		{"linux", true, "sh", false},
 		{"windows", true, "powershell", true},
-		{"darwin", false, "", false},
+		// macOS: softwareupdate. No elevated helper concept — the agent is a user
+		// LaunchAgent and the install path says plainly that it needs root.
+		{"darwin", true, "sh", false},
 		{"", false, "", false},
 	} {
 		plan, ok := patchPlanFor(tc.os)

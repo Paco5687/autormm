@@ -91,7 +91,10 @@ func (s *Server) handleInstallScript(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tmpl := installSh
-	if r.URL.Query().Get("desktop") == "1" {
+	switch {
+	case r.URL.Query().Get("os") == "darwin":
+		tmpl = installShMac
+	case r.URL.Query().Get("desktop") == "1":
 		tmpl = installShDesktop
 	}
 	out := strings.ReplaceAll(tmpl, "__SERVER__", baseURL(r))
@@ -142,6 +145,8 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 			"linux_desktop":    fmt.Sprintf(`curl -fsSL "%s/install.sh?token=%s&desktop=1" | sh`, base, tok),
 			"windows":          fmt.Sprintf(`iwr -useb "%s/install.ps1?token=%s" | iex`, base, tok),
 			"windows_elevated": fmt.Sprintf(`iwr -useb "%s/install-elevated.ps1?token=%s" | iex`, base, tok),
+			// No sudo: a LaunchAgent belongs to the user's login session.
+			"macos": fmt.Sprintf(`curl -fsSL "%s/install.sh?token=%s&os=darwin" | sh`, base, tok),
 		},
 	})
 }
@@ -181,6 +186,79 @@ systemctl enable autormm-agent
 # restart (not just enable --now) so re-running this command upgrades in place.
 systemctl restart autormm-agent
 echo "autormm-agent installed and running. It should appear on the dashboard shortly."
+`
+
+// installShMac installs the agent as a per-user LaunchAgent.
+//
+// A LaunchAgent, not a LaunchDaemon, on purpose: it runs inside the user's Aqua
+// session, which is the only context that can capture the screen or inject
+// input on macOS. A root LaunchDaemon has no such access no matter what
+// permissions are granted, so starting there would mean migrating later.
+const installShMac = `#!/bin/sh
+# autormm agent installer for macOS (per-user LaunchAgent). Run WITHOUT sudo.
+set -e
+SERVER="__SERVER__"
+TOKEN="__TOKEN__"
+
+if [ "$(id -u)" = "0" ]; then
+  echo "Run this without sudo: a LaunchAgent belongs to your login session," >&2
+  echo "and installing it as root would put it in the wrong place." >&2
+  exit 1
+fi
+
+case "$(uname -m)" in
+  arm64) ARCH=arm64;;
+  x86_64) ARCH=amd64;;
+  *) echo "unsupported architecture: $(uname -m)" >&2; exit 1;;
+esac
+
+BIN_DIR="$HOME/.local/bin"
+PLIST="$HOME/Library/LaunchAgents/com.autormm.agent.plist"
+LABEL="com.autormm.agent"
+mkdir -p "$BIN_DIR" "$HOME/Library/LaunchAgents" "$HOME/Library/Logs"
+
+echo "Downloading autormm-agent (darwin/$ARCH) from $SERVER ..."
+curl -fsSL "$SERVER/download/agent?os=darwin&arch=$ARCH&token=$TOKEN" -o "$BIN_DIR/autormm-agent.new"
+chmod 0755 "$BIN_DIR/autormm-agent.new"
+# Replace by rename so an already-running agent is not overwritten in place.
+mv -f "$BIN_DIR/autormm-agent.new" "$BIN_DIR/autormm-agent"
+# Downloaded binaries carry the quarantine flag, which stops launchd running it.
+xattr -d com.apple.quarantine "$BIN_DIR/autormm-agent" 2>/dev/null || true
+
+cat > "$PLIST" <<PLISTEOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$LABEL</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$BIN_DIR/autormm-agent</string>
+    <string>-server</string><string>$SERVER</string>
+    <string>-token</string><string>$TOKEN</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ProcessType</key><string>Interactive</string>
+  <key>StandardOutPath</key><string>$HOME/Library/Logs/autormm-agent.log</string>
+  <key>StandardErrorPath</key><string>$HOME/Library/Logs/autormm-agent.log</string>
+</dict>
+</plist>
+PLISTEOF
+chmod 0600 "$PLIST"   # it contains the enroll token
+
+UID_NUM="$(id -u)"
+# bootout first so re-running this upgrades in place. Older macOS lacks
+# bootstrap/bootout, so fall back to load/unload.
+if launchctl bootout "gui/$UID_NUM/$LABEL" 2>/dev/null; then :; fi
+if ! launchctl bootstrap "gui/$UID_NUM" "$PLIST" 2>/dev/null; then
+  launchctl unload "$PLIST" 2>/dev/null || true
+  launchctl load -w "$PLIST"
+fi
+launchctl enable "gui/$UID_NUM/$LABEL" 2>/dev/null || true
+
+echo "autormm-agent installed and running. It should appear on the dashboard shortly."
+echo "Log: ~/Library/Logs/autormm-agent.log"
 `
 
 const installShDesktop = `#!/bin/sh

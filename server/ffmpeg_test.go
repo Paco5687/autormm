@@ -13,7 +13,7 @@ func TestFFmpegInstallFor(t *testing.T) {
 	}{
 		{"windows", "powershell", true},
 		{"linux", "sh", true},
-		{"darwin", "", false},
+		{"darwin", "sh", true},
 		{"", "", false},
 	} {
 		script, shell, ok := s.ffmpegInstallFor(tc.os)
