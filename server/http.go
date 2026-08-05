@@ -400,14 +400,8 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	fps := req.FPS
-	if fps <= 0 || fps > 30 {
-		fps = 10
-	}
-	q := req.Quality
-	if q <= 0 || q > 100 {
-		q = 60
-	}
+	fps := sessionFPS(req.FPS)
+	q := sessionQuality(req.Quality)
 	sid := auth.RandomID(18)
 	s.sessions.create(sid, req.AgentID, kind, fps, q)
 	ticket := auth.SignTicket(s.secret, sid, req.AgentID, 60*time.Second)

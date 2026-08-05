@@ -366,7 +366,11 @@ function sparkline(poly, data) {
 }
 
 async function startRemote(h) {
-  openSession(h, { fps: 60, quality: 60 }, '/viewer');
+  // 30, matching the viewer's own reconnect path. These two must agree: this is
+  // the request that starts the session, and for a long time it asked for 60
+  // while the viewer asked for 30, so every session began life at the wrong
+  // framerate.
+  openSession(h, { fps: 30, quality: 60 }, '/viewer');
 }
 
 async function startTerminal(h) {

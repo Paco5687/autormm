@@ -15,6 +15,47 @@ import (
 // inside this, so tripping it means the peer really is gone.
 const idleTimeout = 90 * time.Second
 
+// Session defaults and bounds for a screen session.
+//
+// defaultFPS matches what the viewer asks for: on a link that cannot carry
+// both, frames and sharpness trade directly against each other, and 30 is
+// indistinguishable from 60 for desktop work while looking twice as good.
+// maxSessionFPS is the agent's own ceiling, so a request above it is clamped
+// here rather than being reinterpreted further down.
+const (
+	defaultFPS     = 30
+	maxSessionFPS  = 60
+	defaultQuality = 60
+)
+
+// sessionFPS clamps a requested framerate into the allowed range.
+//
+// Clamp, never collapse. The rule here used to be "out of range -> 10fps", and
+// the dashboard asked for 60, so every session opened from the Remote button
+// ran at a third of the default — silently, with nothing logged and nothing to
+// see but a slow picture. The host was doing 17ms of work per frame and then
+// sleeping out the remaining 83ms of a budget it had been handed by mistake,
+// which is indistinguishable from a slow host or a slow link and is neither.
+//
+// Out of range should mean "as close as allowed", which is what every caller
+// expects and is never worse than what they asked for.
+func sessionFPS(requested int) int {
+	if requested <= 0 {
+		return defaultFPS
+	}
+	if requested > maxSessionFPS {
+		return maxSessionFPS
+	}
+	return requested
+}
+
+func sessionQuality(requested int) int {
+	if requested <= 0 || requested > 100 {
+		return defaultQuality
+	}
+	return requested
+}
+
 // session tracks one remote-desktop relay between a viewer and an agent.
 type session struct {
 	id      string
