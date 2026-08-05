@@ -207,15 +207,12 @@ func (a *Agent) startSession(parent context.Context, ss protocol.StartSession) {
 }
 
 func (a *Agent) frameLoop(ctx context.Context, write func(int, []byte) error, cap capture.Capturer, encoders *encHolder, fps int) {
+	// Pace at exactly the rate the encoder was built for. These two must agree:
+	// ffmpeg is started with -framerate fps and a bitrate budget sized for it, so
+	// feeding it faster halves the bits available per frame and doubles the CPU
+	// cost for a picture that looks worse. An earlier attempt to shave latency by
+	// pacing event-driven capturers at maxFPS did exactly that.
 	interval := time.Second / time.Duration(fps)
-	// With an event-driven capturer the wait already happens inside Capture,
-	// which returns the instant the screen changes. Sleeping the rest of the
-	// frame budget on top of that just delays noticing the *next* change — at
-	// 30fps, up to 33ms of pure input-to-photon latency. Pace only against a
-	// hard ceiling so a 144Hz display cannot drive the encoder flat out.
-	if cap.EventDriven() {
-		interval = time.Second / maxFPS
-	}
 	const keyframeEvery = 4 * time.Second
 	lastKey := time.Time{}
 	captureFails := 0

@@ -25,11 +25,6 @@ type Capturer interface {
 	// image coordinates. nil means the backend cannot say, so callers must
 	// assume the whole frame changed.
 	Dirty() []image.Rectangle
-	// EventDriven reports whether Capture blocks until the screen actually
-	// changes. When it does, the caller must not also sleep between frames: the
-	// wait is already happening in the right place, and sleeping afterwards just
-	// delays noticing the next change.
-	EventDriven() bool
 	Close() error
 }
 
