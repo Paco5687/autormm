@@ -212,6 +212,15 @@ type NoticeMsg struct {
 	Message string `json:"message"`
 }
 
+// SupersededMsg tells a viewer its screen session was replaced by a newer one.
+// It matters that this is distinguishable from an ordinary disconnect: the
+// viewer reconnects automatically on a drop, and without this the replaced
+// session would immediately reconnect and displace the new one, forever.
+type SupersededMsg struct {
+	T       string `json:"t"` // always "superseded"
+	Message string `json:"message"`
+}
+
 // CursorMsg is sent from the agent to the viewer (text frame on the media
 // socket) with the host pointer position, so the viewer can draw it as an
 // overlay. Coordinates are absolute pixels in the captured screen's resolution.

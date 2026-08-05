@@ -384,7 +384,16 @@ function onMessage(ev) {
   if (typeof ev.data === 'string') {
     try {
       const msg = JSON.parse(ev.data);
-      if (msg.t === 'error') { stateEl.textContent = msg.message; stateEl.className = 'pill dead'; }
+      if (msg.t === 'superseded') {
+        // Another connection took this host over. Do NOT reconnect: the two
+        // sessions would displace each other forever.
+        userClosing = true;
+        clearTimeout(reconnectTimer); reconnectTimer = null;
+        stateEl.textContent = 'taken over';
+        stateEl.className = 'pill dead';
+        showNotice(msg.message || 'This session was taken over by a newer connection. Reload to take it back.');
+      }
+      else if (msg.t === 'error') { stateEl.textContent = msg.message; stateEl.className = 'pill dead'; }
       else if (msg.t === 'notice') showNotice(msg.message);
       else if (msg.t === 'cursor') updateCursor(msg);
       else if (msg.t === 'displays') renderDisplays(msg);

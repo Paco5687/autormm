@@ -79,6 +79,34 @@ func (a *Agent) startSession(parent context.Context, ss protocol.StartSession) {
 		return
 	}
 
+	// Serialise all writes to the media socket (frames + cursor share it).
+	var wmu sync.Mutex
+	writeMsg := func(mt int, b []byte) error {
+		wmu.Lock()
+		defer wmu.Unlock()
+		ws.SetWriteDeadline(time.Now().Add(10 * time.Second))
+		return ws.WriteMessage(mt, b)
+	}
+
+	// One screen session per host. Claim the slot and stop the previous holder
+	// *before* building a capturer and encoder, so the two pipelines never run
+	// at once — the overlap is what would spike the host's CPU.
+	closed := make(chan struct{})
+	var closeOnce sync.Once
+	stop := func() {
+		if b, err := json.Marshal(protocol.SupersededMsg{
+			T:       "superseded",
+			Message: "This session was taken over by a newer connection to this host.",
+		}); err == nil {
+			writeMsg(websocket.TextMessage, b)
+		}
+		closeOnce.Do(func() { close(closed) })
+	}
+	if endPrevious := a.screens.claim(ss.Session, stop); endPrevious != nil {
+		endPrevious()
+	}
+	defer a.screens.release(ss.Session)
+
 	cptr, err := capture.NewCapturer()
 	if err != nil {
 		log.Printf("session %s: capture unavailable: %v", ss.Session, err)
@@ -125,18 +153,12 @@ func (a *Agent) startSession(parent context.Context, ss protocol.StartSession) {
 	// Close the media socket when the session context ends so inputLoop's
 	// blocking ReadMessage unblocks on shutdown.
 	go func() {
-		<-ctx.Done()
+		select {
+		case <-ctx.Done():
+		case <-closed: // superseded by a newer session
+		}
 		ws.Close()
 	}()
-
-	// Serialise all writes to the media socket (frames + cursor share it).
-	var wmu sync.Mutex
-	writeMsg := func(mt int, b []byte) error {
-		wmu.Lock()
-		defer wmu.Unlock()
-		ws.SetWriteDeadline(time.Now().Add(10 * time.Second))
-		return ws.WriteMessage(mt, b)
-	}
 
 	// Tell the viewer which codecs this host can produce, and the display layout.
 	activeCodec := ss.Codec

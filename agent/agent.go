@@ -52,6 +52,8 @@ type Agent struct {
 	// off the per-connection context: a control-socket blip must not tear down a
 	// remote-desktop session that is streaming perfectly well on its own socket.
 	rootCtx context.Context
+	// screens enforces one screen session at a time on this host.
+	screens screenSessions
 }
 
 // SetUpdateHook registers a function that checks the hub for a newer agent and
