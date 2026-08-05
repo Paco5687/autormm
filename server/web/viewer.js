@@ -22,6 +22,7 @@ document.title = 'autormm — ' + hostName;
 let ws;
 let remoteW = canvas.width, remoteH = canvas.height;
 let frames = 0;
+let rxBytes = 0; // bytes received since the last report, for the rate the host aims at
 
 // The screen source can change under us — most notably a Windows host handing
 // off between the user-session agent and the SYSTEM console worker as it locks
@@ -386,6 +387,7 @@ function updateCursor(m) {
 }
 
 function onMessage(ev) {
+  rxBytes += (typeof ev.data === 'string') ? ev.data.length : ev.data.byteLength;
   if (typeof ev.data === 'string') {
     try {
       const msg = JSON.parse(ev.data);
@@ -877,6 +879,20 @@ function showLinkRate(kbps) {
 
 // fps meter + keepalive
 setInterval(() => { fpsEl.textContent = frames + ' fps'; frames = 0; }, 1000);
+
+// Report what we are actually receiving, once a second.
+//
+// The host sizes its stream to the connection, and it works that out from its
+// own writes blocking. That only reaches it if every hop in between pushes
+// back, which cannot be relied on: a reverse proxy or an overlay network in the
+// path will happily buffer megabytes and the host then concludes the link is
+// faster than it is. What arrives here is the one number no amount of buffering
+// upstream can inflate.
+setInterval(() => {
+  const kbps = Math.round(rxBytes * 8 / 1000);
+  rxBytes = 0;
+  if (ws && ws.readyState === WebSocket.OPEN) send({ t: 'rx', kbps });
+}, 1000);
 setInterval(() => send({ t: 'ping' }), 20000);
 
 connect();

@@ -66,7 +66,10 @@ func TestEstimateDoesNotSpiralToTheFloor(t *testing.T) {
 	// input that would feed a spiral.
 	feed(l, 30, 500_000, 0, t0)
 
-	if got := l.rate(); got <= dropped {
+	// Holding is the correct answer here, not climbing: a window spent sending a
+	// fraction of the ceiling without blocking carries no information either way.
+	// What must never happen is falling further.
+	if got := l.rate(); got < dropped {
 		t.Errorf("estimate went from %d to %d while nothing was blocking: it is chasing its own back-off", dropped, got)
 	}
 	if got := l.rate(); got == minRateBps {
@@ -76,16 +79,23 @@ func TestEstimateDoesNotSpiralToTheFloor(t *testing.T) {
 
 // Recovery matters as much as back-off: a link that was briefly congested must
 // win its bitrate back, or one bad moment costs quality for the whole session.
+//
+// This has to be driven closed-loop. Offering a fixed load instead would prove
+// nothing, because once the ceiling rises past what is being offered there is
+// no evidence more is available and holding is the right answer.
 func TestEstimateRecoversAfterCongestionClears(t *testing.T) {
 	l := newLinkEstimator(12_000_000)
-	t0 := time.Now()
+	now := time.Now()
 
-	t0 = feed(l, 10, 2_000_000, 700*time.Millisecond, t0) // congested
+	now = runLink(l, 2_000_000, 20, now) // the link degrades
 	low := l.rate()
-	feed(l, 60, 2_000_000, 0, t0) // clear, and the encoder is not saturating
+	if low > 3_000_000 {
+		t.Fatalf("estimate did not follow the link down: %d", low)
+	}
 
-	if got := l.rate(); got <= low*2 {
-		t.Errorf("estimate only reached %d bps from %d after a minute clear; recovery is too slow", got, low)
+	runLink(l, 15_000_000, 60, now) // and recovers
+	if got := l.rate(); got < 8_000_000 {
+		t.Errorf("estimate only reached %d bps after the link recovered to 15Mbps", got)
 	}
 }
 
@@ -110,7 +120,14 @@ func TestEstimateStaysWithinBounds(t *testing.T) {
 func simulate(t *testing.T, capacityBps, startBps float64, windows int) (settled float64, worstOvershoot float64) {
 	t.Helper()
 	l := newLinkEstimator(startBps)
-	now := time.Now()
+	runLink(l, capacityBps, windows, time.Now())
+	return l.est, 0
+}
+
+// runLink drives an estimator through n one-second windows against a link of a
+// given capacity, with the encoder spending whatever ceiling it currently has.
+func runLink(l *linkEstimator, capacityBps float64, windows int, start time.Time) time.Time {
+	now := start
 	for i := 0; i < windows; i++ {
 		now = now.Add(time.Second)
 		offered := l.est // during motion the encoder spends its whole ceiling
@@ -126,13 +143,10 @@ func simulate(t *testing.T, capacityBps, startBps float64, windows int) (settled
 			if blocked > time.Second {
 				blocked = time.Second
 			}
-			if ratio := offered / capacityBps; ratio > worstOvershoot {
-				worstOvershoot = ratio
-			}
 		}
 		l.observe(int(delivered/8), blocked, now)
 	}
-	return l.est, worstOvershoot
+	return now
 }
 
 func TestEstimateConvergesOnAConstrainedLink(t *testing.T) {
@@ -162,4 +176,73 @@ func TestEstimateClimbsToUseAFastLink(t *testing.T) {
 		t.Errorf("on a 20Mbps link the estimate only reached %.1f Mbps; that is the blockiness complaint unfixed", got/1e6)
 	}
 	t.Logf("20Mbps link -> %.1f Mbps", got/1e6)
+}
+
+// The estimate must never pin itself at the hard ceiling on evidence it does
+// not have.
+//
+// Reported from a real session: the viewer showed a steady 25 Mbps — the clamp
+// — while the framerate sat between 2 and 12. Nothing was ever pushing back, so
+// an estimate that climbed on every unblocked window simply ratcheted to the
+// top and stayed. The encoder then budgeted 25 Mbps of video per second for a
+// link carrying far less, which went out as a few very large frames instead of
+// many small ones. That is the framerate collapse, caused by the "measurement"
+// rather than merely unnoticed by it.
+func TestEstimateDoesNotPinAtTheCeilingWithoutEvidence(t *testing.T) {
+	l := newLinkEstimator(startRateBps)
+	now := time.Now()
+
+	// Five minutes of a mostly-still desktop: a trickle of bytes, never blocked,
+	// which is exactly the case that carries no information about capacity.
+	for i := 0; i < 300; i++ {
+		now = now.Add(time.Second)
+		l.observe(120_000/8, 0, now) // ~120 kbps
+	}
+
+	if got := l.rate(); got >= maxRateBps {
+		t.Errorf("estimate reached the hard ceiling (%d bps) on an idle desktop that proved nothing", got)
+	}
+	if got := l.rate(); got > startRateBps*2 {
+		t.Errorf("estimate drifted to %d bps while only ~120 kbps was ever sent", got)
+	}
+}
+
+// The case the sender-side signal cannot see: something in the path buffers, so
+// writes never block however far over capacity we push.
+//
+// This is not hypothetical — a reverse proxy terminating TLS, or a zero-trust
+// overlay, sits in exactly that position and will absorb megabytes. Blocked
+// writes then report a link far faster than the truth, the estimate ratchets to
+// the hard ceiling, and the encoder sizes a stream the path cannot carry. What
+// the viewer counts arriving is the one figure none of that can inflate.
+func TestReceiverReportBeatsAHidingProxy(t *testing.T) {
+	const capacity = 6_000_000
+	l := newLinkEstimator(20_000_000)
+	now := time.Now()
+
+	for i := 0; i < 40; i++ {
+		now = now.Add(time.Second)
+		offered := l.est
+		// The proxy swallows everything instantly: writes never block, so the
+		// sender-side signal is silent no matter how badly we overshoot.
+		l.observeReceived(min(offered, capacity))
+		l.observe(int(offered/8), 0, now)
+	}
+
+	if got := l.rate(); got > capacity*1.3 {
+		t.Errorf("estimate stayed at %d bps on a %d bps path; the receiver report was ignored", got, capacity)
+	}
+	if got := l.rate(); got < capacity*0.5 {
+		t.Errorf("estimate collapsed to %d bps on a %d bps path", got, capacity)
+	}
+	t.Logf("hidden %d bps bottleneck -> estimate %.1f Mbps", capacity, float64(l.rate())/1e6)
+}
+
+// A viewer that never reports (an older one) must not be harmed by the feature.
+func TestMissingReceiverReportsAreHarmless(t *testing.T) {
+	l := newLinkEstimator(startRateBps)
+	runLink(l, 8_000_000, 60, time.Now()) // no observeReceived calls at all
+	if got := l.rate(); got < 4_000_000 {
+		t.Errorf("without receiver reports the estimate stalled at %d bps on an 8Mbps link", got)
+	}
 }

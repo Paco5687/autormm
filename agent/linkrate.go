@@ -32,6 +32,12 @@ const (
 // window's worth, which the VBV buffer absorbs.
 const backloggedFrac = 0.10
 
+// probeWhenUsing is the share of the current ceiling that must actually be in
+// use before reaching for more. Without it the estimate climbs on windows that
+// contain no information — an idle desktop — and ends up pinned at the hard
+// ceiling, which is a guess wearing a measurement's clothes.
+const probeWhenUsing = 0.7
+
 // linkEstimator works out how much the viewer's connection actually carries.
 //
 // This exists because the bitrate ceiling used to be a number picked by hand,
@@ -51,6 +57,10 @@ type linkEstimator struct {
 	window     time.Duration
 	backlogged float64
 	est        float64
+
+	// rx is the rate the viewer reports actually receiving, smoothed. Zero until
+	// the first report arrives (older viewers never send one).
+	rx float64
 
 	bytes     int
 	blocked   time.Duration
@@ -96,25 +106,69 @@ func (l *linkEstimator) roll(now time.Time) {
 	// overshoot is not merely wasteful, everything it fails to deliver is
 	// sitting in a queue adding latency.
 	//
-	// Not backlogged: the measurement says nothing about capacity, because we
-	// may simply have had nothing to send. Probe upward gently.
+	// Not backlogged: probe upward, but only if the ceiling was actually being
+	// used. Otherwise this window says nothing about capacity at all.
 	//
 	// The asymmetry is deliberate and load-bearing. Cutting the estimate makes
 	// the encoder send less, which makes the *next* window's throughput lower
 	// too; if a lower reading could pull the estimate down again the two would
 	// chase each other to the floor. Only a backlogged window may lower it, and
 	// backing off ends the backlog, so the spiral cannot start.
-	if busy >= l.backlogged {
+	switch used := goodput / l.est; {
+	case l.rx > 0 && used >= probeWhenUsing && l.rx < goodput*0.85:
+		// The viewer is receiving materially less than we are sending, while we
+		// are pushing hard. Everything in between is queueing, and what actually
+		// arrives is what the path delivers — so that is the capacity.
+		//
+		// This is the signal that does not depend on backpressure reaching us.
+		// A reverse proxy or an overlay in the path will absorb megabytes and
+		// hide the backlog completely, and blocked writes then report a link
+		// that is faster than the truth. Nothing upstream can inflate what the
+		// far end counts.
+		if target := l.rx * 1.05; target < l.est {
+			l.est = target
+		}
+	case busy >= l.backlogged:
 		if target := goodput * 0.9; target < l.est {
 			l.est = target
 		}
-	} else {
+	case used >= probeWhenUsing:
+		// Spending most of the ceiling without blocking: there may well be more
+		// room, so reach for it.
 		l.est *= 1.08
+	default:
+		// Using a fraction of the ceiling and not blocking. This window is no
+		// evidence at all — a still desktop sends almost nothing whatever the
+		// link can do — so hold.
+		//
+		// Climbing here instead was wrong in a way that made things actively
+		// worse. On a link that never pushed back the estimate simply ratcheted
+		// to the hard ceiling and stayed there, so the encoder budgeted ~25Mbps
+		// per second of video for a connection carrying a fraction of that. The
+		// bits went out as a few very large frames rather than many small ones,
+		// which is why the framerate collapsed while the reported "measurement"
+		// read 25Mbps: it was never a measurement, just an unchallenged guess.
 	}
 	l.est = clampRate(l.est)
 
 	l.bytes, l.blocked = 0, 0
 	l.windowEnd = now.Add(l.window)
+}
+
+// observeReceived records the bitrate the viewer says it is receiving.
+//
+// Smoothed, because a single window can legitimately show less arriving than
+// was sent: data is still in flight, and a burst straddles the boundary. Only a
+// sustained shortfall means the path is the limit.
+func (l *linkEstimator) observeReceived(bps float64) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.rx == 0 {
+		l.rx = bps
+		return
+	}
+	const alpha = 0.4
+	l.rx = alpha*bps + (1-alpha)*l.rx
 }
 
 // rate returns the current estimate in bits per second.

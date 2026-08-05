@@ -237,7 +237,7 @@ func (a *Agent) startSession(parent context.Context, ss protocol.StartSession) {
 	go a.frameLoop(ctx, writeMsg, cptr, encoders, fps)
 	go a.cursorLoop(ctx, writeMsg, cursor, cptr)
 	go a.clipboardLoop(ctx, writeMsg)
-	a.inputLoop(ws, injector, encoders, cptr, switchCodec, sendDisplays, rememberMode) // blocks until socket closes
+	a.inputLoop(ws, injector, encoders, cptr, switchCodec, sendDisplays, rememberMode, link) // blocks until socket closes
 	log.Printf("session %s: ended", ss.Session)
 }
 
@@ -382,7 +382,7 @@ func (a *Agent) clipboardLoop(ctx context.Context, write func(int, []byte) error
 	}
 }
 
-func (a *Agent) inputLoop(ws *websocket.Conn, in capture.Injector, encoders *encHolder, cptr capture.Capturer, switchCodec func(string), sendDisplays func(), rememberMode func(int)) {
+func (a *Agent) inputLoop(ws *websocket.Conn, in capture.Injector, encoders *encHolder, cptr capture.Capturer, switchCodec func(string), sendDisplays func(), rememberMode func(int), link *linkEstimator) {
 	for {
 		ws.SetReadDeadline(time.Now().Add(90 * time.Second))
 		mt, data, err := ws.ReadMessage()
@@ -418,6 +418,13 @@ func (a *Agent) inputLoop(ws *websocket.Conn, in capture.Injector, encoders *enc
 					// mode it just left and Fit sees nothing to change.
 					sendDisplays()
 				}
+			}
+			continue
+		case protocol.InputRxRate:
+			// What the viewer actually receives, which is the one figure no
+			// buffering between here and there can inflate.
+			if ev.Kbps >= 0 {
+				link.observeReceived(float64(ev.Kbps) * 1000)
 			}
 			continue
 		case protocol.InputSetParams:

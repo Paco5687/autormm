@@ -357,6 +357,7 @@ const (
 	InputClipboard = "clip"    // viewer -> host: set the host clipboard (text)
 	InputSetRes    = "setres"  // viewer -> host: change a display's resolution
 	InputType      = "type"    // viewer -> host: type a string (Unicode, e.g. from a soft keyboard)
+	InputRxRate    = "rx"      // viewer -> host: bitrate the viewer is actually receiving
 )
 
 // ClipMsg carries clipboard text from the host to the viewer (text frame on the
@@ -384,4 +385,5 @@ type InputEvent struct {
 	W       int    `json:"w,omitempty"`       // for InputSetRes: target width
 	H       int    `json:"h,omitempty"`       // for InputSetRes: target height
 	Text    string `json:"text,omitempty"`    // for InputType: Unicode text to type
+	Kbps    int    `json:"kbps,omitempty"`    // for InputRxRate: measured receive rate
 }
