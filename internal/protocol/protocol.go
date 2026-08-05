@@ -226,7 +226,18 @@ type SupersededMsg struct {
 // operator has to take on trust. Sent periodically on the media socket.
 type LinkMsg struct {
 	T    string `json:"t"`    // always "link"
-	Kbps int    `json:"kbps"` // measured link rate
+	Kbps int    `json:"kbps"` // the rate the encoder is currently aiming at
+
+	// Where each frame's time actually goes on the host, averaged over the last
+	// second. A low framerate has several unrelated causes — capture, encoding,
+	// the socket, or simply nothing changing on screen — and without these they
+	// are indistinguishable from the viewer.
+	FPS    int `json:"fps"`    // frames encoded and sent per second
+	Idle   int `json:"idle"`   // captures that found nothing changed
+	CapMs  int `json:"capms"`  // average ms inside screen capture
+	EncMs  int `json:"encms"`  // average ms inside the encoder
+	TxMs   int `json:"txms"`   // average ms inside the socket write
+	TxKbps int `json:"txkbps"` // what the host actually put on the wire
 }
 
 // CursorMsg is sent from the agent to the viewer (text frame on the media

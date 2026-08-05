@@ -115,7 +115,7 @@ func (l *linkEstimator) roll(now time.Time) {
 	// chase each other to the floor. Only a backlogged window may lower it, and
 	// backing off ends the backlog, so the spiral cannot start.
 	switch used := goodput / l.est; {
-	case l.rx > 0 && used >= probeWhenUsing && l.rx < goodput*0.85:
+	case l.rx > 0 && goodput > 0 && l.rx < goodput*0.85:
 		// The viewer is receiving materially less than we are sending, while we
 		// are pushing hard. Everything in between is queueing, and what actually
 		// arrives is what the path delivers — so that is the capacity.
@@ -125,6 +125,14 @@ func (l *linkEstimator) roll(now time.Time) {
 		// hide the backlog completely, and blocked writes then report a link
 		// that is faster than the truth. Nothing upstream can inflate what the
 		// far end counts.
+		//
+		// Deliberately *not* gated on the ceiling being in use, unlike probing.
+		// It was, and that froze the estimate in precisely the situation it
+		// exists for: a ceiling too high for the path means frames go out large
+		// and slow, so the encoder never reaches 70% of it, so the one signal
+		// that could have corrected the ceiling was disqualified by the symptom
+		// of the ceiling being wrong. Evidence that we are over capacity is
+		// evidence regardless of how hard we happen to be pushing.
 		if target := l.rx * 1.05; target < l.est {
 			l.est = target
 		}
@@ -206,8 +214,9 @@ const startRateBps = 4_000_000
 // rateLoop hands the measured link rate to the encoder. The encoder decides
 // when it is worth acting on — changing the ceiling costs a keyframe.
 func rateLoop(ctx context.Context, link *linkEstimator, encoders *encHolder, session string,
-	write func(int, []byte) error) {
-	t := time.NewTicker(2 * time.Second)
+	write func(int, []byte) error, stats *frameStats) {
+	const window = time.Second
+	t := time.NewTicker(window)
 	defer t.Stop()
 	last := 0
 	for {
@@ -217,7 +226,12 @@ func rateLoop(ctx context.Context, link *linkEstimator, encoders *encHolder, ses
 		case <-t.C:
 			r := link.rate()
 			encoders.get().SetRateCeiling(r)
-			if b, err := json.Marshal(protocol.LinkMsg{T: "link", Kbps: r / 1000}); err == nil {
+			fs := stats.snapshot(window)
+			if b, err := json.Marshal(protocol.LinkMsg{
+				T: "link", Kbps: r / 1000,
+				FPS: fs.FPS, Idle: fs.Idle,
+				CapMs: fs.CapMs, EncMs: fs.EncMs, TxMs: fs.TxMs, TxKbps: fs.Kbps,
+			}); err == nil {
 				write(websocket.TextMessage, b)
 			}
 			// Log only real movement: this is the number to reach for when

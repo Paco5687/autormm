@@ -246,3 +246,32 @@ func TestMissingReceiverReportsAreHarmless(t *testing.T) {
 		t.Errorf("without receiver reports the estimate stalled at %d bps on an 8Mbps link", got)
 	}
 }
+
+// The receiver signal must work even when the encoder is nowhere near its
+// ceiling — which is exactly when a wrong ceiling does its damage.
+//
+// A ceiling far above what the path carries makes the encoder emit large frames
+// that go out slowly, so it never reaches the "using most of the ceiling" mark.
+// Gating the receiver report on that mark therefore disqualified the only
+// evidence that could fix the ceiling, using a symptom of the ceiling being
+// wrong as the reason to ignore it. The estimate then sat on its starting value
+// indefinitely while the picture stayed blocky.
+func TestReceiverReportAppliesEvenWhenNotSaturating(t *testing.T) {
+	l := newLinkEstimator(startRateBps)
+	now := time.Now()
+
+	// The host manages only a trickle — well under the 4Mbps ceiling — and about
+	// half of it is arriving. Nothing blocks, because something in the path is
+	// absorbing the difference.
+	for i := 0; i < 30; i++ {
+		now = now.Add(time.Second)
+		const sent = 1_400_000.0
+		l.observeReceived(sent * 0.5)
+		l.observe(int(sent/8), 0, now)
+	}
+
+	if got := l.rate(); got >= startRateBps {
+		t.Errorf("estimate stuck at its starting value (%d bps) while half of what was sent arrived", got)
+	}
+	t.Logf("under-saturated, half arriving -> estimate %.2f Mbps", float64(l.rate())/1e6)
+}

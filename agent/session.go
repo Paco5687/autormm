@@ -89,6 +89,7 @@ func (a *Agent) startSession(parent context.Context, ss protocol.StartSession) {
 	// bottleneck is visible, since the agent-to-hub hop is usually a LAN.
 	boundSendBuffer(ws)
 	link := newLinkEstimator(float64(startRateBps))
+	stats := &frameStats{}
 	var wmu sync.Mutex
 	writeMsg := func(mt int, b []byte) error {
 		wmu.Lock()
@@ -233,15 +234,15 @@ func (a *Agent) startSession(parent context.Context, ss protocol.StartSession) {
 	}
 
 	go watchLockScreen(ctx, writeMsg)
-	go rateLoop(ctx, link, encoders, ss.Session, writeMsg)
-	go a.frameLoop(ctx, writeMsg, cptr, encoders, fps)
+	go rateLoop(ctx, link, encoders, ss.Session, writeMsg, stats)
+	go a.frameLoop(ctx, writeMsg, cptr, encoders, fps, stats)
 	go a.cursorLoop(ctx, writeMsg, cursor, cptr)
 	go a.clipboardLoop(ctx, writeMsg)
 	a.inputLoop(ws, injector, encoders, cptr, switchCodec, sendDisplays, rememberMode, link) // blocks until socket closes
 	log.Printf("session %s: ended", ss.Session)
 }
 
-func (a *Agent) frameLoop(ctx context.Context, write func(int, []byte) error, cap capture.Capturer, encoders *encHolder, fps int) {
+func (a *Agent) frameLoop(ctx context.Context, write func(int, []byte) error, cap capture.Capturer, encoders *encHolder, fps int, stats *frameStats) {
 	// Pace at exactly the rate the encoder was built for. These two must agree:
 	// ffmpeg is started with -framerate fps and a bitrate budget sized for it, so
 	// feeding it faster halves the bits available per frame and doubles the CPU
@@ -258,7 +259,9 @@ func (a *Agent) frameLoop(ctx context.Context, write func(int, []byte) error, ca
 		start := time.Now()
 		force := start.Sub(lastKey) >= keyframeEvery
 		img, err := cap.Capture()
+		capTook := time.Since(start)
 		if err == capture.ErrNoChange {
+			stats.addIdle()
 			// Nothing was repainted. The accelerated backend already blocked
 			// waiting for a change, so loop straight back rather than encoding an
 			// identical picture — an idle desktop then costs almost nothing. The
@@ -297,16 +300,22 @@ func (a *Agent) frameLoop(ctx context.Context, write func(int, []byte) error, ca
 		}
 		// Pass the damage the capturer reported: the JPEG-tile encoder then only
 		// examines tiles that actually changed instead of hashing the whole frame.
+		encStart := time.Now()
 		msgs, err := encoders.get().Encode(img, force, cap.Dirty())
+		encTook := time.Since(encStart)
 		if err != nil {
 			log.Printf("encode error: %v", err)
 			return
 		}
+		txStart := time.Now()
+		sent := 0
 		for _, msg := range msgs { // codec-tagged; may be 0 (nothing changed / pipeline lag)
 			if err := write(websocket.BinaryMessage, msg); err != nil {
 				return
 			}
+			sent += len(msg)
 		}
+		stats.addFrame(capTook, encTook, time.Since(txStart), sent)
 		if d := interval - time.Since(start); d > 0 {
 			select {
 			case <-ctx.Done():

@@ -406,7 +406,7 @@ function onMessage(ev) {
       else if (msg.t === 'displays') renderDisplays(msg);
       else if (msg.t === 'caps') renderCodecs(msg);
       else if (msg.t === 'clip') setLocalClipboard(msg.d);
-      else if (msg.t === 'link') showLinkRate(msg.kbps);
+      else if (msg.t === 'link') showLinkRate(msg);
     } catch (_) {}
     return;
   }
@@ -872,13 +872,32 @@ document.getElementById('taskMgr').addEventListener('click', (e) => {
 // The measured link rate the encoder is aiming at. Worth showing: when motion
 // looks blocky the useful question is whether the connection is the limit, and
 // that used to be unanswerable without reading the host's log.
-function showLinkRate(kbps) {
-  if (!linkEl || !kbps) return;
-  linkEl.textContent = kbps >= 1000 ? (kbps / 1000).toFixed(1) + ' Mbps' : kbps + ' kbps';
+let hostFps = null;
+function showLinkRate(m) {
+  if (!linkEl) return;
+  const rate = (k) => k >= 1000 ? (k / 1000).toFixed(1) + ' Mbps' : k + ' kbps';
+  // Show what the host is actually putting on the wire, not the ceiling it is
+  // aiming at. The ceiling is an internal control value and reading it as a
+  // measurement is how a stuck estimate went unnoticed.
+  if (typeof m.txkbps === 'number') linkEl.textContent = rate(m.txkbps);
+  hostFps = typeof m.fps === 'number' ? m.fps : null;
+
+  // Where the host's time actually goes. A low framerate has several unrelated
+  // causes and they are indistinguishable from here without this.
+  linkEl.title =
+    `host: ${m.fps} fps sent, ${m.idle} idle captures/s\n` +
+    `capture ${m.capms}ms · encode ${m.encms}ms · send ${m.txms}ms per frame\n` +
+    `on the wire ${rate(m.txkbps || 0)}, encoder aiming at ${rate(m.kbps || 0)}`;
 }
 
 // fps meter + keepalive
-setInterval(() => { fpsEl.textContent = frames + ' fps'; frames = 0; }, 1000);
+setInterval(() => {
+  // "received / sent by the host" — if these differ the frames are queueing
+  // somewhere in between, which is a completely different problem from the host
+  // not producing them.
+  fpsEl.textContent = hostFps === null ? frames + ' fps' : frames + '/' + hostFps + ' fps';
+  frames = 0;
+}, 1000);
 
 // Report what we are actually receiving, once a second.
 //
