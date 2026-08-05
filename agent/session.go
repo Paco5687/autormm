@@ -430,10 +430,11 @@ func (a *Agent) inputLoop(ws *websocket.Conn, in capture.Injector, encoders *enc
 			}
 			continue
 		case protocol.InputRxRate:
-			// What the viewer actually receives, which is the one figure no
-			// buffering between here and there can inflate.
-			if ev.Kbps >= 0 {
-				link.observeReceived(float64(ev.Kbps) * 1000)
+			// The viewer's running total of bytes received — the one figure no
+			// buffering between here and there can inflate, and the only way to
+			// tell a queue from data merely in flight.
+			if ev.Bytes > 0 {
+				link.observeReceived(float64(ev.Bytes), time.Now())
 			}
 			continue
 		case protocol.InputSetParams:

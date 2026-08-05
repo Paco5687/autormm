@@ -396,5 +396,5 @@ type InputEvent struct {
 	W       int    `json:"w,omitempty"`       // for InputSetRes: target width
 	H       int    `json:"h,omitempty"`       // for InputSetRes: target height
 	Text    string `json:"text,omitempty"`    // for InputType: Unicode text to type
-	Kbps    int    `json:"kbps,omitempty"`    // for InputRxRate: measured receive rate
+	Bytes   int64  `json:"bytes,omitempty"`   // for InputRxRate: total bytes received this session
 }

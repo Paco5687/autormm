@@ -23,7 +23,7 @@ document.title = 'autormm — ' + hostName;
 let ws;
 let remoteW = canvas.width, remoteH = canvas.height;
 let frames = 0;
-let rxBytes = 0; // bytes received since the last report, for the rate the host aims at
+let rxTotal = 0; // running total of bytes received, reported to the host
 
 // The screen source can change under us — most notably a Windows host handing
 // off between the user-session agent and the SYSTEM console worker as it locks
@@ -51,6 +51,7 @@ function connect() {
 
   ws.onopen = () => {
     reconnectAttempts = 0;
+    rxTotal = 0; // a new session; the host's tally starts over too
     stateEl.textContent = 'live';
     stateEl.className = 'pill live';
     // A modifier left down before the session dropped would still be held on the
@@ -388,7 +389,7 @@ function updateCursor(m) {
 }
 
 function onMessage(ev) {
-  rxBytes += (typeof ev.data === 'string') ? ev.data.length : ev.data.byteLength;
+  rxTotal += (typeof ev.data === 'string') ? ev.data.length : ev.data.byteLength;
   if (typeof ev.data === 'string') {
     try {
       const msg = JSON.parse(ev.data);
@@ -915,10 +916,12 @@ setInterval(() => {
 // path will happily buffer megabytes and the host then concludes the link is
 // faster than it is. What arrives here is the one number no amount of buffering
 // upstream can inflate.
+//
+// A running total, not a rate. Subtracting totals gives the host exactly what is
+// still queued between us; comparing rates cannot, because a receiver always
+// trails a sender and that gap is data in flight on a healthy link.
 setInterval(() => {
-  const kbps = Math.round(rxBytes * 8 / 1000);
-  rxBytes = 0;
-  if (ws && ws.readyState === WebSocket.OPEN) send({ t: 'rx', kbps });
+  if (ws && ws.readyState === WebSocket.OPEN) send({ t: 'rx', bytes: rxTotal });
 }, 1000);
 setInterval(() => send({ t: 'ping' }), 20000);
 

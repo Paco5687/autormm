@@ -220,12 +220,15 @@ func TestReceiverReportBeatsAHidingProxy(t *testing.T) {
 	l := newLinkEstimator(20_000_000)
 	now := time.Now()
 
+	rxTotal := 0.0
 	for i := 0; i < 40; i++ {
 		now = now.Add(time.Second)
 		offered := l.est
 		// The proxy swallows everything instantly: writes never block, so the
-		// sender-side signal is silent no matter how badly we overshoot.
-		l.observeReceived(min(offered, capacity))
+		// sender-side signal is silent no matter how badly we overshoot. Only
+		// capacity actually drains out the far side.
+		rxTotal += min(offered, capacity) / 8
+		l.observeReceived(rxTotal, now)
 		l.observe(int(offered/8), 0, now)
 	}
 
@@ -263,10 +266,12 @@ func TestReceiverReportAppliesEvenWhenNotSaturating(t *testing.T) {
 	// The host manages only a trickle — well under the 4Mbps ceiling — and about
 	// half of it is arriving. Nothing blocks, because something in the path is
 	// absorbing the difference.
+	rxTotal := 0.0
 	for i := 0; i < 30; i++ {
 		now = now.Add(time.Second)
 		const sent = 1_400_000.0
-		l.observeReceived(sent * 0.5)
+		rxTotal += sent * 0.5 / 8 // half of it never drains
+		l.observeReceived(rxTotal, now)
 		l.observe(int(sent/8), 0, now)
 	}
 
@@ -274,4 +279,62 @@ func TestReceiverReportAppliesEvenWhenNotSaturating(t *testing.T) {
 		t.Errorf("estimate stuck at its starting value (%d bps) while half of what was sent arrived", got)
 	}
 	t.Logf("under-saturated, half arriving -> estimate %.2f Mbps", float64(l.rate())/1e6)
+}
+
+// A stream ramping up on a healthy link must not be read as congestion.
+//
+// This is what "smooth as butter for five seconds, then blocky and unusable"
+// was. The receiver's report is smoothed; the send rate it was compared against
+// was the raw current window. So the instant the desktop got busy and output
+// climbed, the lagging arrival figure sat below the leading send figure, which
+// looked exactly like a bottleneck. The estimate cut itself at the start of
+// every burst of activity and then crawled back at 8% a window — far slower than
+// someone dragging a window will wait.
+//
+// The link here has ample headroom and everything sent arrives, one window late.
+func TestRampingUpIsNotMistakenForCongestion(t *testing.T) {
+	l := newLinkEstimator(startRateBps)
+	now := time.Now()
+	before := l.rate()
+
+	// Quiet, then a sharp climb as motion starts, then sustained.
+	rates := []float64{200_000, 200_000, 900_000, 2_000_000, 3_000_000, 3_500_000,
+		3_500_000, 3_500_000, 3_500_000, 3_500_000}
+	var sentTotal, rxTotal float64
+	prev := 0.0
+	for _, sent := range rates {
+		now = now.Add(time.Second)
+		// Everything arrives, but the viewer's count trails by one window --
+		// data genuinely in flight on a link that is coping fine.
+		rxTotal += prev / 8
+		l.observeReceived(rxTotal, now)
+		l.observe(int(sent/8), 0, now)
+		sentTotal += sent / 8
+		prev = sent
+	}
+	_ = sentTotal
+
+	if got := l.rate(); got < before {
+		t.Errorf("estimate fell from %d to %d while a healthy link carried everything sent", before, got)
+	}
+	t.Logf("ramp on a healthy link: %d -> %d bps", before, l.rate())
+}
+
+// A genuine bottleneck must still be caught, just not on the strength of one
+// window. Requiring it to persist is what separates the two.
+func TestSustainedShortfallIsStillCaught(t *testing.T) {
+	l := newLinkEstimator(12_000_000)
+	now := time.Now()
+	rxTotal := 0.0
+	for i := 0; i < 20; i++ {
+		now = now.Add(time.Second)
+		const sent = 8_000_000.0
+		rxTotal += sent * 0.4 / 8 // less than half of it ever drains: a real queue
+		l.observeReceived(rxTotal, now)
+		l.observe(int(sent/8), 0, now)
+	}
+	if got := l.rate(); got > 5_000_000 {
+		t.Errorf("estimate stayed at %d bps while 60%% of the stream never arrived", got)
+	}
+	t.Logf("sustained shortfall -> %.1f Mbps", float64(l.rate())/1e6)
 }

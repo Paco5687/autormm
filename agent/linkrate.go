@@ -38,6 +38,17 @@ const backloggedFrac = 0.10
 // ceiling, which is a guess wearing a measurement's clothes.
 const probeWhenUsing = 0.7
 
+// rxAlpha smooths both the receiver's reported rate and our own send rate. They
+// must use the same constant: comparing a smoothed figure against a raw one
+// turns every ramp-up into a false congestion signal.
+const rxAlpha = 0.4
+
+// shortWindows is how many consecutive windows must show materially less
+// arriving than was sent before that counts as congestion. One is not enough —
+// data in flight and bursts straddling a boundary both produce a single-window
+// shortfall on a perfectly healthy link.
+const shortWindows = 3
+
 // linkEstimator works out how much the viewer's connection actually carries.
 //
 // This exists because the bitrate ceiling used to be a number picked by hand,
@@ -59,8 +70,18 @@ type linkEstimator struct {
 	est        float64
 
 	// rx is the rate the viewer reports actually receiving, smoothed. Zero until
-	// the first report arrives (older viewers never send one).
-	rx float64
+	// the first report arrives (older viewers never send one). txAvg is what we
+	// sent, smoothed identically so the two can be compared like for like.
+	// short counts consecutive windows in which materially less arrived than was
+	// sent.
+	rx        float64 // smoothed rate the viewer reports receiving
+	sentTotal int64   // cumulative bytes handed to the socket
+	rxTotal   int64   // cumulative bytes the viewer says it has received
+	sentPrev  int64   // sentTotal as of the previous report from the viewer
+	backlog   float64 // bits sent before the previous report that still have not arrived
+	rxSeen    bool
+	rxAt      time.Time
+	short     int // consecutive windows with a queue that is too deep
 
 	bytes     int
 	blocked   time.Duration
@@ -82,6 +103,7 @@ func (l *linkEstimator) observe(n int, took time.Duration, now time.Time) {
 		l.started, l.windowEnd = true, now.Add(l.window)
 	}
 	l.bytes += n
+	l.sentTotal += int64(n)
 	l.blocked += took
 	if now.Before(l.windowEnd) {
 		return
@@ -114,8 +136,35 @@ func (l *linkEstimator) roll(now time.Time) {
 	// too; if a lower reading could pull the estimate down again the two would
 	// chase each other to the floor. Only a backlogged window may lower it, and
 	// backing off ends the backlog, so the spiral cannot start.
+	// Is a queue building? That is the whole question, and the only honest way to
+	// ask it is cumulative: everything sent that has not yet arrived is sitting
+	// in a buffer somewhere between here and the browser.
+	//
+	// Comparing *rates* cannot answer it. The receiver's report necessarily lags
+	// what we are sending — the difference is data in flight on a link that is
+	// coping perfectly well — so every ramp-up looks like a bottleneck. That is
+	// what made a session go smooth for a few seconds and then collapse the
+	// moment someone started moving a window: output climbed, the lagging
+	// arrival figure fell behind the leading send figure, and the estimate cut
+	// itself and then crawled back at 8% a window.
+	//
+	// A backlog of a few hundred KB is normal and bounded. One that stays deeper
+	// than half a second of the current ceiling, window after window, is a queue
+	// that is not draining, which is the definition of sending too fast.
+	//
+	// The comparison is against what had been sent as of the *previous* report,
+	// not the latest byte. A report is already a second old when it lands, so
+	// measuring it against the current total charges the link for a whole window
+	// of traffic that simply had not been reported yet — phantom backlog on a
+	// perfectly healthy connection, which is most of what made this misfire.
+	if l.rxSeen && l.backlog > l.est*0.5 {
+		l.short++
+	} else {
+		l.short = 0
+	}
+
 	switch used := goodput / l.est; {
-	case l.rx > 0 && goodput > 0 && l.rx < goodput*0.85:
+	case l.short >= shortWindows:
 		// The viewer is receiving materially less than we are sending, while we
 		// are pushing hard. Everything in between is queueing, and what actually
 		// arrives is what the path delivers — so that is the capacity.
@@ -133,9 +182,12 @@ func (l *linkEstimator) roll(now time.Time) {
 		// that could have corrected the ceiling was disqualified by the symptom
 		// of the ceiling being wrong. Evidence that we are over capacity is
 		// evidence regardless of how hard we happen to be pushing.
+		// Sustained, not a single window: data genuinely in flight, and bursts
+		// straddling a window boundary, both show up as a one-off shortfall.
 		if target := l.rx * 1.05; target < l.est {
 			l.est = target
 		}
+		l.short = 0
 	case busy >= l.backlogged:
 		if target := goodput * 0.9; target < l.est {
 			l.est = target
@@ -163,20 +215,43 @@ func (l *linkEstimator) roll(now time.Time) {
 	l.windowEnd = now.Add(l.window)
 }
 
-// observeReceived records the bitrate the viewer says it is receiving.
+// observeReceived records the viewer's running total of bytes received.
 //
-// Smoothed, because a single window can legitimately show less arriving than
-// was sent: data is still in flight, and a burst straddles the boundary. Only a
-// sustained shortfall means the path is the limit.
-func (l *linkEstimator) observeReceived(bps float64) {
+// A cumulative figure rather than a rate, deliberately. Rates on the two ends of
+// a link cannot be compared instant for instant — the receiver always trails,
+// and that gap is data in flight, not congestion. Totals subtract cleanly: what
+// was sent minus what has arrived is exactly what is queued.
+func (l *linkEstimator) observeReceived(total float64, now time.Time) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.rx == 0 {
-		l.rx = bps
-		return
+
+	t := int64(total)
+	if l.rxSeen {
+		// Everything sent by the previous report has had a full interval to
+		// arrive. Whatever still has not is genuinely queued.
+		if b := float64(l.sentPrev-t) * 8; b > 0 {
+			l.backlog = b
+		} else {
+			l.backlog = 0
+		}
 	}
-	const alpha = 0.4
-	l.rx = alpha*bps + (1-alpha)*l.rx
+	l.sentPrev = l.sentTotal
+	if l.rxSeen && t > l.rxTotal {
+		if secs := now.Sub(l.rxAt).Seconds(); secs > 0 {
+			bps := float64(t-l.rxTotal) * 8 / secs
+			if l.rx == 0 {
+				l.rx = bps
+			} else {
+				l.rx = rxAlpha*bps + (1-rxAlpha)*l.rx
+			}
+		}
+	}
+	if t >= l.rxTotal { // ignore a viewer that reconnected and reset its counter
+		l.rxTotal = t
+	} else {
+		l.rxTotal, l.sentTotal, l.sentPrev, l.rx, l.backlog = 0, 0, 0, 0, 0
+	}
+	l.rxSeen, l.rxAt = true, now
 }
 
 // rate returns the current estimate in bits per second.
