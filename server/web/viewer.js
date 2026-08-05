@@ -12,6 +12,7 @@ const stateEl = document.getElementById('state');
 const resEl = document.getElementById('res');
 const fpsEl = document.getElementById('fps');
 const linkEl = document.getElementById('link');
+const diagEl = document.getElementById('diag');
 const titleEl = document.getElementById('title');
 const barEl = document.getElementById('bar');
 const qualityEl = document.getElementById('quality');
@@ -883,11 +884,18 @@ function showLinkRate(m) {
   hostFps = typeof m.fps === 'number' ? m.fps : null;
 
   // Where the host's time actually goes. A low framerate has several unrelated
-  // causes and they are indistinguishable from here without this.
-  linkEl.title =
-    `host: ${m.fps} fps sent, ${m.idle} idle captures/s\n` +
-    `capture ${m.capms}ms · encode ${m.encms}ms · send ${m.txms}ms per frame\n` +
-    `on the wire ${rate(m.txkbps || 0)}, encoder aiming at ${rate(m.kbps || 0)}`;
+  // causes — capture, encoding, the socket, or nothing changing on screen — and
+  // they are indistinguishable from here without this.
+  //
+  // Shown as text rather than a tooltip: these numbers exist to be read while
+  // something is going wrong, and a title attribute is unreachable on a phone,
+  // which is where this viewer is most used.
+  if (diagEl) {
+    const codec = currentCodec === 'webcodecs-h264' ? 'h264' : 'jpeg';
+    diagEl.textContent =
+      `${codec} · cap ${m.capms} enc ${m.encms} tx ${m.txms} ms` +
+      ` · idle ${m.idle}/s · aim ${rate(m.kbps || 0)}`;
+  }
 }
 
 // fps meter + keepalive
