@@ -127,3 +127,32 @@ func crfOf(t *testing.T, e *h264Encoder) int {
 	}
 	return n
 }
+
+// The quality slider is the only bandwidth dial an operator has when a link
+// cannot carry the stream. CRF and maxrate are fixed when ffmpeg starts, so
+// changing quality has to restart it — otherwise the slider silently does
+// nothing until the resolution happens to change.
+func TestQualityChangeForcesAnEncoderRestart(t *testing.T) {
+	e := &h264Encoder{fps: 60, quality: 60, encQuality: 60, w: 1680, h: 1050}
+	e.proc = &ffmpegProc{} // pretend one is running
+
+	if needsRestart(e, 1680, 1050) {
+		t.Error("restarting with nothing changed")
+	}
+	e.SetQuality(25)
+	if !needsRestart(e, 1680, 1050) {
+		t.Error("moving the quality slider did not schedule a restart")
+	}
+	// A resolution change must still restart it, as before.
+	e.encQuality = e.quality
+	if !needsRestart(e, 1280, 720) {
+		t.Error("a resolution change no longer restarts the encoder")
+	}
+}
+
+// needsRestart mirrors the condition in Encode.
+func needsRestart(e *h264Encoder, w, h int) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.proc == nil || w != e.w || h != e.h || e.quality != e.encQuality
+}

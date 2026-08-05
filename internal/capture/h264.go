@@ -63,8 +63,13 @@ type h264Encoder struct {
 
 	mu      sync.Mutex
 	quality int
-	w, h    int
-	proc    *ffmpegProc
+	// encQuality is the quality the running ffmpeg was started with. When the
+	// operator moves the slider these diverge and the encoder is restarted —
+	// otherwise the only bandwidth dial they have does nothing until the
+	// resolution happens to change.
+	encQuality int
+	w, h       int
+	proc       *ffmpegProc
 
 	outMu sync.Mutex
 	out   [][]byte
@@ -80,11 +85,14 @@ func newH264Encoder(quality, fps int) (Encoder, error) {
 	return &h264Encoder{fps: fps, quality: clampQ(quality)}, nil
 }
 
+// SetQuality changes the constant-quality target and the rate ceiling. It takes
+// effect on the next frame: the encoder is restarted, because CRF and maxrate
+// are fixed when ffmpeg starts. That costs one keyframe, which is worth it —
+// this is the only dial an operator has when a link cannot carry the stream.
 func (e *h264Encoder) SetQuality(q int) {
 	e.mu.Lock()
 	e.quality = clampQ(q)
 	e.mu.Unlock()
-	// Takes effect when ffmpeg (re)starts, e.g. on the next display/size change.
 }
 
 // Dirty regions are ignored: x264 does its own motion estimation over the
@@ -92,7 +100,7 @@ func (e *h264Encoder) SetQuality(q int) {
 func (e *h264Encoder) Encode(img *image.RGBA, _ bool, _ []image.Rectangle) ([][]byte, error) {
 	w, h := img.Bounds().Dx(), img.Bounds().Dy()
 	e.mu.Lock()
-	if e.proc == nil || w != e.w || h != e.h {
+	if e.proc == nil || w != e.w || h != e.h || e.quality != e.encQuality {
 		if e.proc != nil {
 			e.proc.close()
 		}
@@ -102,7 +110,7 @@ func (e *h264Encoder) Encode(img *image.RGBA, _ bool, _ []image.Rectangle) ([][]
 			e.mu.Unlock()
 			return nil, err
 		}
-		e.proc, e.w, e.h = p, w, h
+		e.proc, e.w, e.h, e.encQuality = p, w, h, e.quality
 		go e.readLoop(p)
 	}
 	p := e.proc
