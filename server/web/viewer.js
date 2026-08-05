@@ -11,6 +11,7 @@ const ctx = canvas.getContext('2d', { alpha: false });
 const stateEl = document.getElementById('state');
 const resEl = document.getElementById('res');
 const fpsEl = document.getElementById('fps');
+const linkEl = document.getElementById('link');
 const titleEl = document.getElementById('title');
 const barEl = document.getElementById('bar');
 const qualityEl = document.getElementById('quality');
@@ -403,6 +404,7 @@ function onMessage(ev) {
       else if (msg.t === 'displays') renderDisplays(msg);
       else if (msg.t === 'caps') renderCodecs(msg);
       else if (msg.t === 'clip') setLocalClipboard(msg.d);
+      else if (msg.t === 'link') showLinkRate(msg.kbps);
     } catch (_) {}
     return;
   }
@@ -864,6 +866,14 @@ document.getElementById('taskMgr').addEventListener('click', (e) => {
 });
 
 // The top bar stays visible (keyboard / display / codec controls are always reachable).
+
+// The measured link rate the encoder is aiming at. Worth showing: when motion
+// looks blocky the useful question is whether the connection is the limit, and
+// that used to be unanswerable without reading the host's log.
+function showLinkRate(kbps) {
+  if (!linkEl || !kbps) return;
+  linkEl.textContent = kbps >= 1000 ? (kbps / 1000).toFixed(1) + ' Mbps' : kbps + ' kbps';
+}
 
 // fps meter + keepalive
 setInterval(() => { fpsEl.textContent = frames + ' fps'; frames = 0; }, 1000);

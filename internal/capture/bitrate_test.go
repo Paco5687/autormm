@@ -64,11 +64,55 @@ func TestBitrateIsClamped(t *testing.T) {
 	if got := kbpsOf(t, tiny, 160, 120); got < 500 {
 		t.Errorf("floor not applied: %dk", got)
 	}
-	// Capped well below what a link can plausibly sustain: overshooting does not
-	// look better, it queues, and queuing is latency.
+	// The hard ceiling is only a runaway guard now. It used to be a real limit
+	// at 12 Mbps, chosen on the theory that overshooting merely queues — true on
+	// a slow link, but on a fast one it capped the stream well under what the
+	// connection could carry, which is exactly what makes motion blocky. What
+	// the link can take is measured per session now (see linkEstimator), so this
+	// bound exists to stop the estimate running away, not to size the stream.
 	huge := &h264Encoder{fps: 60, quality: 100}
-	if got := kbpsOf(t, huge, 3840, 2160); got > 12000 {
-		t.Errorf("ceiling not applied: %dk", got)
+	if got := kbpsOf(t, huge, 3840, 2160); got > 25000 {
+		t.Errorf("runaway guard not applied: %dk", got)
+	}
+}
+
+// The measured link rate replaces the quality-derived guess outright, rather
+// than being combined with it. The two answer different questions — quality is
+// how sharp the operator wants the picture (CRF), this is what the connection
+// can deliver — and taking the lower of the two would leave a fast link capped
+// at the guess, which is the whole defect being fixed.
+func TestMeasuredLinkRateOverridesTheGuess(t *testing.T) {
+	e := &h264Encoder{fps: 30, quality: 60}
+	guess := kbpsOf(t, e, 1680, 1050)
+
+	e.SetRateCeiling(18_000_000) // a fast link, well above the guess
+	if got := kbpsOf(t, e, 1680, 1050); got <= guess {
+		t.Errorf("a measured %dk link still ran at the %dk guess", 18000, guess)
+	}
+
+	e.SetRateCeiling(1_200_000) // a slow one, well below it
+	if got := kbpsOf(t, e, 1680, 1050); got >= guess {
+		t.Errorf("a measured 1200k link still ran at the %dk guess (%dk)", guess, got)
+	}
+}
+
+// Each rate change restarts ffmpeg, which costs a keyframe. Reacting to every
+// wobble in the estimate would trade away the smoothness the estimate exists to
+// buy, so small moves and rapid ones must be ignored.
+func TestRateChangesDoNotRestartTheEncoderConstantly(t *testing.T) {
+	e := &h264Encoder{fps: 30, quality: 60, encRate: 5_000_000, lastStart: time.Now()}
+
+	e.SetRateCeiling(5_400_000) // +8%: not worth a keyframe
+	if e.rateMoved(1680, 1050, time.Now().Add(time.Hour)) {
+		t.Error("an 8% change triggered a restart")
+	}
+
+	e.SetRateCeiling(12_000_000) // a big move, but moments after the last start
+	if e.rateMoved(1680, 1050, time.Now()) {
+		t.Error("restarted inside the hold-down window")
+	}
+	if !e.rateMoved(1680, 1050, time.Now().Add(rateHold+time.Second)) {
+		t.Error("a doubled link rate never took effect")
 	}
 }
 

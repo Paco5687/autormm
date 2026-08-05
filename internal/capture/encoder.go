@@ -17,6 +17,12 @@ import (
 type Encoder interface {
 	Encode(img *image.RGBA, force bool, dirty []image.Rectangle) ([][]byte, error)
 	SetQuality(q int) // JPEG quality / codec quality hint
+	// SetRateCeiling caps the stream at what the viewer's link was measured to
+	// carry, in bits per second. Quality says how sharp the operator wants the
+	// picture; this says what the connection can actually deliver, and the two
+	// are unrelated — a hand-picked cap is wrong on almost every link. Zero
+	// leaves the codec's own default in place.
+	SetRateCeiling(bps int)
 	Close() error
 }
 

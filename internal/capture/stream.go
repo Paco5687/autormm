@@ -46,6 +46,12 @@ func (s *Streamer) SetQuality(q int) {
 	}
 }
 
+// SetRateCeiling is a no-op for JPEG-tile, which has no rate control to aim: it
+// sends the tiles that changed at the requested quality and nothing else, so
+// its bitrate follows the content rather than a target. On a link too slow for
+// it the dial that works is quality (or a smaller resolution).
+func (s *Streamer) SetRateCeiling(int) {}
+
 func (s *Streamer) currentQuality() int {
 	s.qmu.Lock()
 	defer s.qmu.Unlock()

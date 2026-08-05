@@ -79,13 +79,25 @@ func (a *Agent) startSession(parent context.Context, ss protocol.StartSession) {
 		return
 	}
 
-	// Serialise all writes to the media socket (frames + cursor share it).
+	// Serialise all writes to the media socket (frames + cursor share it), and
+	// time each one.
+	//
+	// The hub relays with a synchronous read-then-write loop, so when the
+	// viewer's link is saturated its socket blocks, the hub stops reading, and
+	// TCP pushes back to here. Time spent inside WriteMessage is therefore a
+	// direct measurement of the far end of the connection — the only place the
+	// bottleneck is visible, since the agent-to-hub hop is usually a LAN.
+	boundSendBuffer(ws)
+	link := newLinkEstimator(float64(startRateBps))
 	var wmu sync.Mutex
 	writeMsg := func(mt int, b []byte) error {
 		wmu.Lock()
 		defer wmu.Unlock()
 		ws.SetWriteDeadline(time.Now().Add(10 * time.Second))
-		return ws.WriteMessage(mt, b)
+		t0 := time.Now()
+		err := ws.WriteMessage(mt, b)
+		link.observe(len(b), time.Since(t0), time.Now())
+		return err
 	}
 
 	// One screen session per host. Claim the slot and stop the previous holder
@@ -221,6 +233,7 @@ func (a *Agent) startSession(parent context.Context, ss protocol.StartSession) {
 	}
 
 	go watchLockScreen(ctx, writeMsg)
+	go rateLoop(ctx, link, encoders, ss.Session, writeMsg)
 	go a.frameLoop(ctx, writeMsg, cptr, encoders, fps)
 	go a.cursorLoop(ctx, writeMsg, cursor, cptr)
 	go a.clipboardLoop(ctx, writeMsg)

@@ -221,6 +221,14 @@ type SupersededMsg struct {
 	Message string `json:"message"`
 }
 
+// LinkMsg reports what the viewer's connection was measured to carry, so the
+// figure the encoder is actually using is visible rather than something an
+// operator has to take on trust. Sent periodically on the media socket.
+type LinkMsg struct {
+	T    string `json:"t"`    // always "link"
+	Kbps int    `json:"kbps"` // measured link rate
+}
+
 // CursorMsg is sent from the agent to the viewer (text frame on the media
 // socket) with the host pointer position, so the viewer can draw it as an
 // overlay. Coordinates are absolute pixels in the captured screen's resolution.

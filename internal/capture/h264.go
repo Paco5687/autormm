@@ -70,8 +70,15 @@ type h264Encoder struct {
 	// otherwise the only bandwidth dial they have does nothing until the
 	// resolution happens to change.
 	encQuality int
-	w, h       int
-	proc       *ffmpegProc
+	// rateCeiling is what the viewer's link was measured to carry, in bits per
+	// second; encRate is what the running ffmpeg was started with, and lastStart
+	// when. Restarting costs a keyframe, so the two are only reconciled when the
+	// measurement has moved materially and has been stable for a while.
+	rateCeiling int
+	encRate     int
+	lastStart   time.Time
+	w, h        int
+	proc        *ffmpegProc
 
 	outMu sync.Mutex
 	out   [][]byte
@@ -100,12 +107,44 @@ func (e *h264Encoder) SetQuality(q int) {
 	e.mu.Unlock()
 }
 
+// SetRateCeiling records what the link was measured to carry. It does not
+// restart the encoder by itself — Encode reconciles it when the change is worth
+// a keyframe.
+func (e *h264Encoder) SetRateCeiling(bps int) {
+	e.mu.Lock()
+	e.rateCeiling = bps
+	e.mu.Unlock()
+}
+
+// rateHold is the minimum time between restarts driven by the rate estimate.
+// Each one costs a keyframe, so reacting to every wobble would trade the very
+// smoothness the estimate is meant to buy.
+const rateHold = 12 * time.Second
+
+// rateMoved reports whether the measured link rate has diverged far enough from
+// what ffmpeg is running with to be worth restarting for. The thresholds are
+// deliberately wide: a 20% error in the ceiling is barely visible, while a
+// keyframe is.
+//
+// The caller must already hold e.mu.
+func (e *h264Encoder) rateMoved(w, h int, now time.Time) bool {
+	if e.encRate <= 0 || e.rateCeiling <= 0 {
+		return false
+	}
+	if now.Sub(e.lastStart) < rateHold {
+		return false
+	}
+	r := float64(e.targetRate(w, h)) / float64(e.encRate)
+	return r >= 1.35 || r <= 0.74
+}
+
 // Dirty regions are ignored: x264 does its own motion estimation over the
 // full frame, and feeding it partial images would corrupt the reference chain.
 func (e *h264Encoder) Encode(img *image.RGBA, _ bool, _ []image.Rectangle) ([][]byte, error) {
 	w, h := img.Bounds().Dx(), img.Bounds().Dy()
 	e.mu.Lock()
-	if e.proc == nil || w != e.w || h != e.h || e.quality != e.encQuality {
+	now := time.Now()
+	if e.proc == nil || w != e.w || h != e.h || e.quality != e.encQuality || e.rateMoved(w, h, now) {
 		if e.proc != nil {
 			e.proc.close()
 		}
@@ -116,6 +155,7 @@ func (e *h264Encoder) Encode(img *image.RGBA, _ bool, _ []image.Rectangle) ([][]
 			return nil, err
 		}
 		e.proc, e.w, e.h, e.encQuality = p, w, h, e.quality
+		e.encRate, e.lastStart = e.targetRate(w, h), now
 		go e.readLoop(p)
 	}
 	p := e.proc
@@ -283,6 +323,33 @@ func (e *h264Encoder) crf() string {
 // deadlocks on the very first frame, which presents as a permanently black
 // screen rather than as an error.
 func (e *h264Encoder) rateFor(w, h int) (maxrate, bufsize string) {
+	kb := e.targetRate(w, h) / 1000
+	// ~500ms of buffer. A quarter-second was too tight to absorb a scroll or a
+	// window drag without the picture falling apart; intra-refresh removes the
+	// keyframe spike that made a small buffer seem necessary.
+	return strconv.Itoa(kb) + "k", strconv.Itoa(kb/2) + "k"
+}
+
+// targetRate is the peak bitrate to run at, in bits per second.
+//
+// When the link has been measured, that measurement wins outright. It is not
+// combined with the quality setting, because the two answer different
+// questions: quality (via CRF) is how sharp the operator wants the picture,
+// while this is how much the connection can actually deliver. Measured on a
+// window drag at 1680x1050, CRF 28 wants ~21Mbps; the old hand-picked 3.6Mbps
+// cap held it to a sixth of that and cost 6.4dB, which is what "blocky during
+// motion" looks like. On a slower link the same fixed number is too high and
+// the excess merely queues. Only measurement fits both.
+//
+// Before any measurement exists — the first seconds of a session — fall back to
+// a rate derived from quality and resolution.
+//
+// The caller must already hold e.mu.
+func (e *h264Encoder) targetRate(w, h int) int {
+	if e.rateCeiling > 0 {
+		return clampBps(float64(e.rateCeiling))
+	}
+
 	// Peak bits per pixel during motion, at the reference framerate. Quality
 	// picks a point in the range.
 	const minBPP, maxBPP = 0.02, 0.10
@@ -299,20 +366,18 @@ func (e *h264Encoder) rateFor(w, h int) (maxrate, bufsize string) {
 	if f > refFPS {
 		f = refFPS + (f-refFPS)*0.5
 	}
-	bps := float64(w) * float64(h) * f * bpp
+	return clampBps(float64(w) * float64(h) * f * bpp)
+}
 
-	const minBps, maxBps = 500_000.0, 12_000_000.0
+func clampBps(bps float64) int {
+	const minBps, maxBps = 500_000.0, 25_000_000.0
 	if bps < minBps {
 		bps = minBps
 	}
 	if bps > maxBps {
 		bps = maxBps
 	}
-	kb := int(bps / 1000)
-	// ~500ms of buffer. A quarter-second was too tight to absorb a scroll or a
-	// window drag without the picture falling apart; intra-refresh removes the
-	// keyframe spike that made a small buffer seem necessary.
-	return strconv.Itoa(kb) + "k", strconv.Itoa(kb/2) + "k"
+	return int(bps)
 }
 
 func clampQ(q int) int {
