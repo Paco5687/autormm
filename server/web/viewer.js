@@ -67,7 +67,11 @@ async function mintSession() {
   const res = await fetch('/api/session', {
     method: 'POST',
     headers: { Authorization: 'Bearer ' + adminTok, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ agent_id: agentId, fps: 60, quality: 60 }),
+    // 30, not 60. On a link that cannot carry both, frames and sharpness trade
+    // directly against each other: 60fps halves the bits in every frame, which
+    // reads as "smooth but heavily pixelated". 30 is indistinguishable for
+    // desktop work and looks twice as good at the same bandwidth.
+    body: JSON.stringify({ agent_id: agentId, fps: 30, quality: 60 }),
   });
   if (!res.ok) throw new Error('session mint failed (' + res.status + ')');
   return (await res.json()).token;

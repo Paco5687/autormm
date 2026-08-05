@@ -194,13 +194,23 @@ func (e *h264Encoder) crf() string {
 // deadlocks on the very first frame, which presents as a permanently black
 // screen rather than as an error.
 func (e *h264Encoder) rateFor(w, h int) (maxrate, bufsize string) {
-	// Peak bits per pixel during motion. Quality picks a point in the range.
-	// Deliberately lean. The setting that was smooth all day over a real WAN
-	// link produced roughly 30fps worth of bits at 60fps, so aim near that
-	// rather than at what a LAN would happily carry.
-	const minBPP, maxBPP = 0.008, 0.05
+	// Peak bits per pixel during motion, at the reference framerate. Quality
+	// picks a point in the range.
+	const minBPP, maxBPP = 0.02, 0.10
 	bpp := minBPP + (maxBPP-minBPP)*float64(clampQ(e.quality))/100
-	bps := float64(w) * float64(h) * float64(e.fps) * bpp
+
+	// The ceiling is set by what the *link* carries, not by how many frames we
+	// choose to divide it into, so it must not scale with fps the way a naive
+	// pixel-rate calculation does. Doubling the framerate on a fixed link only
+	// halves the bits in every frame — which is how a session ends up smooth
+	// and heavily pixelated at the same time. Above the reference rate, allow
+	// some extra but nothing like double.
+	const refFPS = 30.0
+	f := float64(e.fps)
+	if f > refFPS {
+		f = refFPS + (f-refFPS)*0.5
+	}
+	bps := float64(w) * float64(h) * f * bpp
 
 	const minBps, maxBps = 500_000.0, 12_000_000.0
 	if bps < minBps {
@@ -210,7 +220,10 @@ func (e *h264Encoder) rateFor(w, h int) (maxrate, bufsize string) {
 		bps = maxBps
 	}
 	kb := int(bps / 1000)
-	return strconv.Itoa(kb) + "k", strconv.Itoa(kb/4) + "k" // ~250ms of buffer
+	// ~500ms of buffer. A quarter-second was too tight to absorb a scroll or a
+	// window drag without the picture falling apart; intra-refresh removes the
+	// keyframe spike that made a small buffer seem necessary.
+	return strconv.Itoa(kb) + "k", strconv.Itoa(kb/2) + "k"
 }
 
 func clampQ(q int) int {
@@ -246,10 +259,19 @@ func ffmpegArgs(w, h, fps int, crf, bitrate, bufsize string) []string {
 		"-video_size", fmt.Sprintf("%dx%d", w, h), "-framerate", strconv.Itoa(fps), "-i", "pipe:0",
 		"-an", "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
 		"-flags", "+low_delay",
-		// A long GOP on purpose. Video and input share one TCP connection, so a
-		// periodic multi-hundred-KB keyframe stalls everything queued behind it,
-		// including the click the operator just made. The stream is reliable, so
-		// frequent keyframes buy nothing.
+		// Periodic intra *refresh* rather than periodic keyframes. A full IDR at
+		// desktop resolutions wants several hundred KB, which no low-latency VBV
+		// buffer can hold, so x264 crushes it to fit: the keyframe lands visibly
+		// blocky and the following P-frames spend seconds repairing it. That is
+		// the "wave of pixels" every few seconds. Worse, the burst shares one TCP
+		// connection with input, so the operator's clicks queue behind it and
+		// responsiveness dips in time with the wave.
+		//
+		// intra-refresh spreads the same intra blocks across the whole period as
+		// a moving column, so every frame costs about the same and neither defect
+		// happens. x264 still emits one real IDR as the first frame, which is
+		// what the decoder keys on; the stream is reliable, so nothing later
+		// needs another one.
 		// Constant quality with a hard ceiling, not a target average. -b:v made
 		// x264 spend its whole budget every second even on a motionless desktop;
 		// screen content should cost almost nothing when nothing moves, and the
@@ -258,7 +280,10 @@ func ffmpegArgs(w, h, fps int, crf, bitrate, bufsize string) []string {
 		// one is just latency waiting to happen.
 		"-crf", crf, "-maxrate", bitrate, "-bufsize", bufsize,
 		"-g", strconv.Itoa(fps * 8), "-bf", "0",
-		"-x264-params", "repeat-headers=1:aud=1",
+		// vbv-init=1.0 starts the buffer full so the one unavoidable IDR — the
+		// first frame of the session — is not squeezed. It costs nothing after
+		// startup, and it is what the operator sees the instant they connect.
+		"-x264-params", "repeat-headers=1:aud=1:intra-refresh=1:vbv-init=1.0",
 		// Emit each packet as soon as it exists instead of batching.
 		"-flush_packets", "1",
 		"-f", "h264", "pipe:1",

@@ -76,10 +76,27 @@ func TestBitrateIsClamped(t *testing.T) {
 func TestBitrateIsReasonableForATypicalSession(t *testing.T) {
 	// A desktop session over a real internet link, not a LAN: a few Mbps, not
 	// the ten-plus a local connection would happily absorb.
-	e := &h264Encoder{fps: 60, quality: 60}
+	e := &h264Encoder{fps: 30, quality: 60}
 	got := kbpsOf(t, e, 1680, 1050)
 	if got < 1500 || got > 5000 {
-		t.Errorf("1680x1050@60 q60 gave %dk, which looks wrong for a WAN link", got)
+		t.Errorf("1680x1050@30 q60 gave %dk, which looks wrong for a WAN link", got)
+	}
+}
+
+// The ceiling is set by what the link carries, not by how many frames we slice
+// it into. When this scaled linearly with fps, asking for 60fps doubled the
+// budget on a link that could not carry it; when the budget was then capped,
+// the same bits were spread over twice as many frames and every one of them
+// came out half as sharp. That is how a session ends up smooth and heavily
+// pixelated at once, so assert the sub-linear relationship directly.
+func TestBitrateDoesNotScaleLinearlyWithFramerate(t *testing.T) {
+	at30 := kbpsOf(t, &h264Encoder{fps: 30, quality: 60}, 1680, 1050)
+	at60 := kbpsOf(t, &h264Encoder{fps: 60, quality: 60}, 1680, 1050)
+	if at60 <= at30 {
+		t.Errorf("a higher framerate should still earn some more bits: %dk -> %dk", at30, at60)
+	}
+	if at60 >= at30*2 {
+		t.Errorf("doubling fps doubled the bitrate (%dk -> %dk); the link did not get faster", at30, at60)
 	}
 }
 
