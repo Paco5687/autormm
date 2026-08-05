@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func kbps(t *testing.T, s string) int {
@@ -65,5 +66,27 @@ func TestBitrateIsReasonableForATypicalSession(t *testing.T) {
 	got := kbps(t, e.bitrateFor(1680, 1050))
 	if got < 2000 || got > 15000 {
 		t.Errorf("1680x1050@60 q60 gave %dk, which looks wrong", got)
+	}
+}
+
+// bitrateFor is called with e.mu already held. Taking the lock again inside it
+// deadlocks the encoder on its first frame, which shows up as a permanently
+// black screen with no error anywhere — so assert the contract directly, with a
+// timeout, because a deadlocked test otherwise just hangs.
+func TestBitrateForDoesNotRetakeTheLock(t *testing.T) {
+	e := &h264Encoder{fps: 60, quality: 60}
+	done := make(chan string, 1)
+	go func() {
+		e.mu.Lock() // exactly what Encode holds when it calls bitrateFor
+		defer e.mu.Unlock()
+		done <- e.bitrateFor(1680, 1050)
+	}()
+	select {
+	case got := <-done:
+		if got == "" {
+			t.Error("no bitrate returned")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("bitrateFor deadlocked while the caller held e.mu")
 	}
 }

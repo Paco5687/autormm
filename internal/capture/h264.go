@@ -158,6 +158,10 @@ func (e *h264Encoder) Close() error {
 
 // bitrateFor sizes the stream to the pixel rate it actually has to carry.
 //
+// The caller must already hold e.mu — Encode does, and taking it again here
+// deadlocks on the very first frame, which presents as a permanently black
+// screen rather than as an error.
+//
 // The old value was a flat number derived from the quality slider alone. That
 // starved a large display and, worse, silently halved the bits available per
 // frame whenever the framerate went up — so asking for a higher framerate made
@@ -167,11 +171,7 @@ func (e *h264Encoder) bitrateFor(w, h int) string {
 	// point in this range; screen content compresses far better than video, so
 	// these are deliberately modest.
 	const minBPP, maxBPP = 0.02, 0.12
-	e.mu.Lock()
-	q := e.quality
-	e.mu.Unlock()
-
-	bpp := minBPP + (maxBPP-minBPP)*float64(clampQ(q))/100
+	bpp := minBPP + (maxBPP-minBPP)*float64(clampQ(e.quality))/100
 	bps := float64(w) * float64(h) * float64(e.fps) * bpp
 
 	// Keep it sane at both ends: enough to be legible on a small window, capped
