@@ -61,7 +61,7 @@ func TestBitrateFollowsQuality(t *testing.T) {
 // a 4K/60 session cannot try to saturate the link.
 func TestBitrateIsClamped(t *testing.T) {
 	tiny := &h264Encoder{fps: 1, quality: 1}
-	if got := kbpsOf(t, tiny, 160, 120); got < 800 {
+	if got := kbpsOf(t, tiny, 160, 120); got < 500 {
 		t.Errorf("floor not applied: %dk", got)
 	}
 	// Capped well below what a link can plausibly sustain: overshooting does not
@@ -74,10 +74,12 @@ func TestBitrateIsClamped(t *testing.T) {
 
 // A realistic desktop session should land somewhere sensible, not absurd.
 func TestBitrateIsReasonableForATypicalSession(t *testing.T) {
+	// A desktop session over a real internet link, not a LAN: a few Mbps, not
+	// the ten-plus a local connection would happily absorb.
 	e := &h264Encoder{fps: 60, quality: 60}
 	got := kbpsOf(t, e, 1680, 1050)
-	if got < 2000 || got > 12000 {
-		t.Errorf("1680x1050@60 q60 gave %dk, which looks wrong", got)
+	if got < 1500 || got > 5000 {
+		t.Errorf("1680x1050@60 q60 gave %dk, which looks wrong for a WAN link", got)
 	}
 }
 

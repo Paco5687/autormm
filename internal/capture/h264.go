@@ -171,7 +171,11 @@ func (e *h264Encoder) Close() error {
 //
 // The caller must already hold e.mu.
 func (e *h264Encoder) crf() string {
-	const best, worst = 18.0, 34.0
+	// Tuned for a link crossing the internet rather than a LAN. Screen text
+	// survives high CRF far better than video does, and bandwidth is the scarce
+	// resource here: a picture that arrives late is worse than one slightly
+	// softer.
+	const best, worst = 20.0, 40.0
 	v := worst - (worst-best)*float64(clampQ(e.quality))/100
 	return strconv.Itoa(int(v + 0.5))
 }
@@ -191,11 +195,14 @@ func (e *h264Encoder) crf() string {
 // screen rather than as an error.
 func (e *h264Encoder) rateFor(w, h int) (maxrate, bufsize string) {
 	// Peak bits per pixel during motion. Quality picks a point in the range.
-	const minBPP, maxBPP = 0.015, 0.09
+	// Deliberately lean. The setting that was smooth all day over a real WAN
+	// link produced roughly 30fps worth of bits at 60fps, so aim near that
+	// rather than at what a LAN would happily carry.
+	const minBPP, maxBPP = 0.008, 0.05
 	bpp := minBPP + (maxBPP-minBPP)*float64(clampQ(e.quality))/100
 	bps := float64(w) * float64(h) * float64(e.fps) * bpp
 
-	const minBps, maxBps = 800_000.0, 12_000_000.0
+	const minBps, maxBps = 500_000.0, 12_000_000.0
 	if bps < minBps {
 		bps = minBps
 	}
