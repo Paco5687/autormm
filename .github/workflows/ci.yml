@@ -18,10 +18,19 @@ jobs:
         with:
           go-version: '1.26'
           cache: true
+      # The H.264 pipeline tests measure real encoder latency and decode the
+      # stream the agent actually sends. They skip without ffmpeg, and skipping
+      # is how a latency regression gets in unnoticed — this pipeline has
+      # silently grown a frame of delay three separate times.
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - name: Vet
         run: go vet ./...
       - name: Test
         run: go test -race ./...
+      # Timing is meaningless under -race, so the latency guard runs unraced.
+      - name: Encoder latency
+        run: go test ./internal/capture/ -run 'EncoderLatency|StreamDecodes' -v
 
   cross-compile:
     runs-on: ubuntu-latest

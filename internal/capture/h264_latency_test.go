@@ -6,42 +6,46 @@ import (
 	"time"
 )
 
-// When the encoder falls behind, the frame worth keeping is the newest one.
-// Queueing stale frames ahead of it is pure added latency — the operator waits
-// to see the current screen, not the one from three frames ago.
-func TestFeedKeepsOnlyTheNewestFrame(t *testing.T) {
-	p := &ffmpegProc{frames: make(chan []byte, 1), done: make(chan struct{})}
-
-	p.feed([]byte{1})
-	p.feed([]byte{2})
-	p.feed([]byte{3})
-
-	got := <-p.frames
-	if len(got) != 1 || got[0] != 3 {
-		t.Fatalf("queued frame is %v, want the newest ([3])", got)
-	}
-	select {
-	case extra := <-p.frames:
-		t.Fatalf("a stale frame was still queued: %v", extra)
-	default:
-	}
+// blockingWriter holds a write open until released, so a test can keep one
+// "in flight" and observe what a concurrent feed does.
+type blockingWriter struct {
+	started chan struct{}
+	release chan struct{}
 }
 
-// feed copies, so a caller reusing its buffer cannot corrupt a queued frame.
-func TestFeedCopiesTheFrame(t *testing.T) {
-	p := &ffmpegProc{frames: make(chan []byte, 1), done: make(chan struct{})}
-	buf := []byte{9, 9}
-	p.feed(buf)
-	buf[0] = 0 // caller reuses its buffer
-	if got := <-p.frames; got[0] != 9 {
-		t.Errorf("queued frame aliased the caller's buffer: %v", got)
+func (b *blockingWriter) Write(p []byte) (int, error) {
+	b.started <- struct{}{}
+	<-b.release
+	return len(p), nil
+}
+func (b *blockingWriter) Close() error { return nil }
+
+// When the encoder falls behind, the frame worth keeping is the newest one.
+// Queueing stale frames ahead of it is pure added latency — the operator waits
+// to see the current screen, not the one from three frames ago. feed therefore
+// drops rather than queues, and never blocks the capture loop behind a write.
+func TestFeedDropsRatherThanQueueing(t *testing.T) {
+	bw := &blockingWriter{started: make(chan struct{}), release: make(chan struct{})}
+	p := &ffmpegProc{stdin: bw, done: make(chan struct{})}
+
+	go p.feed([]byte{1})
+	<-bw.started // a write is now in flight
+
+	done := make(chan struct{})
+	go func() { p.feed([]byte{2}); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("feed blocked behind an in-flight write instead of dropping the frame")
 	}
+	close(bw.release)
 }
 
 // feed must never block once the process is shutting down.
 func TestFeedDoesNotBlockAfterClose(t *testing.T) {
-	p := &ffmpegProc{frames: make(chan []byte, 1), done: make(chan struct{})}
-	p.feed([]byte{1}) // fills the queue
+	bw := &blockingWriter{started: make(chan struct{}, 1), release: make(chan struct{})}
+	close(bw.release)
+	p := &ffmpegProc{stdin: bw, done: make(chan struct{})}
 	close(p.done)
 	done := make(chan struct{})
 	go func() { p.feed([]byte{2}); close(done) }()
