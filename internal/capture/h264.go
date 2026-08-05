@@ -96,7 +96,7 @@ func (e *h264Encoder) Encode(img *image.RGBA, _ bool, _ []image.Rectangle) ([][]
 		if e.proc != nil {
 			e.proc.close()
 		}
-		p, err := startFFmpeg(ffmpegPath(), w, h, e.fps, e.bitrate())
+		p, err := startFFmpeg(ffmpegPath(), w, h, e.fps, e.bitrateFor(w, h))
 		if err != nil {
 			e.mu.Unlock()
 			return nil, err
@@ -156,9 +156,34 @@ func (e *h264Encoder) Close() error {
 	return nil
 }
 
-func (e *h264Encoder) bitrate() string {
-	// Map quality 1-100 to roughly 570 kbps .. 7.5 Mbps.
-	return strconv.Itoa(500+e.quality*70) + "k"
+// bitrateFor sizes the stream to the pixel rate it actually has to carry.
+//
+// The old value was a flat number derived from the quality slider alone. That
+// starved a large display and, worse, silently halved the bits available per
+// frame whenever the framerate went up — so asking for a higher framerate made
+// the picture worse instead of smoother, which is the opposite of the point.
+func (e *h264Encoder) bitrateFor(w, h int) string {
+	// Bits per pixel for desktop content at x264 ultrafast. Quality picks a
+	// point in this range; screen content compresses far better than video, so
+	// these are deliberately modest.
+	const minBPP, maxBPP = 0.02, 0.12
+	e.mu.Lock()
+	q := e.quality
+	e.mu.Unlock()
+
+	bpp := minBPP + (maxBPP-minBPP)*float64(clampQ(q))/100
+	bps := float64(w) * float64(h) * float64(e.fps) * bpp
+
+	// Keep it sane at both ends: enough to be legible on a small window, capped
+	// so a 4K/60 session cannot try to saturate the link.
+	const minBps, maxBps = 1_000_000.0, 25_000_000.0
+	if bps < minBps {
+		bps = minBps
+	}
+	if bps > maxBps {
+		bps = maxBps
+	}
+	return strconv.Itoa(int(bps/1000)) + "k"
 }
 
 func clampQ(q int) int {
