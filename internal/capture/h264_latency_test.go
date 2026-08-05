@@ -55,13 +55,16 @@ func TestFeedDoesNotBlockAfterClose(t *testing.T) {
 // The flags that keep end-to-end latency down. Losing one silently costs
 // responsiveness with nothing else to show for it, so pin them.
 func TestFFmpegArgsAreLowLatency(t *testing.T) {
-	args := strings.Join(ffmpegArgs(1920, 1080, 30, "4000k"), " ")
+	args := strings.Join(ffmpegArgs(1920, 1080, 30, "24", "4000k", "1000k"), " ")
 	for _, want := range []string{
 		"-tune zerolatency", // no B-frames, no lookahead
 		"-fflags nobuffer",  // don't buffer on the way in
 		"-flags +low_delay", // nor in the codec
 		"-flush_packets 1",  // emit packets as they are produced
 		"-bf 0",             // B-frames would reorder, which is latency by definition
+		"-crf 24",           // constant quality...
+		"-maxrate 4000k",    // ...with a hard ceiling, not a target average
+		"-bufsize 1000k",    // small VBV: a big one buys smoothness with latency
 	} {
 		if !strings.Contains(args, want) {
 			t.Errorf("missing %q from: %s", want, args)

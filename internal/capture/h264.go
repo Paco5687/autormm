@@ -96,7 +96,8 @@ func (e *h264Encoder) Encode(img *image.RGBA, _ bool, _ []image.Rectangle) ([][]
 		if e.proc != nil {
 			e.proc.close()
 		}
-		p, err := startFFmpeg(ffmpegPath(), w, h, e.fps, e.bitrateFor(w, h))
+		rate, buf := e.rateFor(w, h)
+		p, err := startFFmpeg(ffmpegPath(), w, h, e.fps, e.crf(), rate, buf)
 		if err != nil {
 			e.mu.Unlock()
 			return nil, err
@@ -156,34 +157,45 @@ func (e *h264Encoder) Close() error {
 	return nil
 }
 
-// bitrateFor sizes the stream to the pixel rate it actually has to carry.
+// crf picks the constant-quality target. Lower is better quality and more
+// bits. The range suits desktop content, which compresses far harder than
+// video: text stays crisp well into the high twenties.
+//
+// The caller must already hold e.mu.
+func (e *h264Encoder) crf() string {
+	const best, worst = 18.0, 34.0
+	v := worst - (worst-best)*float64(clampQ(e.quality))/100
+	return strconv.Itoa(int(v + 0.5))
+}
+
+// rateFor returns the peak bitrate and VBV buffer for a stream of this size.
+//
+// This is a ceiling, not a target: with -crf the encoder spends what the
+// picture needs and nothing more, so an idle desktop is nearly free and the cap
+// only bites during heavy motion. Sending more than the link carries does not
+// look better, it just queues — and queuing is latency.
+//
+// The buffer is deliberately small. A large VBV smooths bitrate by delaying
+// frames, which is precisely the wrong trade here.
 //
 // The caller must already hold e.mu — Encode does, and taking it again here
 // deadlocks on the very first frame, which presents as a permanently black
 // screen rather than as an error.
-//
-// The old value was a flat number derived from the quality slider alone. That
-// starved a large display and, worse, silently halved the bits available per
-// frame whenever the framerate went up — so asking for a higher framerate made
-// the picture worse instead of smoother, which is the opposite of the point.
-func (e *h264Encoder) bitrateFor(w, h int) string {
-	// Bits per pixel for desktop content at x264 ultrafast. Quality picks a
-	// point in this range; screen content compresses far better than video, so
-	// these are deliberately modest.
-	const minBPP, maxBPP = 0.02, 0.12
+func (e *h264Encoder) rateFor(w, h int) (maxrate, bufsize string) {
+	// Peak bits per pixel during motion. Quality picks a point in the range.
+	const minBPP, maxBPP = 0.015, 0.09
 	bpp := minBPP + (maxBPP-minBPP)*float64(clampQ(e.quality))/100
 	bps := float64(w) * float64(h) * float64(e.fps) * bpp
 
-	// Keep it sane at both ends: enough to be legible on a small window, capped
-	// so a 4K/60 session cannot try to saturate the link.
-	const minBps, maxBps = 1_000_000.0, 25_000_000.0
+	const minBps, maxBps = 800_000.0, 12_000_000.0
 	if bps < minBps {
 		bps = minBps
 	}
 	if bps > maxBps {
 		bps = maxBps
 	}
-	return strconv.Itoa(int(bps/1000)) + "k"
+	kb := int(bps / 1000)
+	return strconv.Itoa(kb) + "k", strconv.Itoa(kb/4) + "k" // ~250ms of buffer
 }
 
 func clampQ(q int) int {
@@ -209,7 +221,7 @@ type ffmpegProc struct {
 
 // ffmpegArgs builds the encoder command line. Split out from startFFmpeg so the
 // latency-critical flags can be asserted without running ffmpeg.
-func ffmpegArgs(w, h, fps int, bitrate string) []string {
+func ffmpegArgs(w, h, fps int, crf, bitrate, bufsize string) []string {
 	return []string{
 		"-hide_banner", "-loglevel", "error",
 		// Don't let the input layer buffer: every frame should go straight to
@@ -223,7 +235,14 @@ func ffmpegArgs(w, h, fps int, bitrate string) []string {
 		// periodic multi-hundred-KB keyframe stalls everything queued behind it,
 		// including the click the operator just made. The stream is reliable, so
 		// frequent keyframes buy nothing.
-		"-b:v", bitrate, "-g", strconv.Itoa(fps * 8), "-bf", "0",
+		// Constant quality with a hard ceiling, not a target average. -b:v made
+		// x264 spend its whole budget every second even on a motionless desktop;
+		// screen content should cost almost nothing when nothing moves, and the
+		// bits should go where the motion is. maxrate/bufsize keep the peak
+		// inside what the link can carry, with a small buffer because a large
+		// one is just latency waiting to happen.
+		"-crf", crf, "-maxrate", bitrate, "-bufsize", bufsize,
+		"-g", strconv.Itoa(fps * 8), "-bf", "0",
 		"-x264-params", "repeat-headers=1:aud=1",
 		// Emit each packet as soon as it exists instead of batching.
 		"-flush_packets", "1",
@@ -231,8 +250,8 @@ func ffmpegArgs(w, h, fps int, bitrate string) []string {
 	}
 }
 
-func startFFmpeg(bin string, w, h, fps int, bitrate string) (*ffmpegProc, error) {
-	cmd := exec.Command(bin, ffmpegArgs(w, h, fps, bitrate)...)
+func startFFmpeg(bin string, w, h, fps int, crf, bitrate, bufsize string) (*ffmpegProc, error) {
+	cmd := exec.Command(bin, ffmpegArgs(w, h, fps, crf, bitrate, bufsize)...)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
