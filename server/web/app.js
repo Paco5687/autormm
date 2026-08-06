@@ -370,7 +370,7 @@ async function startRemote(h) {
   // the request that starts the session, and for a long time it asked for 60
   // while the viewer asked for 30, so every session began life at the wrong
   // framerate.
-  openSession(h, { fps: 30, quality: 60 }, '/viewer');
+  openSession(h, { fps: 30, quality: 90 }, '/viewer');
 }
 
 async function startTerminal(h) {

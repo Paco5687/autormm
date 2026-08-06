@@ -75,7 +75,7 @@ async function mintSession() {
     // directly against each other: 60fps halves the bits in every frame, which
     // reads as "smooth but heavily pixelated". 30 is indistinguishable for
     // desktop work and looks twice as good at the same bandwidth.
-    body: JSON.stringify({ agent_id: agentId, fps: 30, quality: 60 }),
+    body: JSON.stringify({ agent_id: agentId, fps: 30, quality: 90 }),
   });
   if (!res.ok) throw new Error('session mint failed (' + res.status + ')');
   return (await res.json()).token;

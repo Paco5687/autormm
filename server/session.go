@@ -22,10 +22,16 @@ const idleTimeout = 90 * time.Second
 // indistinguishable from 60 for desktop work while looking twice as good.
 // maxSessionFPS is the agent's own ceiling, so a request above it is clamped
 // here rather than being reinterpreted further down.
+//
+// defaultQuality is the top of the slider's range. Quality sets the encoder's
+// constant-quality target (CRF), which is a different question from how much
+// bandwidth is available — that is measured per session now, and the measured
+// ceiling stops a high quality setting from flooding a link the way it used to.
+// So there is no longer a reason to start anywhere but the top.
 const (
 	defaultFPS     = 30
 	maxSessionFPS  = 60
-	defaultQuality = 60
+	defaultQuality = 90
 )
 
 // sessionFPS clamps a requested framerate into the allowed range.
