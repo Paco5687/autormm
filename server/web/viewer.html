@@ -14,26 +14,40 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 </head>
 <body class="viewer-body">
+  <!-- Only the controls reached for mid-session live in the bar, and they are
+       anchored to the right of a flexible spacer so nothing on the left can
+       move them. Everything that reports a changing number went into the panel
+       below: live figures in a flex row shift their neighbours on every update,
+       which on a phone means the keyboard button walks away from your thumb. -->
   <div class="viewer-bar" id="bar">
-    <strong id="title">remote</strong>
     <span class="pill" id="state">connecting…</span>
-    <span class="pill" id="res"></span>
-    <span class="pill" id="fps"></span>
-    <span class="pill" id="link"></span>
-    <span class="pill" id="diag" title="Where each frame's time goes on the host."></span>
-    <span id="displays" class="dpick"></span>
-    <select id="resPick" class="respick hidden" title="Display resolution"></select>
-    <button id="fitBtn" class="btn hidden" title="Set the host resolution to best fit this window">Fit</button>
-    <label id="autofitLabel" class="afl hidden" title="Auto-fit resolution on connect — remembered for this host"><input type="checkbox" id="autofit"> auto</label>
-    <span id="codecs" class="dpick"></span>
+    <strong id="title">remote</strong>
     <span class="grow"></span>
-    <label class="muted">quality
-      <input id="quality" type="range" min="20" max="90" value="90">
-    </label>
+    <button class="btn" id="infoBtn" title="Session info and settings" aria-expanded="false">ⓘ</button>
     <button class="btn" id="kbd" title="Show keyboard (for touch devices)">⌨</button>
-    <button class="btn" id="taskMgr" title="Open Task Manager (Ctrl+Shift+Esc)">Task Mgr</button>
     <button class="btn" id="fsBtn" title="Toggle fullscreen">⛶</button>
     <button class="btn ghost hidden" id="backBtn" title="Back to the dashboard">✕</button>
+  </div>
+  <div class="viewer-panel hidden" id="infoPanel">
+    <div class="vp-stats">
+      <span class="pill" id="res"></span>
+      <span class="pill" id="fps"></span>
+      <span class="pill" id="link"></span>
+      <span class="pill" id="diag" title="Where each frame's time goes on the host."></span>
+    </div>
+    <div class="vp-row"><span id="displays" class="dpick"></span></div>
+    <div class="vp-row">
+      <select id="resPick" class="respick hidden" title="Display resolution"></select>
+      <button id="fitBtn" class="btn hidden" title="Set the host resolution to best fit this window">Fit</button>
+      <label id="autofitLabel" class="afl hidden" title="Auto-fit resolution on connect — remembered for this host"><input type="checkbox" id="autofit"> auto</label>
+    </div>
+    <div class="vp-row"><span id="codecs" class="dpick"></span></div>
+    <div class="vp-row">
+      <label class="muted grow">quality
+        <input id="quality" type="range" min="20" max="90" value="90">
+      </label>
+      <button class="btn" id="taskMgr" title="Open Task Manager (Ctrl+Shift+Esc)">Task Mgr</button>
+    </div>
   </div>
   <div class="viewer-wrap">
     <canvas id="screen" width="1280" height="720"></canvas>

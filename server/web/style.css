@@ -191,26 +191,44 @@ body {
 .viewer-body { background: #000; overflow: hidden; }
 .viewer-bar {
   position: fixed; top: 0; left: 0; right: 0; height: 34px; display: flex;
-  align-items: center; gap: 12px; padding: 0 12px; color: var(--text);
+  align-items: center; gap: 10px; padding: 0 10px; color: var(--text);
   background: rgba(15,18,22,.85); border-bottom: 1px solid var(--line);
   font-size: 13px; z-index: 10; transition: transform .2s;
-  /* Never grow past 34px. .viewer-wrap is positioned assuming exactly that, so
-     a bar that wraps to a second line overlaps the remote screen instead of
-     making room — the controls appear to spill down into the picture. On a
-     narrow screen there is no room for every control, so the bar scrolls
-     sideways rather than getting taller. */
-  flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden;
-  scrollbar-width: none; -webkit-overflow-scrolling: touch;
+  /* Never wrap and never scroll. .viewer-wrap is positioned assuming exactly
+     34px, so a bar that grows covers the picture instead of making room; and a
+     bar you have to swipe sideways is a bar whose keyboard button you cannot
+     find in a hurry. It holds only what fits. */
+  flex-wrap: nowrap; overflow: hidden;
 }
-.viewer-bar::-webkit-scrollbar { display: none; }
-.viewer-bar > * { flex-shrink: 0; }
-/* The quality slider is the one control that will happily eat half a phone
-   screen if left at its natural width. */
-@media (max-width: 700px) {
-  .viewer-bar input[type=range] { width: 80px; }
-  .viewer-bar { gap: 8px; padding: 0 8px; }
+/* The buttons sit after .grow, so they are pinned to the right edge and nothing
+   on the left can shift them. The title yields first when space runs short. */
+.viewer-bar > button { flex-shrink: 0; }
+.viewer-bar #title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.viewer-bar #state { flex-shrink: 0; max-width: 45vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Session info and settings. Everything here either reports a live number or is
+   set once and forgotten, so it is out of the way until asked for. Absolutely
+   positioned, so opening it never moves the bar or the picture. */
+.viewer-panel {
+  position: fixed; top: 34px; right: 6px; z-index: 20;
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 10px; max-width: min(94vw, 420px); max-height: 70vh; overflow-y: auto;
+  background: rgba(18,20,26,.97); border: 1px solid var(--line);
+  border-radius: 0 0 10px 10px; box-shadow: 0 10px 30px rgba(0,0,0,.45);
 }
+.viewer-panel.hidden { display: none; }
+.vp-stats { display: flex; flex-wrap: wrap; gap: 6px; }
+/* Tabular figures so a changing reading does not jiggle its own width. */
+.vp-stats .pill { font-variant-numeric: tabular-nums; }
+.vp-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.vp-row:empty { display: none; }
+/* The display picker and codec toggle are empty on hosts with one monitor or
+   one codec; their rows should not leave a gap behind. */
+.vp-row:has(> .dpick:empty:only-child) { display: none; }
+.vp-row .grow { display: flex; align-items: center; gap: 6px; }
+.vp-row input[type=range] { flex: 1; min-width: 110px; }
 .viewer-bar.hide { transform: translateY(-100%); }
+.viewer-bar.hide ~ .viewer-panel { display: none; }
 .viewer-wrap {
   position: fixed; inset: 34px 0 0 0; display: flex; align-items: center; justify-content: center;
 }

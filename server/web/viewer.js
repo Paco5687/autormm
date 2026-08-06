@@ -483,6 +483,41 @@ barEl.addEventListener('click', (e) => {
   if (b) b.blur();
 });
 
+// ---- session info & settings panel ----
+// The live readings and the set-once controls both moved out of the bar. The
+// readings because a figure that changes width shifts everything beside it,
+// which on a phone walks the keyboard button out from under your thumb; the
+// controls because a bar you have to swipe sideways is one you cannot use in a
+// hurry.
+const infoBtn = document.getElementById('infoBtn');
+const infoPanel = document.getElementById('infoPanel');
+
+function toggleInfo(show) {
+  if (show === undefined) show = infoPanel.classList.contains('hidden');
+  infoPanel.classList.toggle('hidden', !show);
+  infoBtn.classList.toggle('active', show);
+  infoBtn.setAttribute('aria-expanded', show ? 'true' : 'false');
+}
+infoBtn.addEventListener('click', () => toggleInfo());
+infoPanel.addEventListener('click', (e) => {
+  // Same reason as the bar: a focused button is re-fired by Space and Enter
+  // typed to the host.
+  const b = e.target.closest('button');
+  if (b) b.blur();
+});
+// Touching the remote screen puts the panel away — it overlaps the picture, and
+// reaching back up to the ⓘ to dismiss it is a step nobody should have to take.
+//
+// Captured on the wrapper rather than the canvas so it runs before the canvas's
+// own pointer handlers, and swallowed: the tap that dismisses the panel should
+// not also click whatever is underneath it on the host.
+vwrap.addEventListener('pointerdown', (e) => {
+  if (infoPanel.classList.contains('hidden')) return;
+  toggleInfo(false);
+  e.stopPropagation();
+  e.preventDefault();
+}, true);
+
 let lastPos = { x: 0, y: 0 };
 function toRemote(e) {
   const r = canvas.getBoundingClientRect();
