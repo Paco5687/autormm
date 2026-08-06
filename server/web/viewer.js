@@ -299,8 +299,12 @@ function initDecoder() {
     output: f => {
       if (f.displayWidth !== canvas.width || f.displayHeight !== canvas.height) {
         canvas.width = f.displayWidth; canvas.height = f.displayHeight;
-        layoutCanvas();
+        // Update the remote dimensions *before* laying out: layoutCanvas sizes
+        // the element from them, so doing this the other way round scaled the
+        // new picture to the old aspect ratio and left it visibly squashed
+        // until the next window resize happened to fix it.
         remoteW = f.displayWidth; remoteH = f.displayHeight;
+        layoutCanvas();
         resEl.textContent = `${f.displayWidth}×${f.displayHeight}`;
       }
       ctx.drawImage(f, 0, 0); f.close();
@@ -463,6 +467,21 @@ function layoutCanvas() {
   canvas.style.height = Math.max(1, Math.round(remoteH * scale)) + 'px';
 }
 window.addEventListener('resize', layoutCanvas);
+
+// Give focus back to the page after any toolbar button is used.
+//
+// A clicked button keeps focus, and a focused button is activated by Space and
+// Enter. So after touching Fit or ⌨ once, every later space in whatever the
+// operator was typing on the host *also* re-ran that button — refitting the
+// resolution or flipping the keyboard bar mid-sentence. It also left the button
+// looking permanently pressed.
+//
+// The keyboard button hands focus to its own input, and that runs first (target
+// phase, before this bubbles), so blurring the button here cannot steal it.
+barEl.addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  if (b) b.blur();
+});
 
 let lastPos = { x: 0, y: 0 };
 function toRemote(e) {
@@ -668,6 +687,11 @@ function keyTap(code) { send({ t: 'kdown', code }); send({ t: 'kup', code }); }
 function toggleKbd(show) {
   if (show === undefined) show = kbdbar.classList.contains('hidden');
   kbdbar.classList.toggle('hidden', !show);
+  // A real on/off state. This one genuinely is a toggle, and without a state of
+  // its own it was readable only by whether a stray :hover happened to be stuck
+  // to it — which is not a state, and on a touchscreen was usually wrong.
+  const kbdBtn = document.getElementById('kbd');
+  if (kbdBtn) kbdBtn.classList.toggle('active', show);
   if (show) {
     softkbd.disabled = false; // must be enabled before it can take focus
     softkbd.value = '';

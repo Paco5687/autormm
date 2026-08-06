@@ -40,9 +40,18 @@ body {
   background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
   border-radius: 8px; padding: 6px 12px; cursor: pointer; font-size: 13px;
 }
-.btn:hover:not(:disabled) { border-color: var(--accent); }
+/* Hover feedback only where there is a real pointer. A touchscreen emulates
+   :hover on tap and leaves it stuck until something else is tapped, so a
+   momentary button stays highlighted and reads as a toggle that is jammed on —
+   which is exactly how Fit and the keyboard button appeared on a phone. */
+@media (hover: hover) {
+  .btn:hover:not(:disabled) { border-color: var(--accent); }
+}
 .btn:disabled { opacity: .4; cursor: not-allowed; }
 .btn.ghost { background: transparent; padding: 6px 9px; }
+/* An explicitly-on toggle, as opposed to a momentary button that merely has a
+   stuck :hover on it. */
+.btn.active { color: var(--text); border-color: var(--accent); background: var(--panel); }
 .card-actions { margin-left: auto; display: flex; gap: 6px; }
 
 .grid {
@@ -175,6 +184,21 @@ body {
   align-items: center; gap: 12px; padding: 0 12px; color: var(--text);
   background: rgba(15,18,22,.85); border-bottom: 1px solid var(--line);
   font-size: 13px; z-index: 10; transition: transform .2s;
+  /* Never grow past 34px. .viewer-wrap is positioned assuming exactly that, so
+     a bar that wraps to a second line overlaps the remote screen instead of
+     making room — the controls appear to spill down into the picture. On a
+     narrow screen there is no room for every control, so the bar scrolls
+     sideways rather than getting taller. */
+  flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden;
+  scrollbar-width: none; -webkit-overflow-scrolling: touch;
+}
+.viewer-bar::-webkit-scrollbar { display: none; }
+.viewer-bar > * { flex-shrink: 0; }
+/* The quality slider is the one control that will happily eat half a phone
+   screen if left at its natural width. */
+@media (max-width: 700px) {
+  .viewer-bar input[type=range] { width: 80px; }
+  .viewer-bar { gap: 8px; padding: 0 8px; }
 }
 .viewer-bar.hide { transform: translateY(-100%); }
 .viewer-wrap {
