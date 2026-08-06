@@ -480,6 +480,36 @@ mRemote.addEventListener('click', () => { const h = hostByID(detail.agent); if (
 mTerm.addEventListener('click', () => { const h = hostByID(detail.agent); if (h) startTerminal(h); });
 document.getElementById('mFiles').addEventListener('click', () => { const h = hostByID(detail.agent); if (h) openFiles(h); });
 
+// Reboot. Confirmed by name, because the host list is a grid of near-identical
+// cards and restarting the wrong machine is not undoable.
+//
+// Distinct from the Reboot in the Patches row, which is offered only on
+// platforms autormm knows how to patch and tells whoever is at the keyboard
+// that it is finishing updates. Wanting to restart a machine is reason enough
+// on its own.
+const mReboot = document.getElementById('mReboot');
+mReboot.addEventListener('click', async () => {
+  const h = hostByID(detail.agent);
+  if (!h) return;
+  const name = h.hostname || h.agent_id;
+  if (!confirm(`Reboot ${name}?\n\nAnyone signed in will lose unsaved work. Windows hosts give a 15-second warning; Linux and macOS restart immediately.`)) return;
+
+  const prev = mReboot.textContent;
+  mReboot.disabled = true;
+  mReboot.textContent = 'rebooting…';
+  try {
+    const r = await authFetch('/api/reboot', 'POST', { agent_id: h.agent_id });
+    // The host reports whether it could actually do it — an unprivileged agent
+    // often cannot — so show what it said rather than assuming it worked.
+    mReboot.textContent = r.ok ? 'reboot sent' : 'cannot reboot';
+    if (!r.ok && r.output) alert(`${name} could not reboot:\n\n${r.output}`);
+  } catch (e) {
+    mReboot.textContent = 'failed';
+    alert(`Reboot request failed: ${e}`);
+  }
+  setTimeout(() => { mReboot.textContent = prev; mReboot.disabled = false; }, 4000);
+});
+
 // ---- file transfer ----
 const fileModal = document.getElementById('fileModal');
 let fileWS = null, dl = null;

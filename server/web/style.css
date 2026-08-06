@@ -49,6 +49,12 @@ body {
 }
 .btn:disabled { opacity: .4; cursor: not-allowed; }
 .btn.ghost { background: transparent; padding: 6px 9px; }
+/* Destructive actions look different from the rest, so nobody reaches for one
+   by muscle memory while aiming for the button beside it. */
+.btn.danger { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, var(--line)); }
+@media (hover: hover) {
+  .btn.danger:hover:not(:disabled) { border-color: var(--bad); background: color-mix(in srgb, var(--bad) 14%, transparent); }
+}
 /* An explicitly-on toggle, as opposed to a momentary button that merely has a
    stuck :hover on it. */
 .btn.active { color: var(--text); border-color: var(--accent); background: var(--panel); }
