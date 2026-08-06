@@ -322,6 +322,8 @@ function updateCard(el, h) {
   el.querySelector('.cpuVal').textContent = m ? cpu.toFixed(0) + '%' : '—';
   el.querySelector('.memVal').textContent = m ? mem.toFixed(0) + '%' : '—';
 
+  renderGPUs(el.querySelector('.gpu-metrics'), (m && m.gpus) || []);
+
   sparkline(el.querySelector('.cpuSpark'), h.cpu_history || []);
 
   const det = el.querySelector('.details');
@@ -331,6 +333,7 @@ function updateCard(el, h) {
       `up ${fmtUptime(m.uptime_secs)}  ·  load ${m.load1.toFixed(2)}\n` +
       `mem ${fmtBytes(m.mem_used)} / ${fmtBytes(m.mem_total)}\n` +
       `net ↓${fmtBytes(m.net_recv)}/s ↑${fmtBytes(m.net_sent)}/s\n` +
+      (m.gpus || []).map(g => `${g.name}  ${fmtBytes(g.mem_used)} / ${fmtBytes(g.mem_total)}\n`).join('') +
       (disk ? disk : '');
   } else {
     det.textContent = h.online ? 'waiting for telemetry…' : `last seen ${new Date(h.last_seen).toLocaleString()}`;
@@ -347,6 +350,39 @@ function updateCard(el, h) {
   term.onclick = (e) => { e.stopPropagation(); startTerminal(h); };
 
   el.onclick = () => openDetail(h.agent_id);
+}
+
+// GPU utilisation and VRAM, for hosts that report them. Hosts without an NVIDIA
+// GPU send no gpus field at all, so the whole block stays hidden rather than
+// showing empty rows on every machine that hasn't got one.
+function renderGPUs(wrap, gpus) {
+  if (!wrap) return;
+  wrap.classList.toggle('hidden', gpus.length === 0);
+  if (!gpus.length) { wrap.innerHTML = ''; return; }
+
+  // Rebuild only when the number of cards changes. Re-rendering every refresh
+  // would restart the bars' width transition a few times a second and make them
+  // twitch instead of glide.
+  if (wrap.childElementCount !== gpus.length * 2) {
+    wrap.innerHTML = gpus.map((g, i) => {
+      const n = gpus.length > 1 ? ' ' + i : ''; // index only when it disambiguates
+      return `<div class="metric"><label>GPU${n}</label><div class="bar"><i class="gpubar u${i}"></i></div><span class="val ut${i}"></span></div>` +
+             `<div class="metric"><label>VRAM${n}</label><div class="bar"><i class="gpubar v${i}"></i></div><span class="val vt${i}"></span></div>`;
+    }).join('');
+  }
+  gpus.forEach((g, i) => {
+    setBar(wrap.querySelector('.u' + i), g.percent);
+    setBar(wrap.querySelector('.v' + i), g.mem_percent);
+    wrap.querySelector('.ut' + i).textContent = (g.percent || 0).toFixed(0) + '%';
+    // Bytes rather than a percentage: the bar already shows the proportion, and
+    // "18.2 GB" is the number you actually want when deciding if a model fits.
+    wrap.querySelector('.vt' + i).textContent = fmtBytes(g.mem_used);
+    const row = wrap.querySelectorAll('.metric');
+    const title = `${g.name} — ${fmtBytes(g.mem_used)} of ${fmtBytes(g.mem_total)} VRAM` +
+      (g.temp_c ? `, ${g.temp_c.toFixed(0)}°C` : '');
+    if (row[i * 2]) row[i * 2].title = title;
+    if (row[i * 2 + 1]) row[i * 2 + 1].title = title;
+  });
 }
 
 function setBar(el, pct) {

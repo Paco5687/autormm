@@ -295,6 +295,19 @@ type Metrics struct {
 	NetSent    uint64     `json:"net_sent"`
 	Procs      []ProcInfo `json:"procs"` // top processes by CPU
 	Users      []string   `json:"users,omitempty"`
+	// GPUs is absent on hosts without an NVIDIA GPU, which is most of them —
+	// omitempty keeps it out of every other host's payload entirely.
+	GPUs []GPU `json:"gpus,omitempty"`
+}
+
+// GPU is one graphics card's utilisation and memory, as reported by nvidia-smi.
+type GPU struct {
+	Name       string  `json:"name"`
+	Percent    float64 `json:"percent"`   // core utilisation
+	MemUsed    uint64  `json:"mem_used"`  // VRAM, bytes
+	MemTotal   uint64  `json:"mem_total"` // bytes
+	MemPercent float64 `json:"mem_percent"`
+	TempC      float64 `json:"temp_c,omitempty"`
 }
 
 type Disk struct {

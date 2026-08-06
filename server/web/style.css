@@ -85,6 +85,10 @@ body {
 .bar { flex: 1; height: 8px; background: var(--panel-2); border-radius: 6px; overflow: hidden; }
 .bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .4s ease; }
 .bar i.hot { background: var(--bad); }
+/* GPU rows sit under CPU/MEM on the same card, so they get their own colour —
+   otherwise four identical bars are hard to read at a glance. */
+.bar i.gpubar { background: var(--gpu, #7c5cff); }
+.gpu-metrics { margin-top: 6px; }
 .val { width: 46px; text-align: right; font-family: var(--mono); font-size: 12px; }
 
 .spark { width: 100%; height: 24px; }

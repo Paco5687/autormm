@@ -99,6 +99,8 @@
         <div class="metric"><label>CPU</label><div class="bar"><i class="cpu"></i></div><span class="cpuVal val"></span></div>
         <div class="metric"><label>MEM</label><div class="bar"><i class="mem"></i></div><span class="memVal val"></span></div>
       </div>
+      <!-- Populated only for hosts that report a GPU; absent everywhere else. -->
+      <div class="metrics gpu-metrics hidden"></div>
       <svg class="spark" viewBox="0 0 100 24" preserveAspectRatio="none"><polyline class="cpuSpark" points=""/></svg>
       <div class="details muted"></div>
     </article>
