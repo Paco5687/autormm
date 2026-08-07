@@ -74,6 +74,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/session", s.handleCreateSession)
 	mux.HandleFunc("/api/action", s.handleAction)
 	mux.HandleFunc("/api/reboot", s.handleReboot)
+	mux.HandleFunc("/api/wol", s.handleWOL)
 	mux.HandleFunc("/api/codec/install", s.handleFFmpegInstall)
 	mux.HandleFunc("/api/codec/install-all", s.handleFFmpegInstallAll)
 	mux.HandleFunc("/api/patch/status", s.handlePatchStatus)

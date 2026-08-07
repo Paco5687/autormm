@@ -17,6 +17,7 @@ import (
 	"github.com/Paco5687/autormm/internal/capture"
 	"github.com/Paco5687/autormm/internal/metrics"
 	"github.com/Paco5687/autormm/internal/protocol"
+	"github.com/Paco5687/autormm/internal/wol"
 )
 
 // Version is set at release time via -ldflags -X (see .goreleaser.yaml). It must
@@ -256,6 +257,17 @@ func (a *Agent) session(ctx context.Context) error {
 			var req protocol.ProcRestartRequest
 			if json.Unmarshal(data, &req) == nil {
 				go a.restartProc(ctx, out, req)
+			}
+		case protocol.TypeWOL:
+			var req protocol.WOLRequest
+			if json.Unmarshal(data, &req) == nil && len(req.MACs) > 0 {
+				go func() {
+					if err := wol.Send(req.MACs); err != nil {
+						log.Printf("wake-on-lan: %v", err)
+					} else {
+						log.Printf("wake-on-lan: broadcast for %v", req.MACs)
+					}
+				}()
 			}
 		case protocol.TypeUpdateNow:
 			if a.onUpdate != nil {

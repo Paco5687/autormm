@@ -20,6 +20,7 @@ const (
 	TypeUpdateNow    = "update_now" // ask the agent to check the hub for an update now
 
 	TypeInventory   = "inventory"    // server -> agent: list installed software
+	TypeWOL         = "wol"          // server -> agent: broadcast Wake-on-LAN packets for a peer
 	TypeProcRestart = "proc_restart" // server -> agent: stop a process and relaunch its command line
 
 	// agent -> server (command execution)
@@ -238,6 +239,14 @@ type LinkMsg struct {
 	EncMs  int `json:"encms"`  // average ms inside the encoder
 	TxMs   int `json:"txms"`   // average ms inside the socket write
 	TxKbps int `json:"txkbps"` // what the host actually put on the wire
+}
+
+// WOLRequest asks an agent to broadcast Wake-on-LAN magic packets for an
+// offline peer on its LAN. The target cannot receive anything itself, so a
+// machine on the same broadcast domain has to shout on its behalf.
+type WOLRequest struct {
+	Type string   `json:"type"` // TypeWOL
+	MACs []string `json:"macs"`
 }
 
 // CursorMsg is sent from the agent to the viewer (text frame on the media

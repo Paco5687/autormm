@@ -460,6 +460,10 @@ function openDetail(agentID) {
   mSub.textContent = h ? `${h.platform || h.os} · ${h.arch}` : '';
   renderFacts(h);
   renderPatchPanel(h);
+  // Wake replaces nothing — it simply only makes sense for a host that is off
+  // and whose MAC was learned while it was on.
+  const canWake = !!(h && !h.online && h.facts && h.facts.macs && h.facts.macs.length);
+  document.getElementById('mWake').classList.toggle('hidden', !canWake);
   resetInventory();
   loadHistory();
 }
@@ -487,6 +491,27 @@ document.getElementById('mFiles').addEventListener('click', () => { const h = ho
 // platforms autormm knows how to patch and tells whoever is at the keyboard
 // that it is finishing updates. Wanting to restart a machine is reason enough
 // on its own.
+// Wake-on-LAN. The target is powered off, so the hub asks its LAN peers to
+// broadcast the magic packet for it (and shouts once itself). "Sent" is all
+// WoL can ever confirm — the real signal is the host coming online, which the
+// dashboard already shows.
+const mWake = document.getElementById('mWake');
+mWake.addEventListener('click', async () => {
+  const h = hostByID(detail.agent);
+  if (!h) return;
+  mWake.disabled = true;
+  const prev = mWake.textContent;
+  mWake.textContent = 'waking…';
+  try {
+    const r = await authFetch('/api/wol', 'POST', { agent_id: h.agent_id });
+    mWake.textContent = r.ok ? (r.relays ? `sent via ${r.relays} peer${r.relays > 1 ? 's' : ''}` : 'sent') : 'failed';
+  } catch (e) {
+    mWake.textContent = 'failed';
+    alert('Wake failed: ' + e);
+  }
+  setTimeout(() => { mWake.textContent = prev; mWake.disabled = false; }, 5000);
+});
+
 const mReboot = document.getElementById('mReboot');
 mReboot.addEventListener('click', async () => {
   const h = hostByID(detail.agent);
