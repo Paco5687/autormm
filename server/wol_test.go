@@ -16,11 +16,11 @@ func TestWOLRelaySelection(t *testing.T) {
 	target := hv("sleeper", false, "192.0.2.50")
 	all := []protocol.HostView{
 		target,
-		hv("same-lan", true, "192.0.2.10"),  // shares the /24: relay
+		hv("same-lan", true, "192.0.2.10"),     // shares the /24: relay
 		hv("other-lan", true, "198.51.100.10"), // different segment: cannot help
 		hv("multi-homed", true, "203.0.113.5", "192.0.2.99"), // one leg on the LAN: relay
 		hv("same-but-off", false, "192.0.2.11"),              // offline peers cannot shout
-		hv("no-facts", true),                                  // never reported an IP
+		hv("no-facts", true),                                 // never reported an IP
 	}
 	got := wolRelays(target, all)
 	want := map[string]bool{"same-lan": true, "multi-homed": true}

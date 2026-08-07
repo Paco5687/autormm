@@ -296,6 +296,13 @@ func computeAlerts(h *host, offlineAfter time.Duration) []string {
 			a = append(a, "disk "+d.Mount+" almost full")
 		}
 	}
+	for _, d := range m.Smart {
+		if !d.Healthy() {
+			// The chip that matters most on a storage box: this drive is losing
+			// surface, whatever its firmware claims.
+			a = append(a, d.Device+" failing")
+		}
+	}
 	return a
 }
 

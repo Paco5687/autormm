@@ -159,6 +159,21 @@ func (a *Alerter) rulesFor(v protocol.HostView) []rule {
 		if a.cfg.Mem > 0 {
 			rules = append(rules, rule{name: "mem", threshold: a.cfg.Mem, value: m.MemPercent, active: m.MemPercent >= a.cfg.Mem, forDur: a.cfg.For, label: "memory"})
 		}
+		// Drive health has no threshold to configure: a drive is either
+		// trustworthy or it is not, and the judgment (protocol.SmartDisk.Healthy)
+		// deliberately distrusts the firmware's own PASSED verdict once
+		// reallocated or pending sectors appear. No sustained-duration wait
+		// either — sector counts do not wobble back down, and this is the alert
+		// that has to arrive while the data is still readable.
+		if len(m.Smart) > 0 {
+			bad := 0
+			for _, d := range m.Smart {
+				if !d.Healthy() {
+					bad++
+				}
+			}
+			rules = append(rules, rule{name: "smart", value: float64(bad), active: bad > 0, label: "disk failing"})
+		}
 		if a.cfg.Disk > 0 {
 			var dmax float64
 			for _, d := range m.Disks {
@@ -183,6 +198,10 @@ func (a *Alerter) mkAlert(v protocol.HostView, r rule, st *alertState, firing bo
 		msg = fmt.Sprintf("🔴 %s is offline", host)
 	case r.name == "offline":
 		msg = fmt.Sprintf("✅ %s is back online", host)
+	case r.name == "smart" && firing:
+		msg = fmt.Sprintf("🔴 %s: %.0f drive(s) failing S.M.A.R.T. — replace before they die", host, r.value)
+	case r.name == "smart":
+		msg = fmt.Sprintf("✅ %s: drive health recovered", host)
 	case firing:
 		msg = fmt.Sprintf("🔴 %s: %s at %.0f%% (≥ %.0f%%)", host, r.label, r.value, r.threshold)
 	default:

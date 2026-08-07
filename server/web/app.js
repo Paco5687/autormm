@@ -309,7 +309,7 @@ function updateCard(el, h) {
   alerts.innerHTML = '';
   for (const a of (h.alerts || [])) {
     const c = document.createElement('span');
-    c.className = 'chip' + (/offline|full|high/.test(a) ? ' bad' : '');
+    c.className = 'chip' + (/offline|full|high|failing/.test(a) ? ' bad' : '');
     c.textContent = a;
     alerts.appendChild(c);
   }
@@ -819,6 +819,29 @@ function renderFacts(h) {
   if (f.kernel_version) items.push(['Kernel', f.kernel_version]);
   if (f.virtualization) items.push(['Virtualization', f.virtualization]);
   items.push(['Agent', (h && h.agent_version) || '—']);
+  // Drive health, for hosts whose agent can read S.M.A.R.T. (needs smartctl
+  // and enough privilege — the root/system agents on storage boxes, typically).
+  const drives = (h && h.metrics && h.metrics.smart) || [];
+  for (const d of drives) {
+    const healthy = d.passed && !d.reallocated && !d.pending && !d.uncorrectable && !d.media_errors && !d.critical_warn;
+    let v = healthy ? 'healthy ✓' : '⚠ FAILING';
+    if (!healthy) {
+      const why = [];
+      if (!d.passed) why.push('self-test failed');
+      if (d.reallocated) why.push(`${d.reallocated} reallocated`);
+      if (d.pending) why.push(`${d.pending} pending`);
+      if (d.uncorrectable) why.push(`${d.uncorrectable} uncorrectable`);
+      if (d.media_errors) why.push(`${d.media_errors} media errors`);
+      if (d.critical_warn) why.push('critical warning');
+      v += ' — ' + why.join(', ');
+    }
+    const extra = [];
+    if (d.temp_c) extra.push(`${d.temp_c}°C`);
+    if (d.percent_used) extra.push(`${d.percent_used}% worn`);
+    if (d.power_on_hours) extra.push(`${Math.round(d.power_on_hours / 24 / 365 * 10) / 10}y on`);
+    if (extra.length) v += ` (${extra.join(', ')})`;
+    items.push([d.model || d.device, v]);
+  }
   if (h && h.elevated) items.push(['Admin helper', 'installed ✓']);
   if (h && h.console) items.push(['Lock screen', 'capturable ✓']);
   mFacts.innerHTML = items

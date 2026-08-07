@@ -307,6 +307,40 @@ type Metrics struct {
 	// GPUs is absent on hosts without an NVIDIA GPU, which is most of them —
 	// omitempty keeps it out of every other host's payload entirely.
 	GPUs []GPU `json:"gpus,omitempty"`
+	// Smart is absent on hosts where smartctl is missing or lacks the privilege
+	// to read drives (user-session agents, typically). Root/system agents — the
+	// storage boxes, which is where this matters — report every drive.
+	Smart []SmartDisk `json:"smart,omitempty"`
+}
+
+// SmartDisk is one physical drive's S.M.A.R.T. health, as reported by smartctl.
+// Raw counters are carried rather than a verdict so the hub and dashboard can
+// judge; Healthy() is the shared judgment.
+type SmartDisk struct {
+	Device        string `json:"device"` // /dev/sda, /dev/nvme0, PhysicalDrive0…
+	Model         string `json:"model,omitempty"`
+	Passed        bool   `json:"passed"` // the drive's own overall self-assessment
+	TempC         int    `json:"temp_c,omitempty"`
+	PowerOnHours  int64  `json:"power_on_hours,omitempty"`
+	Reallocated   int64  `json:"reallocated,omitempty"`   // ATA attr 5: remapped sectors
+	Pending       int64  `json:"pending,omitempty"`       // ATA attr 197: sectors waiting to be remapped
+	Uncorrectable int64  `json:"uncorrectable,omitempty"` // ATA attr 198
+	MediaErrors   int64  `json:"media_errors,omitempty"`  // NVMe
+	CriticalWarn  int    `json:"critical_warn,omitempty"` // NVMe critical warning bitmask
+	PercentUsed   int    `json:"percent_used,omitempty"`  // NVMe endurance consumed
+}
+
+// Healthy is the single shared judgment of whether a drive is trustworthy.
+//
+// A drive's own PASSED verdict is famously optimistic — firmware routinely
+// reports PASSED right up to the click of death. Reallocated or pending sectors
+// mean the drive is already losing surface, and NVMe media errors or a critical
+// warning mean the same; these are the counters that predict failure, so any of
+// them failing the drive here is deliberate even while the drive still says
+// PASSED.
+func (d SmartDisk) Healthy() bool {
+	return d.Passed && d.Reallocated == 0 && d.Pending == 0 &&
+		d.Uncorrectable == 0 && d.MediaErrors == 0 && d.CriticalWarn == 0
 }
 
 // GPU is one graphics card's utilisation and memory, as reported by nvidia-smi.

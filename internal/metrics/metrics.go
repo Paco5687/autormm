@@ -151,6 +151,7 @@ func (c *Collector) Collect() *protocol.Metrics {
 	}
 
 	m.GPUs = collectGPUs()
+	m.Smart = collectSMART()
 
 	if l, err := load.Avg(); err == nil && l != nil {
 		m.Load1, m.Load5, m.Load15 = round2(l.Load1), round2(l.Load5), round2(l.Load15)

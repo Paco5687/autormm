@@ -56,3 +56,38 @@ func TestAlerterHysteresis(t *testing.T) {
 		t.Fatalf("expected offline fire, got %+v", tr)
 	}
 }
+
+// A failing drive must alert immediately and stay failing: sector counts do
+// not wobble back down, and this alert has to arrive while data is readable.
+func TestSmartAlertFiresWithoutDelay(t *testing.T) {
+	a := NewAlerter(AlertConfig{For: time.Minute, OfflineAfter: 30 * time.Second})
+	cur := time.Unix(1_000_000, 0)
+	a.now = func() time.Time { return cur }
+
+	view := func(pending int64) []protocol.HostView {
+		return []protocol.HostView{{
+			AgentID: "nas", Hostname: "nas", Online: true,
+			Metrics: &protocol.Metrics{Smart: []protocol.SmartDisk{
+				{Device: "/dev/sda", Passed: true},                   // fine
+				{Device: "/dev/sdb", Passed: true, Pending: pending}, // dying politely
+			}},
+		}}
+	}
+
+	// Fires on the first evaluation — no sustain window, unlike CPU: the
+	// condition cannot be transient.
+	tr := a.evaluate(view(12))
+	if len(tr) != 1 || !tr[0].Firing || tr[0].Rule != "smart" {
+		t.Fatalf("expected an immediate smart fire, got %+v", tr)
+	}
+	// Same state again: firing already, no repeat transition.
+	cur = cur.Add(time.Minute)
+	if tr := a.evaluate(view(12)); len(tr) != 0 {
+		t.Fatalf("the same failure produced another transition: %+v", tr)
+	}
+	// Healthy drives all round (a replaced disk): resolves.
+	tr = a.evaluate(view(0))
+	if len(tr) != 1 || tr[0].Firing {
+		t.Fatalf("expected a resolve after the drive was replaced, got %+v", tr)
+	}
+}
