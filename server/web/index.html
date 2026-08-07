@@ -18,8 +18,10 @@
     <div class="brand">autormm<span class="dot">●</span></div>
     <div class="grow"></div>
     <div id="summary" class="summary"></div>
+    <select id="tagFilter" class="inv-filter hidden" title="Show only hosts with this tag"></select>
     <span id="alertBadge" class="alert-badge hidden"></span>
     <button id="enrollBtn" class="btn">＋ Add host</button>
+    <button id="netAdd" class="btn ghost" title="Monitor a device that can't run an agent (switch, printer, appliance)">＋ Device</button>
     <button id="scriptsBtn" class="btn ghost" title="Scripts &amp; schedules">📜</button>
     <button id="updatesBtn" class="btn ghost" title="Check for updates">⟳</button>
     <button id="acctBtn" class="btn ghost" title="Accounts">👤</button>
@@ -27,6 +29,14 @@
   </header>
 
   <main id="grid" class="grid"></main>
+
+  <section id="netSection" class="netsec hidden">
+    <div class="netsec-head">
+      <b>Network devices</b>
+      <span id="netSummary" class="muted"></span>
+    </div>
+    <div id="netGrid" class="netgrid"></div>
+  </section>
 
   <div id="empty" class="empty hidden">
     <p>No hosts have connected yet.</p>
@@ -62,6 +72,27 @@
         <button class="btn" data-svc="stop">Stop</button>
         <button class="btn" data-svc="restart">Restart</button>
       </div>
+      <div id="mAlertPrefs" class="mpatch">
+        <div class="mpatch-row">
+          <b>Alerting</b>
+          <label class="muted">CPU <input id="prefCPU" type="number" min="0" max="100" placeholder="global" class="prefnum"></label>
+          <label class="muted">MEM <input id="prefMem" type="number" min="0" max="100" placeholder="global" class="prefnum"></label>
+          <label class="muted">DISK <input id="prefDisk" type="number" min="0" max="100" placeholder="global" class="prefnum"></label>
+          <button id="prefSave" class="btn">Save</button>
+          <button id="prefMute1" class="btn ghost" title="Silence every alert for this host for an hour">Mute 1h</button>
+          <button id="prefMute8" class="btn ghost">Mute 8h</button>
+          <button id="prefUnmute" class="btn ghost">Unmute</button>
+          <span id="prefStatus" class="muted"></span>
+        </div>
+      </div>
+      <div id="mLogs" class="mpatch">
+        <div class="mpatch-row">
+          <b>Recent problems</b>
+          <button id="logsBtn" class="btn ghost">Load errors &amp; warnings</button>
+          <span id="logsStatus" class="muted"></span>
+        </div>
+        <pre id="logsOut" class="mpatch-out hidden"></pre>
+      </div>
       <div id="mPatch" class="mpatch">
         <div class="mpatch-row">
           <b>Patches</b>
@@ -80,6 +111,25 @@
         </div>
         <div id="mInvList" class="inv-list"></div>
       </div>
+    </div>
+  </div>
+
+  <div id="netModal" class="modal hidden">
+    <div class="modal-card sheet-sm">
+      <div class="modal-head">
+        <div class="modal-title">
+          <div class="name">Monitor a network device</div>
+          <div class="platform muted">Switches, printers, appliances — anything that cannot run an agent.</div>
+        </div>
+        <button id="netClose" class="btn ghost">✕</button>
+      </div>
+      <div class="cmd-row"><input id="netName" class="inv-filter" style="max-width:none" placeholder="name (e.g. core switch)"></div>
+      <div class="cmd-row"><input id="netAddr" class="inv-filter" style="max-width:none" placeholder="hostname or IP"></div>
+      <div class="cmd-row">
+        <input id="netPort" class="inv-filter" type="number" min="0" max="65535" placeholder="port (blank = try common ports)">
+        <input id="netTags" class="inv-filter" placeholder="tags (optional)">
+      </div>
+      <div class="cmd-row"><button id="netSave" class="btn">Add device</button><span id="netStatus" class="muted"></span></div>
     </div>
   </div>
 

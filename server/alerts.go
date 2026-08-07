@@ -57,6 +57,10 @@ type Alerter struct {
 	notifier *notifier
 	now      func() time.Time
 
+	// prefs supplies per-host threshold overrides and mute windows. Optional:
+	// nil means every host uses the global configuration.
+	prefs *hostPrefs
+
 	mu     sync.Mutex
 	states map[alertKey]*alertState
 }
@@ -147,17 +151,64 @@ func (a *Alerter) evaluate(views []protocol.HostView) []Alert {
 	return transitions
 }
 
+// notifyNetCheck announces an agentless device changing state. These do not go
+// through the rule machinery: a device is up or it is not, there is no
+// threshold to sustain, and the check interval already provides the delay.
+func (a *Alerter) notifyNetCheck(st NetStatus) {
+	name := st.Name
+	if name == "" {
+		name = st.Address
+	}
+	msg := fmt.Sprintf("✅ %s is reachable again (%s)", name, st.Address)
+	if !st.Up {
+		msg = fmt.Sprintf("🔴 %s is unreachable (%s)", name, st.Address)
+	}
+	log.Printf("netcheck: %s", msg)
+	if a.notifier != nil {
+		// Routed through the same dispatch as host alerts so netcheck
+		// transitions reach whatever the operator already configured.
+		a.notifier.dispatch(Alert{
+			AgentID: "netcheck:" + st.ID, Host: name, Rule: "netcheck",
+			Message: msg, Since: st.Since, Firing: !st.Up,
+		})
+	}
+}
+
+// prefFor returns this host's overrides, or the zero value when none are set
+// (or no store is attached, as in tests).
+func (a *Alerter) prefFor(agentID string) HostPref {
+	if a.prefs == nil {
+		return HostPref{}
+	}
+	return a.prefs.get(agentID)
+}
+
 func (a *Alerter) rulesFor(v protocol.HostView) []rule {
 	var rules []rule
+	pref := a.prefFor(v.AgentID)
+	// A silenced host produces no rules at all, so nothing can fire and anything
+	// already firing resolves. Silence means silence — including the offline
+	// alert, which is the one people most want muted while a box is deliberately
+	// down for maintenance.
+	if pref.Silenced(a.now()) {
+		return nil
+	}
+	// An override of zero inherits the global threshold.
+	orElse := func(override, global float64) float64 {
+		if override > 0 {
+			return override
+		}
+		return global
+	}
 	// offline
 	rules = append(rules, rule{name: "offline", active: !v.Online, forDur: a.cfg.OfflineAfter, label: "offline"})
 	if v.Online && v.Metrics != nil {
 		m := v.Metrics
-		if a.cfg.CPU > 0 {
-			rules = append(rules, rule{name: "cpu", threshold: a.cfg.CPU, value: m.CPUPercent, active: m.CPUPercent >= a.cfg.CPU, forDur: a.cfg.For, label: "CPU"})
+		if t := orElse(pref.CPU, a.cfg.CPU); t > 0 {
+			rules = append(rules, rule{name: "cpu", threshold: t, value: m.CPUPercent, active: m.CPUPercent >= t, forDur: a.cfg.For, label: "CPU"})
 		}
-		if a.cfg.Mem > 0 {
-			rules = append(rules, rule{name: "mem", threshold: a.cfg.Mem, value: m.MemPercent, active: m.MemPercent >= a.cfg.Mem, forDur: a.cfg.For, label: "memory"})
+		if t := orElse(pref.Mem, a.cfg.Mem); t > 0 {
+			rules = append(rules, rule{name: "mem", threshold: t, value: m.MemPercent, active: m.MemPercent >= t, forDur: a.cfg.For, label: "memory"})
 		}
 		// Drive health has no threshold to configure: a drive is either
 		// trustworthy or it is not, and the judgment (protocol.SmartDisk.Healthy)
@@ -174,14 +225,14 @@ func (a *Alerter) rulesFor(v protocol.HostView) []rule {
 			}
 			rules = append(rules, rule{name: "smart", value: float64(bad), active: bad > 0, label: "disk failing"})
 		}
-		if a.cfg.Disk > 0 {
+		if t := orElse(pref.Disk, a.cfg.Disk); t > 0 {
 			var dmax float64
 			for _, d := range m.Disks {
 				if d.Percent > dmax {
 					dmax = d.Percent
 				}
 			}
-			rules = append(rules, rule{name: "disk", threshold: a.cfg.Disk, value: dmax, active: dmax >= a.cfg.Disk, forDur: a.cfg.For, label: "disk"})
+			rules = append(rules, rule{name: "disk", threshold: t, value: dmax, active: dmax >= t, forDur: a.cfg.For, label: "disk"})
 		}
 	}
 	return rules

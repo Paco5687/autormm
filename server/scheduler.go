@@ -76,6 +76,12 @@ func (s *Server) runDueSchedules(now time.Time) {
 			continue
 		}
 		s.scripts.markScheduleRun(sch.ID, now.Unix())
-		go s.runScript(sc, sch.AgentID, "schedule")
+		// A schedule may target a selector as well as one host, and the set is
+		// resolved at fire time rather than when the schedule was created — so a
+		// machine enrolled last week is already covered by "tag:linux" without
+		// anyone editing the schedule.
+		for _, id := range resolveTarget(sch.AgentID, s.store.views()) {
+			go s.runScript(sc, id, "schedule")
+		}
 	}
 }

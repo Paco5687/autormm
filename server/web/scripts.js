@@ -43,13 +43,27 @@
 
   function fillHosts() {
     const sel = $('scRunHost');
+    const keep = sel.value;
     sel.innerHTML = '';
-    for (const h of bridge().execHosts()) {
+    const add = (value, label) => {
       const o = document.createElement('option');
-      o.value = h.agent_id;
-      o.textContent = h.hostname || h.agent_id;
+      o.value = value;
+      o.textContent = label;
       sel.appendChild(o);
-    }
+    };
+    // Group selectors first: the whole point of tags is not having to pick
+    // hosts one at a time. Resolved at run time, so a machine enrolled later is
+    // already covered without editing the script or its schedule.
+    const hosts = bridge().execHosts();
+    add('all', '▸ All online hosts');
+    const oses = [...new Set(hosts.map(h => h.os).filter(Boolean))].sort();
+    for (const os of oses) add('os:' + os, `▸ All ${os} hosts`);
+    const tags = [...new Set(
+      hosts.flatMap(h => (h.tags || '').split(/[,;\s]+/)).map(t => t.trim()).filter(Boolean)
+    )].sort((a, b) => a.localeCompare(b));
+    for (const t of tags) add('tag:' + t, `▸ Tagged "${t}"`);
+    for (const h of hosts) add(h.agent_id, h.hostname || h.agent_id);
+    if (keep) sel.value = keep;
   }
 
   async function refresh() {

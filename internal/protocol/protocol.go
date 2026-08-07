@@ -311,6 +311,13 @@ type Metrics struct {
 	// to read drives (user-session agents, typically). Root/system agents — the
 	// storage boxes, which is where this matters — report every drive.
 	Smart []SmartDisk `json:"smart,omitempty"`
+	// RebootPending is what the OS itself says, not a guess from uptime: a
+	// serviced Windows update or a Debian kernel upgrade that has not been
+	// restarted into yet.
+	RebootPending bool `json:"reboot_pending,omitempty"`
+	// CPUTempC is 0 on hosts with no readable sensor, which includes most VMs
+	// and much of Windows.
+	CPUTempC float64 `json:"cpu_temp_c,omitempty"`
 }
 
 // SmartDisk is one physical drive's S.M.A.R.T. health, as reported by smartctl.

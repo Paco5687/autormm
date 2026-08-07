@@ -7,6 +7,8 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/Paco5687/autormm/internal/adminstore"
@@ -32,17 +34,21 @@ type Config struct {
 
 // Server is the running hub.
 type Server struct {
-	cfg      Config
-	secret   []byte
-	store    *Store
-	sessions *sessionRegistry
-	execReg  *execRegistry
-	invReg   *invRegistry
-	history  *History
-	scripts  *ScriptStore
-	alerter  *Alerter
-	admins   *adminstore.Store
-	httpSrv  *http.Server
+	cfg       Config
+	secret    []byte
+	store     *Store
+	sessions  *sessionRegistry
+	execReg   *execRegistry
+	invReg    *invRegistry
+	history   *History
+	scripts   *ScriptStore
+	alerter   *Alerter
+	prefs     *hostPrefs
+	netChecks *netChecks
+	netSeenMu sync.Mutex
+	netSeen   map[string]bool
+	admins    *adminstore.Store
+	httpSrv   *http.Server
 }
 
 // New builds a Server from cfg.
@@ -81,7 +87,13 @@ func New(cfg Config) *Server {
 		history:  hist,
 		scripts:  scripts,
 		alerter:  NewAlerter(cfg.Alerts),
+		// Per-host alert overrides live beside the admin store, which is the
+		// hub's existing home for small persisted state.
+		prefs: newHostPrefs(filepath.Dir(cfg.AdminStore)),
+		// Agentless checks live beside the other small persisted state.
+		netChecks: newNetChecks(filepath.Dir(cfg.AdminStore)),
 	}
+	s.alerter.prefs = s.prefs
 	if cfg.AdminStore != "" {
 		s.admins = adminstore.New(cfg.AdminStore)
 	}
@@ -96,6 +108,7 @@ func (s *Server) Run(ctx context.Context) error {
 	go s.pruneLoop(ctx)
 	go s.alerter.Run(ctx, s.store)
 	go s.schedulerLoop(ctx)
+	go s.netCheckLoop(ctx)
 
 	errCh := make(chan error, 1)
 	go func() {

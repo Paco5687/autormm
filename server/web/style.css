@@ -51,6 +51,21 @@ body {
 .btn.ghost { background: transparent; padding: 6px 9px; }
 /* Destructive actions look different from the rest, so nobody reaches for one
    by muscle memory while aiming for the button beside it. */
+.netsec { padding: 0 20px 20px; }
+.netsec-head { display: flex; align-items: center; gap: 10px; padding: 6px 0 10px; }
+.netgrid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); }
+.netcard {
+  display: flex; align-items: center; gap: 8px; padding: 10px 12px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px; font-size: 13px;
+}
+.netcard .status { flex-shrink: 0; }
+.netcard .nc-body { min-width: 0; flex: 1; }
+.netcard .nc-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.netcard .nc-sub { font-size: 11px; color: var(--muted); font-family: var(--mono); }
+.netcard .nc-del { opacity: .45; cursor: pointer; background: none; border: 0; color: var(--text); font-size: 14px; }
+.netcard .nc-del:hover { opacity: 1; color: var(--bad); }
+.modal-card.sheet-sm { width: min(460px, 100%); }
+.prefnum { width: 62px; background: #0d0f13; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; }
 .btn.danger { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, var(--line)); }
 @media (hover: hover) {
   .btn.danger:hover:not(:disabled) { border-color: var(--bad); background: color-mix(in srgb, var(--bad) 14%, transparent); }

@@ -100,6 +100,24 @@ function authFetch(path, method, body) {
   return fetch(path, opts);
 }
 
+// authJSON is authFetch plus the two steps every caller needs and one of them
+// will eventually forget: decoding the body, and noticing that the hub said no.
+//
+// authFetch hands back a Response, whose .ok means "HTTP 200" — not "the host
+// did the thing". Reading r.ok straight off it therefore reports success for
+// every reply the hub managed to send, including one whose body says the host
+// refused. That mistake shipped in the reboot and wake buttons; this exists so
+// it cannot recur.
+async function authJSON(path, method, body) {
+  const r = await authFetch(path, method, body);
+  if (r.status === 401) { showLogin(); throw new Error('not signed in'); }
+  if (!r.ok) {
+    const text = (await r.text().catch(() => '')).trim();
+    throw new Error(text || ('HTTP ' + r.status));
+  }
+  return r.json();
+}
+
 // ---- accounts ----
 const acctModal = document.getElementById('acctModal');
 document.getElementById('acctBtn').addEventListener('click', () => {
@@ -276,11 +294,46 @@ async function fetchAlerts() {
   }
 }
 
-function render(hosts) {
-  lastHosts = hosts;
+// Filter the grid by tag. Tags were recorded at enrolment and then used by
+// nothing; on a fleet past a screenful, being able to look at just the storage
+// boxes is the difference between a dashboard and a wall.
+const tagFilterEl = document.getElementById('tagFilter');
+let tagFilter = localStorage.getItem('autormm_tagfilter') || '';
+tagFilterEl.addEventListener('change', () => {
+  tagFilter = tagFilterEl.value;
+  localStorage.setItem('autormm_tagfilter', tagFilter);
+  render(lastHosts);
+});
+
+function hostTags(h) {
+  return (h.tags || '').split(/[,;\s]+/).map(t => t.trim()).filter(Boolean);
+}
+
+function refreshTagFilter(hosts) {
+  const tags = [...new Set(hosts.flatMap(hostTags).map(t => t.toLowerCase()))].sort();
+  // Nothing to filter by on a fleet with no tags: hide the control entirely
+  // rather than offering an empty dropdown.
+  tagFilterEl.classList.toggle('hidden', tags.length === 0);
+  const want = ['', ...tags].join('|');
+  if (tagFilterEl.dataset.built === want) { tagFilterEl.value = tagFilter; return; }
+  tagFilterEl.dataset.built = want;
+  tagFilterEl.innerHTML = '<option value="">All tags</option>' +
+    tags.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
+  // A filter for a tag that no longer exists would hide the whole fleet.
+  if (tagFilter && !tags.includes(tagFilter)) { tagFilter = ''; localStorage.removeItem('autormm_tagfilter'); }
+  tagFilterEl.value = tagFilter;
+}
+
+function render(allHosts) {
+  lastHosts = allHosts;
+  loadNetChecks();
+  refreshTagFilter(allHosts);
+  const hosts = tagFilter
+    ? allHosts.filter(h => hostTags(h).some(t => t.toLowerCase() === tagFilter))
+    : allHosts;
   emptyEl.classList.toggle('hidden', hosts.length > 0);
   const online = hosts.filter(h => h.online).length;
-  summaryEl.textContent = `${online}/${hosts.length} online`;
+  summaryEl.textContent = `${online}/${hosts.length} online` + (tagFilter ? ` · ${tagFilter}` : '');
 
   const seen = new Set();
   for (const h of hosts) {
@@ -320,6 +373,9 @@ function updateCard(el, h) {
   setBar(el.querySelector('.cpu'), cpu);
   setBar(el.querySelector('.mem'), mem);
   el.querySelector('.cpuVal').textContent = m ? cpu.toFixed(0) + '%' : '—';
+  // Temperature next to load, for the hosts that can report it.
+  const cpuLabel = el.querySelector('.metric label');
+  if (cpuLabel) cpuLabel.textContent = (m && m.cpu_temp_c) ? `CPU ${Math.round(m.cpu_temp_c)}°` : 'CPU';
   el.querySelector('.memVal').textContent = m ? mem.toFixed(0) + '%' : '—';
 
   renderGPUs(el.querySelector('.gpu-metrics'), (m && m.gpus) || []);
@@ -465,8 +521,97 @@ function openDetail(agentID) {
   const canWake = !!(h && !h.online && h.facts && h.facts.macs && h.facts.macs.length);
   document.getElementById('mWake').classList.toggle('hidden', !canWake);
   resetInventory();
+  resetLogs();
+  loadPrefs(agentID);
   loadHistory();
 }
+
+// Per-host alert overrides. A blank field inherits the global threshold, which
+// is why the placeholders read "global" rather than showing a number the host
+// is not actually using.
+const prefEls = {
+  cpu: document.getElementById('prefCPU'),
+  mem: document.getElementById('prefMem'),
+  disk: document.getElementById('prefDisk'),
+  status: document.getElementById('prefStatus'),
+};
+let allPrefs = {};
+
+async function loadPrefs(agentID) {
+  prefEls.status.textContent = '';
+  try {
+    allPrefs = await authJSON('/api/hostprefs', 'GET');
+  } catch (e) { allPrefs = {}; }
+  const p = allPrefs[agentID] || {};
+  prefEls.cpu.value = p.cpu || '';
+  prefEls.mem.value = p.mem || '';
+  prefEls.disk.value = p.disk || '';
+  showMuteState(p);
+}
+
+function showMuteState(p) {
+  if (p && p.mute) { prefEls.status.textContent = 'muted indefinitely'; return; }
+  if (p && p.mute_until && new Date(p.mute_until) > new Date()) {
+    prefEls.status.textContent = 'muted until ' + new Date(p.mute_until).toLocaleTimeString();
+    return;
+  }
+  prefEls.status.textContent = '';
+}
+
+async function savePrefs(extra) {
+  const h = hostByID(detail.agent);
+  if (!h) return;
+  const num = (el) => { const v = parseFloat(el.value); return isFinite(v) && v > 0 ? v : 0; };
+  const body = {
+    agent_id: h.agent_id,
+    pref: {
+      cpu: num(prefEls.cpu), mem: num(prefEls.mem), disk: num(prefEls.disk),
+      ...(extra && extra.pref),
+    },
+    ...(extra && extra.mute_hours ? { mute_hours: extra.mute_hours } : {}),
+  };
+  try {
+    const r = await authJSON('/api/hostprefs', 'POST', body);
+    allPrefs[h.agent_id] = r.pref || {};
+    showMuteState(r.pref);
+    if (!extra) prefEls.status.textContent = 'saved';
+  } catch (e) { prefEls.status.textContent = 'failed: ' + e; }
+}
+
+document.getElementById('prefSave').addEventListener('click', () => savePrefs(null));
+document.getElementById('prefMute1').addEventListener('click', () => savePrefs({ mute_hours: 1 }));
+document.getElementById('prefMute8').addEventListener('click', () => savePrefs({ mute_hours: 8 }));
+document.getElementById('prefUnmute').addEventListener('click', () => savePrefs({ pref: { mute: false, mute_until: null } }));
+
+// Recent errors and warnings from the host's own log. On demand rather than
+// polled: this is the question you ask when something already went wrong, and
+// shipping every host's log to the hub continuously is a different feature.
+const logsOut = document.getElementById('logsOut');
+const logsStatus = document.getElementById('logsStatus');
+const logsBtn = document.getElementById('logsBtn');
+
+function resetLogs() {
+  logsOut.classList.add('hidden');
+  logsOut.textContent = '';
+  logsStatus.textContent = '';
+  logsBtn.disabled = false;
+}
+
+logsBtn.addEventListener('click', async () => {
+  const h = hostByID(detail.agent);
+  if (!h) return;
+  logsBtn.disabled = true;
+  logsStatus.textContent = 'reading…';
+  try {
+    const r = await authJSON('/api/eventlog', 'POST', { agent_id: h.agent_id });
+    logsOut.textContent = r.output || '';
+    logsOut.classList.remove('hidden');
+    logsStatus.textContent = r.truncated ? 'truncated' : '';
+  } catch (e) {
+    logsStatus.textContent = 'failed: ' + e;
+  }
+  logsBtn.disabled = false;
+});
 
 function closeDetail() { detail.agent = null; modal.classList.add('hidden'); }
 
@@ -503,7 +648,7 @@ mWake.addEventListener('click', async () => {
   const prev = mWake.textContent;
   mWake.textContent = 'waking…';
   try {
-    const r = await authFetch('/api/wol', 'POST', { agent_id: h.agent_id });
+    const r = await authJSON('/api/wol', 'POST', { agent_id: h.agent_id });
     mWake.textContent = r.ok ? (r.relays ? `sent via ${r.relays} peer${r.relays > 1 ? 's' : ''}` : 'sent') : 'failed';
   } catch (e) {
     mWake.textContent = 'failed';
@@ -523,7 +668,7 @@ mReboot.addEventListener('click', async () => {
   mReboot.disabled = true;
   mReboot.textContent = 'rebooting…';
   try {
-    const r = await authFetch('/api/reboot', 'POST', { agent_id: h.agent_id });
+    const r = await authJSON('/api/reboot', 'POST', { agent_id: h.agent_id });
     // The host reports whether it could actually do it — an unprivileged agent
     // often cannot — so show what it said rather than assuming it worked.
     mReboot.textContent = r.ok ? 'reboot sent' : 'cannot reboot';
@@ -842,6 +987,7 @@ function renderFacts(h) {
     if (extra.length) v += ` (${extra.join(', ')})`;
     items.push([d.model || d.device, v]);
   }
+  if (h && h.metrics && h.metrics.reboot_pending) items.push(['Restart', 'pending — the OS has updates staged']);
   if (h && h.elevated) items.push(['Admin helper', 'installed ✓']);
   if (h && h.console) items.push(['Lock screen', 'capturable ✓']);
   mFacts.innerHTML = items
@@ -953,3 +1099,71 @@ window.autormm = {
 
 poll();
 setInterval(poll, 3000);
+
+// ---- agentless network devices ----
+// Half a homelab is not a computer: switches, printers, appliances, the
+// zero-trust connector. They cannot run an agent, so the hub probes them
+// directly and shows them beside the hosts they sit alongside.
+const netSection = document.getElementById('netSection');
+const netGrid = document.getElementById('netGrid');
+const netModal = document.getElementById('netModal');
+
+async function loadNetChecks() {
+  let list = [];
+  try {
+    list = await authJSON('/api/netchecks', 'GET');
+  } catch (e) { return; } // unauthenticated or unsupported: leave the section alone
+  list = list || [];
+  // Hidden entirely when nothing is configured, so a fleet that does not use
+  // this never sees an empty shelf.
+  netSection.classList.toggle('hidden', list.length === 0);
+  document.getElementById('netSummary').textContent =
+    list.length ? `${list.filter(c => c.up).length}/${list.length} reachable` : '';
+
+  netGrid.innerHTML = '';
+  for (const c of list) {
+    const el = document.createElement('div');
+    el.className = 'netcard';
+    const sub = c.up
+      ? `${c.address}${c.port ? ':' + c.port : ''} · ${Math.round(c.latency_ms)}ms`
+      : `${c.address}${c.port ? ':' + c.port : ''} · unreachable`;
+    el.innerHTML =
+      `<span class="status ${c.checked ? (c.up ? 'online' : 'offline') : ''}"></span>` +
+      `<div class="nc-body"><div class="nc-name"></div><div class="nc-sub"></div></div>` +
+      `<button class="nc-del" title="Stop monitoring">✕</button>`;
+    el.querySelector('.nc-name').textContent = c.name || c.address;
+    el.querySelector('.nc-sub').textContent = c.checked ? sub : 'not checked yet';
+    el.querySelector('.nc-del').onclick = async () => {
+      if (!confirm(`Stop monitoring ${c.name || c.address}?`)) return;
+      try {
+        await authJSON('/api/netchecks?id=' + encodeURIComponent(c.id), 'DELETE');
+        loadNetChecks();
+      } catch (e) { alert('Could not remove: ' + e.message); }
+    };
+    netGrid.appendChild(el);
+  }
+}
+
+document.getElementById('netAdd').addEventListener('click', () => netModal.classList.remove('hidden'));
+document.getElementById('netClose').addEventListener('click', () => netModal.classList.add('hidden'));
+netModal.addEventListener('click', e => { if (e.target === netModal) netModal.classList.add('hidden'); });
+
+document.getElementById('netSave').addEventListener('click', async () => {
+  const addr = document.getElementById('netAddr').value.trim();
+  const st = document.getElementById('netStatus');
+  if (!addr) { st.textContent = 'an address is required'; return; }
+  const portRaw = document.getElementById('netPort').value.trim();
+  st.textContent = 'saving…';
+  try {
+    await authJSON('/api/netchecks', 'POST', {
+      name: document.getElementById('netName').value.trim(),
+      address: addr,
+      port: portRaw ? parseInt(portRaw, 10) : 0,
+      tags: document.getElementById('netTags').value.trim(),
+    });
+    for (const id of ['netName', 'netAddr', 'netPort', 'netTags']) document.getElementById(id).value = '';
+    st.textContent = '';
+    netModal.classList.add('hidden');
+    loadNetChecks();
+  } catch (e) { st.textContent = 'failed: ' + e.message; }
+});

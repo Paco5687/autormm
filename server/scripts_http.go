@@ -78,8 +78,24 @@ func (s *Server) handleScriptRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no such script", http.StatusNotFound)
 		return
 	}
-	run := s.runScript(sc, req.AgentID, "manual")
-	writeJSON(w, http.StatusOK, run)
+	// agent_id may be a selector ("all", "tag:linux", "os:windows") rather than
+	// one host. Each target still gets its own run record, so the results page
+	// shows per-host outcomes instead of one merged verdict that hides the two
+	// machines that failed.
+	targets := resolveTarget(req.AgentID, s.store.views())
+	if len(targets) == 0 {
+		http.Error(w, "no online hosts match "+req.AgentID, http.StatusConflict)
+		return
+	}
+	if len(targets) == 1 {
+		writeJSON(w, http.StatusOK, s.runScript(sc, targets[0], "manual"))
+		return
+	}
+	var runs []any
+	for _, id := range targets {
+		runs = append(runs, s.runScript(sc, id, "manual"))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"runs": runs, "targets": len(targets)})
 }
 
 func (s *Server) handleSchedules(w http.ResponseWriter, r *http.Request) {
