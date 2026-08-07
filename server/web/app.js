@@ -709,11 +709,74 @@ async function openFiles(h) {
   fileWS.binaryType = 'arraybuffer';
   const state = document.getElementById('fileState');
   const send = document.getElementById('fileSend'), get = document.getElementById('fileGet');
-  fileWS.onopen = () => { state.textContent = 'ready'; state.className = 'pill live'; send.disabled = false; get.disabled = false; };
-  fileWS.onclose = () => { state.textContent = 'closed'; state.className = 'pill dead'; send.disabled = true; get.disabled = true; };
+  const go = document.getElementById('fbGo'), up = document.getElementById('fbUp');
+  fileWS.onopen = () => {
+    state.textContent = 'ready'; state.className = 'pill live';
+    send.disabled = false; get.disabled = false; go.disabled = false;
+    browseTo(''); // open on the host user's home
+  };
+  fileWS.onclose = () => { state.textContent = 'closed'; state.className = 'pill dead'; send.disabled = true; get.disabled = true; go.disabled = true; up.disabled = true; };
   fileWS.onerror = () => { state.textContent = 'error'; state.className = 'pill dead'; };
   fileWS.onmessage = onFileMsg;
 }
+
+// ---- host file browser ----
+// Typed paths were the whole interface before, which meant knowing the layout
+// of a machine you opened this panel to go look at.
+let fbCwd = '';    // resolved directory currently shown
+let fbParent = ''; // its parent ("" at the filesystem root)
+
+function browseTo(path) {
+  if (!fileWS || fileWS.readyState !== 1) return;
+  fileWS.send(JSON.stringify({ t: 'ls', path }));
+}
+
+function fmtEntrySize(n) { return n ? fmtBytes(n) : ''; }
+
+function renderListing(m) {
+  fbCwd = m.path; fbParent = m.parent || '';
+  document.getElementById('fileGetPath').value = m.path;
+  document.getElementById('fbUp').disabled = !fbParent;
+  document.getElementById('fbNote').textContent = m.msg || '';
+  const list = document.getElementById('fbList');
+  list.innerHTML = '';
+  if (!m.entries || !m.entries.length) {
+    list.innerHTML = '<div class="muted fb-empty">empty folder</div>';
+    return;
+  }
+  for (const e of m.entries) {
+    const row = document.createElement('div');
+    row.className = 'fb-row' + (e.dir ? ' fb-dir' : '');
+    row.title = e.dir ? 'Open folder' : 'Download this file';
+    const name = document.createElement('span');
+    name.className = 'fb-name';
+    name.textContent = (e.dir ? '📁 ' : '') + e.name;
+    const size = document.createElement('span');
+    size.className = 'fb-size';
+    size.textContent = e.dir ? '' : fmtEntrySize(e.size);
+    row.append(name, size);
+    const full = joinHostPath(fbCwd, e.name);
+    row.onclick = () => {
+      if (e.dir) browseTo(full);
+      else { flog(`requesting ${e.name}…`); fileWS.send(JSON.stringify({ t: 'get', path: full })); }
+    };
+    list.appendChild(row);
+  }
+}
+
+// joinHostPath joins with the separator the *host* uses, judged from the path
+// itself — this browser runs against Windows and Unix hosts alike, and the
+// viewer's own platform is irrelevant.
+function joinHostPath(dir, name) {
+  const sep = dir.includes('\\') && !dir.includes('/') ? '\\' : '/';
+  return dir.endsWith(sep) ? dir + name : dir + sep + name;
+}
+
+document.getElementById('fbGo').addEventListener('click', () => browseTo(document.getElementById('fileGetPath').value.trim()));
+document.getElementById('fbUp').addEventListener('click', () => { if (fbParent) browseTo(fbParent); });
+document.getElementById('fileGetPath').addEventListener('keydown', e => {
+  if (e.key === 'Enter') browseTo(e.target.value.trim());
+});
 
 function closeFiles() {
   if (fileWS) { try { fileWS.close(); } catch (_) {} fileWS = null; }
@@ -724,10 +787,11 @@ function closeFiles() {
 function onFileMsg(ev) {
   if (typeof ev.data === 'string') {
     const m = JSON.parse(ev.data);
-    if (m.t === 'ok') flog(`✓ uploaded → ${m.path} (${m.size} bytes)`);
+    if (m.t === 'ok') { flog(`✓ uploaded → ${m.path} (${fmtBytes(m.size)})`); browseTo(fbCwd); }
     else if (m.t === 'err') flog(`✗ ${m.msg}`);
-    else if (m.t === 'meta') { dl = { name: m.name, size: m.size, parts: [], got: 0 }; flog(`downloading ${m.name} (${m.size} bytes)…`); }
+    else if (m.t === 'meta') { dl = { name: m.name, size: m.size, parts: [], got: 0 }; flog(`downloading ${m.name} (${fmtBytes(m.size)})…`); }
     else if (m.t === 'done') finishDownload();
+    else if (m.t === 'list') renderListing(m);
     return;
   }
   if (dl) { dl.parts.push(ev.data); dl.got += ev.data.byteLength; }
@@ -746,16 +810,21 @@ function finishDownload() {
 
 document.getElementById('fileSend').addEventListener('click', async () => {
   const inp = document.getElementById('fileUpload');
-  const f = inp.files && inp.files[0];
-  if (!f || !fileWS || fileWS.readyState !== 1) return;
-  fileWS.send(JSON.stringify({ t: 'put', name: f.name, size: f.size }));
-  flog(`uploading ${f.name} (${f.size} bytes)…`);
-  const chunk = 256 * 1024;
-  for (let off = 0; off < f.size; off += chunk) {
-    // simple backpressure so we don't buffer the whole file in memory
-    while (fileWS.bufferedAmount > 8 * 1024 * 1024) await new Promise(r => setTimeout(r, 20));
-    fileWS.send(await f.slice(off, off + chunk).arrayBuffer());
+  const files = inp.files ? [...inp.files] : [];
+  if (!files.length || !fileWS || fileWS.readyState !== 1) return;
+  // Sequential on purpose: the frames of two interleaved uploads would corrupt
+  // both, since the agent reads "put" then counts bytes.
+  for (const f of files) {
+    fileWS.send(JSON.stringify({ t: 'put', name: f.name, size: f.size, dir: fbCwd }));
+    flog(`uploading ${f.name} (${fmtBytes(f.size)}) → ${fbCwd || 'autormm-incoming'}…`);
+    const chunk = 256 * 1024;
+    for (let off = 0; off < f.size; off += chunk) {
+      // simple backpressure so we don't buffer the whole file in memory
+      while (fileWS.bufferedAmount > 8 * 1024 * 1024) await new Promise(r => setTimeout(r, 20));
+      fileWS.send(await f.slice(off, off + chunk).arrayBuffer());
+    }
   }
+  inp.value = '';
 });
 
 document.getElementById('fileGet').addEventListener('click', () => {

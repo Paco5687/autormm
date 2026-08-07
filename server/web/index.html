@@ -190,16 +190,24 @@
       <div class="modal-head">
         <div class="modal-title">
           <div class="name">File transfer — <span id="fileHost"></span></div>
-          <div class="platform muted">Upload lands in <code>autormm-incoming</code> in the host user's home folder.</div>
+          <div class="platform muted">Browse the host, download by clicking a file, upload into the open folder.</div>
         </div>
         <span class="pill" id="fileState">connecting…</span>
         <button id="fileClose" class="btn ghost" title="Close">✕</button>
       </div>
       <div id="fileBody">
-        <h4 class="sc-h">Send a file to the host</h4>
-        <div class="cmd-row"><input id="fileUpload" type="file"><button id="fileSend" class="btn" disabled>Upload</button></div>
-        <h4 class="sc-h">Download a file from the host</h4>
-        <div class="cmd-row"><input id="fileGetPath" class="inv-filter" style="max-width:none" placeholder="C:\path\to\file.txt or ~/file.txt"><button id="fileGet" class="btn" disabled>Download</button></div>
+        <div class="cmd-row fb-bar">
+          <button id="fbUp" class="btn ghost" title="Parent folder" disabled>↑</button>
+          <input id="fileGetPath" class="inv-filter" style="max-width:none" placeholder="path — Enter to open a folder, or paste a file path and press Download">
+          <button id="fbGo" class="btn ghost" disabled>Open</button>
+          <button id="fileGet" class="btn ghost" disabled title="Download the exact path typed above">Download</button>
+        </div>
+        <div id="fbList" class="fb-list"><div class="muted fb-empty">connecting…</div></div>
+        <div class="cmd-row">
+          <input id="fileUpload" type="file" multiple>
+          <button id="fileSend" class="btn" disabled title="Upload into the folder shown above">Upload here</button>
+          <span id="fbNote" class="muted"></span>
+        </div>
         <div id="fileLog" class="muted" style="margin-top:10px;white-space:pre-wrap"></div>
       </div>
     </div>

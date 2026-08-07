@@ -51,6 +51,16 @@ body {
 .btn.ghost { background: transparent; padding: 6px 9px; }
 /* Destructive actions look different from the rest, so nobody reaches for one
    by muscle memory while aiming for the button beside it. */
+.fb-list {
+  border: 1px solid var(--line); border-radius: 8px; margin: 8px 0;
+  max-height: 46vh; overflow-y: auto; font-family: var(--mono); font-size: 12.5px;
+}
+.fb-row { display: flex; gap: 10px; padding: 5px 10px; cursor: pointer; align-items: baseline; }
+.fb-row:hover { background: var(--panel-2); }
+.fb-row .fb-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fb-row .fb-size { color: var(--muted); flex-shrink: 0; }
+.fb-row.fb-dir .fb-name { color: var(--accent); }
+.fb-empty { padding: 14px; }
 .netsec { padding: 0 20px 20px; }
 .netsec-head { display: flex; align-items: center; gap: 10px; padding: 6px 0 10px; }
 .netgrid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); }
