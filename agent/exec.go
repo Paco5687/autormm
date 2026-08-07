@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/base64"
+	"github.com/Paco5687/autormm/internal/procattr"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -51,6 +52,7 @@ func (a *Agent) runExec(parent context.Context, out chan<- any, req protocol.Exe
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, name, args...)
+	procattr.Hide(cmd)
 	cmd.Stdout = &chunkWriter{out: out, done: parent.Done(), execID: req.ExecID, stream: "stdout"}
 	cmd.Stderr = &chunkWriter{out: out, done: parent.Done(), execID: req.ExecID, stream: "stderr"}
 

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Paco5687/autormm/internal/procattr"
 	"github.com/Paco5687/autormm/internal/protocol"
 )
 
@@ -31,9 +32,14 @@ func collectGPUs() []protocol.GPU {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, bin,
+	cmd := exec.CommandContext(ctx, bin,
 		"--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu",
-		"--format=csv,noheader,nounits").Output()
+		"--format=csv,noheader,nounits")
+	// Without this the tray agent, which has no console of its own, gives this
+	// one a real console window — appearing and vanishing on the user's desktop
+	// every sampling interval.
+	procattr.Hide(cmd)
+	out, err := cmd.Output()
 	if err != nil {
 		return nil
 	}

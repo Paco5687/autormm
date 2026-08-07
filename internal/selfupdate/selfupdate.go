@@ -10,6 +10,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"github.com/Paco5687/autormm/internal/procattr"
 	"io"
 	"net/http"
 	"net/url"
@@ -158,7 +159,9 @@ func validate(path, wantVersion string) error {
 	if err := checkMagic(path); err != nil {
 		return err
 	}
-	out, err := exec.Command(path, "-version").Output()
+	cmd := exec.Command(path, "-version")
+	procattr.Hide(cmd)
+	out, err := cmd.Output()
 	if err != nil {
 		return fmt.Errorf("binary won't run: %w", err)
 	}

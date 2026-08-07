@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Paco5687/autormm/internal/procattr"
 	"github.com/Paco5687/autormm/internal/protocol"
 )
 
@@ -446,6 +447,7 @@ func ffmpegArgs(w, h, fps int, crf, bitrate, bufsize string) []string {
 
 func startFFmpeg(bin string, w, h, fps int, crf, bitrate, bufsize string) (*ffmpegProc, error) {
 	cmd := exec.Command(bin, ffmpegArgs(w, h, fps, crf, bitrate, bufsize)...)
+	procattr.Hide(cmd) // else every H.264 session opens a console window
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err

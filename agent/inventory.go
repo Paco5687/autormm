@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"github.com/Paco5687/autormm/internal/procattr"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -34,7 +35,9 @@ func collectInventory(parent context.Context) (string, []protocol.Package, error
 	defer cancel()
 
 	run := func(name string, args ...string) (string, bool) {
-		out, err := exec.CommandContext(ctx, name, args...).Output()
+		cmd := exec.CommandContext(ctx, name, args...)
+		procattr.Hide(cmd)
+		out, err := cmd.Output()
 		if err != nil {
 			return "", false
 		}
