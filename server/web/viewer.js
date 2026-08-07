@@ -915,6 +915,36 @@ window.addEventListener('paste', e => {
   }
 });
 
+// Paste this device's clipboard on the host. The Ctrl/Cmd+V path already does
+// this, but on a phone there is no Ctrl to hold, so the whole flow needs a
+// button: read the local clipboard, sync it to the host, then synthesize the
+// paste chord there — including Control itself, which the keyboard path leaves
+// out because the operator is physically holding it.
+//
+// navigator.clipboard.readText needs a secure context and a user gesture; a
+// button tap is a gesture, and the viewer already requires https for H.264.
+// Some browsers show a paste prompt on the first tap — that is the browser
+// asking, not a bug.
+document.getElementById('pasteBtn').addEventListener('click', async () => {
+  let text = '';
+  try {
+    text = await navigator.clipboard.readText();
+  } catch (_) {
+    flashState('clipboard blocked — copy again, then retry');
+    return;
+  }
+  if (!text) { flashState('local clipboard is empty'); return; }
+  lastClip = text;
+  // Same ordered socket, processed sequentially by the agent: the clipboard is
+  // set before the keystroke lands, so no delay is needed between them.
+  send({ t: 'clip', clip: text });
+  send({ t: 'kdown', code: 'ControlLeft' });
+  send({ t: 'kdown', code: 'KeyV' });
+  send({ t: 'kup', code: 'KeyV' });
+  send({ t: 'kup', code: 'ControlLeft' });
+  flashState('pasted');
+});
+
 qualityEl.addEventListener('change', () => send({ t: 'params', quality: parseInt(qualityEl.value, 10) }));
 // Task Manager (Ctrl+Shift+Esc). Ctrl+Alt+Del can't be synthesized on Windows
 // (protected sequence) and its secure desktop isn't capturable anyway; Task

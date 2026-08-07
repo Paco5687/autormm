@@ -14,17 +14,19 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 </head>
 <body class="viewer-body">
-  <!-- Only the controls reached for mid-session live in the bar, and they are
-       anchored to the right of a flexible spacer so nothing on the left can
-       move them. Everything that reports a changing number went into the panel
-       below: live figures in a flex row shift their neighbours on every update,
-       which on a phone means the keyboard button walks away from your thumb. -->
+  <!-- Only the controls reached for mid-session live in the bar, anchored to
+       its edges: thumb controls (keyboard, paste) on the left, session controls
+       on the right, with the variable-width state and title between them so
+       nothing that changes width can move a button. Everything that reports a
+       changing number went into the ⓘ panel below — live figures in a flex row
+       shift their neighbours on every update. -->
   <div class="viewer-bar" id="bar">
+    <button class="btn" id="kbd" title="Show keyboard (for touch devices)">⌨</button>
+    <button class="btn" id="pasteBtn" title="Paste this device's clipboard on the host">📋</button>
     <span class="pill" id="state">connecting…</span>
     <strong id="title">remote</strong>
     <span class="grow"></span>
     <button class="btn" id="infoBtn" title="Session info and settings" aria-expanded="false">ⓘ</button>
-    <button class="btn" id="kbd" title="Show keyboard (for touch devices)">⌨</button>
     <button class="btn" id="fsBtn" title="Toggle fullscreen">⛶</button>
     <button class="btn ghost hidden" id="backBtn" title="Back to the dashboard">✕</button>
   </div>
