@@ -736,6 +736,56 @@ function primeKbd() {
   try { softkbd.setSelectionRange(KBD_GUARD.length, KBD_GUARD.length); } catch (_) {}
 }
 function keyTap(code) { send({ t: 'kdown', code }); send({ t: 'kup', code }); }
+
+// ---- sticky modifiers and the special-keys strip ----
+// A phone keyboard cannot hold Ctrl/Alt/Win and press another key, so those
+// modifiers latch on tap and apply to the *next* key or character, then clear —
+// the "sticky keys" model. Latch several before the key for a combo. This is
+// what lets Ctrl+C, Alt+F4, Win+E and the like happen at all from touch.
+const stickyMods = new Set();
+
+function clearMods() {
+  stickyMods.clear();
+  document.querySelectorAll('#kbdKeys .kk-mod').forEach(b => b.classList.remove('active'));
+}
+
+// emitKey presses code wrapped in whatever modifiers are latched, then releases
+// them — the latch is one-shot, matching how a combo is a single action.
+function emitKey(code) {
+  const mods = [...stickyMods];
+  for (const m of mods) send({ t: 'kdown', code: m });
+  send({ t: 'kdown', code });
+  send({ t: 'kup', code });
+  for (const m of mods.reverse()) send({ t: 'kup', code: m });
+  if (mods.length) clearMods();
+}
+
+// codeForChar maps a typed character to the physical key that produces it, so a
+// latched modifier can combine with it — Unicode text injection (the normal
+// typing path) carries no key code for Ctrl to attach to. Covers the letters
+// and digits every common chord uses; anything else is typed plainly.
+function codeForChar(ch) {
+  if (/[a-zA-Z]/.test(ch)) return 'Key' + ch.toUpperCase();
+  if (/[0-9]/.test(ch)) return 'Digit' + ch;
+  return null;
+}
+
+// Wire the strip once. Plain keys respect any latched modifiers; the modifier
+// buttons toggle their own latch.
+document.querySelectorAll('#kbdKeys .kk').forEach(btn => {
+  btn.addEventListener('click', (e) => {
+    e.preventDefault();
+    const mod = btn.dataset.mod;
+    if (mod) {
+      if (stickyMods.has(mod)) { stickyMods.delete(mod); btn.classList.remove('active'); }
+      else { stickyMods.add(mod); btn.classList.add('active'); }
+      softkbd.focus(); // keep the OS keyboard up so the next character can follow
+      return;
+    }
+    emitKey(btn.dataset.key);
+    softkbd.focus();
+  });
+});
 function toggleKbd(show) {
   if (show === undefined) show = kbdbar.classList.contains('hidden');
   kbdbar.classList.toggle('hidden', !show);
@@ -750,6 +800,7 @@ function toggleKbd(show) {
     softkbd.focus();
   } else {
     softkbd.blur();
+    clearMods();
     // Blur alone is not enough: a hidden-but-focusable input is still the page's
     // last editable element, so mobile browsers re-raise the on-screen keyboard
     // on the next tap anywhere on the screen. A disabled input cannot take focus
@@ -805,14 +856,20 @@ softkbd.addEventListener('input', () => {
   let common = 0;
   const max = Math.min(v.length, lastKbdVal.length);
   while (common < max && v[common] === lastKbdVal[common]) common++;
-  for (let i = 0; i < lastKbdVal.length - common; i++) keyTap('Backspace');
-  if (v.length > common) send({ t: 'type', text: v.slice(common) });
+  for (let i = 0; i < lastKbdVal.length - common; i++) emitKey('Backspace');
+  const added = v.slice(common);
+  let chorded = false;
+  for (const ch of added) {
+    const code = stickyMods.size ? codeForChar(ch) : null;
+    if (code) { emitKey(code); chorded = true; } // latched Ctrl + typed "c" -> Ctrl+C
+    else { if (stickyMods.size) clearMods(); send({ t: 'type', text: ch }); }
+  }
   lastKbdVal = v;
-  // If the user has backspaced into the guard, refill it — otherwise the next
-  // backspace would hit an empty box and be lost again. Only when the guard is
-  // gone, never mid-typing, so an IME composing text is never disturbed (typed
-  // text keeps the guard as its prefix).
-  if (!v.startsWith(KBD_GUARD)) primeKbd();
+  // A chorded character went to the host as a key combo, not as the literal it
+  // still is in the box — reset the box so that stale literal can't later emit a
+  // spurious Backspace. Otherwise, refill the guard only once it has been eaten,
+  // never mid-typing, so an IME composing text is left undisturbed.
+  if (chorded || !v.startsWith(KBD_GUARD)) primeKbd();
 });
 softkbd.addEventListener('keydown', e => {
   if (e.key === 'Enter' || e.code === 'Enter') { e.preventDefault(); sendEnter(); return; }

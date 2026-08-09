@@ -58,10 +58,33 @@
   <div id="notice" class="notice hidden"></div>
   <div id="rcursor" class="rcursor hidden"></div>
   <div id="kbdbar" class="kbdbar hidden">
-    <input id="softkbd" placeholder="Type here — text is sent to the remote" inputmode="text"
-      autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
-    <button id="kbdEnter" class="btn" title="Send Enter">⏎</button>
-    <button id="kbdHide" class="btn ghost" title="Hide keyboard">✕</button>
+    <!-- Keys a phone keyboard lacks, and modifier keys that only make sense on a
+         touch device as sticky one-shots: tap Ctrl (it latches), then type c to
+         send Ctrl+C. Latch several at once for Ctrl+Alt+Del-style chords. -->
+    <div class="kbd-keys" id="kbdKeys">
+      <button class="kk" data-key="Escape">Esc</button>
+      <button class="kk" data-key="Tab">Tab</button>
+      <button class="kk kk-mod" data-mod="ControlLeft">Ctrl</button>
+      <button class="kk kk-mod" data-mod="AltLeft">Alt</button>
+      <button class="kk kk-mod" data-mod="ShiftLeft">Shift</button>
+      <button class="kk kk-mod" data-mod="MetaLeft" title="Windows / Super key">⊞</button>
+      <button class="kk" data-key="Delete">Del</button>
+      <button class="kk" data-key="Home">Home</button>
+      <button class="kk" data-key="End">End</button>
+      <button class="kk" data-key="PageUp">PgUp</button>
+      <button class="kk" data-key="PageDown">PgDn</button>
+      <button class="kk" data-key="ArrowLeft">←</button>
+      <button class="kk" data-key="ArrowUp">↑</button>
+      <button class="kk" data-key="ArrowDown">↓</button>
+      <button class="kk" data-key="ArrowRight">→</button>
+      <button class="kk" data-key="F1">F1</button> <button class="kk" data-key="F2">F2</button> <button class="kk" data-key="F3">F3</button> <button class="kk" data-key="F4">F4</button> <button class="kk" data-key="F5">F5</button> <button class="kk" data-key="F6">F6</button> <button class="kk" data-key="F7">F7</button> <button class="kk" data-key="F8">F8</button> <button class="kk" data-key="F9">F9</button> <button class="kk" data-key="F10">F10</button> <button class="kk" data-key="F11">F11</button> <button class="kk" data-key="F12">F12</button>
+    </div>
+    <div class="kbd-input">
+      <input id="softkbd" placeholder="Type here — text is sent to the remote" inputmode="text"
+        autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+      <button id="kbdEnter" class="btn" title="Send Enter">⏎</button>
+      <button id="kbdHide" class="btn ghost" title="Hide keyboard">✕</button>
+    </div>
   </div>
   <script src="/static/viewer.js"></script>
 </body>
