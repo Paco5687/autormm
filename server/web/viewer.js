@@ -57,6 +57,7 @@ function connect() {
     // A modifier left down before the session dropped would still be held on the
     // host, so start every session from a known-clean keyboard state.
     heldKeys.clear();
+    if (altTabTimer !== null) { clearTimeout(altTabTimer); altTabTimer = null; }
     for (const code of MODIFIER_CODES) send({ t: 'kup', code });
   };
   ws.onclose = () => scheduleReconnect();
@@ -718,6 +719,22 @@ canvas.addEventListener('wheel', e => {
 const softkbd = document.getElementById('softkbd');
 const kbdbar = document.getElementById('kbdbar');
 let lastKbdVal = '';
+
+// The soft-keyboard box is kept seeded with a run of zero-width spaces.
+//
+// Backspace on this box is translated by watching what the browser deletes from
+// it (below). But the box starts empty while the host field already has text —
+// so a backspace against existing text, or against text pasted with 📋, found
+// nothing in the box to delete, fired no input event, and never reached the
+// host. New text worked because it was in the box; existing text did not. The
+// guard gives every backspace something local to consume so the event always
+// fires, and being zero-width it is invisible in the input bar.
+const KBD_GUARD = '\u200b\u200b\u200b\u200b';
+function primeKbd() {
+  softkbd.value = KBD_GUARD;
+  lastKbdVal = KBD_GUARD;
+  try { softkbd.setSelectionRange(KBD_GUARD.length, KBD_GUARD.length); } catch (_) {}
+}
 function keyTap(code) { send({ t: 'kdown', code }); send({ t: 'kup', code }); }
 function toggleKbd(show) {
   if (show === undefined) show = kbdbar.classList.contains('hidden');
@@ -729,8 +746,7 @@ function toggleKbd(show) {
   if (kbdBtn) kbdBtn.classList.toggle('active', show);
   if (show) {
     softkbd.disabled = false; // must be enabled before it can take focus
-    softkbd.value = '';
-    lastKbdVal = '';
+    primeKbd();
     softkbd.focus();
   } else {
     softkbd.blur();
@@ -776,7 +792,7 @@ if (window.visualViewport) {
 }
 document.getElementById('kbd').addEventListener('click', () => toggleKbd());
 document.getElementById('kbdHide').addEventListener('click', () => toggleKbd(false));
-function sendEnter() { keyTap('Enter'); softkbd.value = ''; lastKbdVal = ''; softkbd.focus(); }
+function sendEnter() { keyTap('Enter'); primeKbd(); softkbd.focus(); }
 document.getElementById('kbdEnter').addEventListener('click', sendEnter);
 
 // Diff the box value on every change. This is the only reliable way to capture
@@ -792,6 +808,11 @@ softkbd.addEventListener('input', () => {
   for (let i = 0; i < lastKbdVal.length - common; i++) keyTap('Backspace');
   if (v.length > common) send({ t: 'type', text: v.slice(common) });
   lastKbdVal = v;
+  // If the user has backspaced into the guard, refill it — otherwise the next
+  // backspace would hit an empty box and be lost again. Only when the guard is
+  // gone, never mid-typing, so an IME composing text is never disturbed (typed
+  // text keeps the guard as its prefix).
+  if (!v.startsWith(KBD_GUARD)) primeKbd();
 });
 softkbd.addEventListener('keydown', e => {
   if (e.key === 'Enter' || e.code === 'Enter') { e.preventDefault(); sendEnter(); return; }
@@ -949,6 +970,29 @@ qualityEl.addEventListener('change', () => send({ t: 'params', quality: parseInt
 // Task Manager (Ctrl+Shift+Esc). Ctrl+Alt+Del can't be synthesized on Windows
 // (protected sequence) and its secure desktop isn't capturable anyway; Task
 // Manager is what operators actually need and it works via normal injection.
+// Alt+Tab, which cannot be caught from a physical keyboard: the OS switches the
+// *local* machine's windows before the page ever sees the combo. So it is a
+// button — and one that mirrors how alt-tab actually feels. The first tap holds
+// Alt down and presses Tab (the host shows its switcher); each further tap
+// within the window presses Tab again to cycle; a pause releases Alt, which
+// commits the highlighted choice. Tap once and wait = switch to the previous
+// window; tap-tap-tap = cycle several, then pause.
+let altTabTimer = null;
+document.getElementById('altTab').addEventListener('click', (e) => {
+  if (altTabTimer === null) {
+    send({ t: 'kdown', code: 'AltLeft' }); // begin: hold Alt across taps
+  } else {
+    clearTimeout(altTabTimer);
+  }
+  send({ t: 'kdown', code: 'Tab' });
+  send({ t: 'kup', code: 'Tab' });
+  altTabTimer = setTimeout(() => {
+    send({ t: 'kup', code: 'AltLeft' }); // commit the selection
+    altTabTimer = null;
+  }, 1200);
+  e.currentTarget.blur();
+});
+
 document.getElementById('taskMgr').addEventListener('click', (e) => {
   for (const c of ['ControlLeft', 'ShiftLeft', 'Escape']) send({ t: 'kdown', code: c });
   for (const c of ['Escape', 'ShiftLeft', 'ControlLeft']) send({ t: 'kup', code: c });
