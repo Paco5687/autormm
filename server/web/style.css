@@ -229,7 +229,26 @@ body {
    on the left can shift them. The title yields first when space runs short. */
 .viewer-bar > button { flex-shrink: 0; }
 .viewer-bar #title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.viewer-bar #state { flex-shrink: 0; max-width: 45vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The state pill may shrink too. The bar clips its overflow, so anything that
+   refuses to give way pushes a button off the edge where it cannot be reached
+   at all — and the buttons are the reason the bar exists. */
+.viewer-bar #state { min-width: 0; max-width: 45vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* On a phone there is not room for the hostname as well as every control. The
+   hostname is the easier loss: you know which host you opened, and it is still
+   in the tab title, whereas the state pill also carries transient feedback
+   ("pasted", "already 1920x1080") that has nowhere else to appear. */
+/* Two labels per button, one full and one abbreviated. The bar clips its
+   overflow, so on a narrow screen the choice is short labels or buttons pushed
+   off the edge where they cannot be reached — and these are the controls the
+   bar exists for. Measured at 390px, the full set overflows by ~28px; the short
+   labels and tighter padding bring it back with room for the state pill. */
+.lbl-narrow { display: none; }
+@media (max-width: 640px) {
+  .viewer-bar #title { display: none; }
+  .lbl-wide { display: none; }
+  .lbl-narrow { display: inline; }
+  .viewer-bar .btn { padding: 6px 8px; }
+}
 
 /* Session info and settings. Everything here either reports a live number or is
    set once and forgotten, so it is out of the way until asked for. Absolutely
