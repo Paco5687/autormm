@@ -315,6 +315,9 @@ type Metrics struct {
 	// serviced Windows update or a Debian kernel upgrade that has not been
 	// restarted into yet.
 	RebootPending bool `json:"reboot_pending,omitempty"`
+	// RebootReason names what is asking for the restart, so a host that keeps
+	// claiming one can be diagnosed without opening regedit.
+	RebootReason string `json:"reboot_reason,omitempty"`
 	// CPUTempC is 0 on hosts with no readable sensor, which includes most VMs
 	// and much of Windows.
 	CPUTempC float64 `json:"cpu_temp_c,omitempty"`

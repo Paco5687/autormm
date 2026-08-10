@@ -152,7 +152,7 @@ func (c *Collector) Collect() *protocol.Metrics {
 
 	m.GPUs = collectGPUs()
 	m.Smart = collectSMART()
-	m.RebootPending = rebootPending()
+	m.RebootPending, m.RebootReason = rebootPending()
 	m.CPUTempC = collectCPUTemp()
 
 	if l, err := load.Avg(); err == nil && l != nil {

@@ -297,7 +297,13 @@ func computeAlerts(h *host, offlineAfter time.Duration) []string {
 		}
 	}
 	if m.RebootPending {
-		a = append(a, "reboot pending")
+		// The reason rides along in the chip text so a host that keeps claiming
+		// a restart says what is asking, rather than needing regedit to find out.
+		if m.RebootReason != "" {
+			a = append(a, "reboot pending ("+m.RebootReason+")")
+		} else {
+			a = append(a, "reboot pending")
+		}
 	}
 	for _, d := range m.Smart {
 		if !d.Healthy() {

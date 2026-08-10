@@ -1056,7 +1056,10 @@ function renderFacts(h) {
     if (extra.length) v += ` (${extra.join(', ')})`;
     items.push([d.model || d.device, v]);
   }
-  if (h && h.metrics && h.metrics.reboot_pending) items.push(['Restart', 'pending — the OS has updates staged']);
+  if (h && h.metrics && h.metrics.reboot_pending) {
+    const why = h.metrics.reboot_reason;
+    items.push(['Restart', why ? `pending — ${why}` : 'pending']);
+  }
   if (h && h.elevated) items.push(['Admin helper', 'installed ✓']);
   if (h && h.console) items.push(['Lock screen', 'capturable ✓']);
   mFacts.innerHTML = items
