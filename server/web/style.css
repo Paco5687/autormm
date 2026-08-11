@@ -69,7 +69,8 @@ body {
   background: var(--panel); border: 1px solid var(--line); border-radius: 10px; font-size: 13px;
 }
 .netcard .status { flex-shrink: 0; }
-.netcard .nc-body { min-width: 0; flex: 1; }
+.netcard .nc-body { min-width: 0; flex: 1; color: inherit; text-decoration: none; }
+a.nc-body:hover .nc-name { text-decoration: underline; }
 .netcard .nc-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .netcard .nc-sub { font-size: 11px; color: var(--muted); font-family: var(--mono); }
 /* A device with a control panel behind it reads as openable. */

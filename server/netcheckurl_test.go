@@ -190,3 +190,41 @@ func TestSchemelessFallsBackToHTTP(t *testing.T) {
 		t.Errorf("answered URL = %q, want %q", used, srv.URL)
 	}
 }
+
+// The address box asks for a hostname, and a URL is the obvious thing to paste
+// instead. Left alone it becomes an undialable target and the device reports
+// unreachable while looking entirely correct on the card.
+func TestNormalizeAddressAcceptsWhatPeoplePaste(t *testing.T) {
+	for _, tc := range []struct {
+		in       string
+		inPort   int
+		wantAddr string
+		wantPort int
+	}{
+		{"10.0.0.1", 0, "10.0.0.1", 0},
+		{"https://10.0.0.1", 0, "10.0.0.1", 0},
+		{"https://10.0.0.1/admin", 0, "10.0.0.1", 0},
+		{"http://nas.local:5000/", 0, "nas.local", 5000},
+		{"10.0.0.1:8006", 0, "10.0.0.1", 8006},
+		{"10.0.0.1:8006", 443, "10.0.0.1", 443}, // an explicit port wins
+		{"switch.lan/", 0, "switch.lan", 0},
+		{"  10.0.0.1  ", 0, "10.0.0.1", 0},
+	} {
+		addr, port := normalizeAddress(tc.in, tc.inPort)
+		if addr != tc.wantAddr || port != tc.wantPort {
+			t.Errorf("normalizeAddress(%q, %d) = (%q, %d), want (%q, %d)",
+				tc.in, tc.inPort, addr, port, tc.wantAddr, tc.wantPort)
+		}
+	}
+}
+
+// A bare IPv6 literal has many colons and no brackets; splitting it as
+// host:port would silently mangle the address.
+func TestNormalizeAddressLeavesBareIPv6Alone(t *testing.T) {
+	if addr, port := normalizeAddress("2001:db8::1", 0); addr != "2001:db8::1" || port != 0 {
+		t.Errorf("bare IPv6 mangled: %q port %d", addr, port)
+	}
+	if addr, port := normalizeAddress("[2001:db8::1]:8006", 0); addr != "2001:db8::1" || port != 8006 {
+		t.Errorf("bracketed IPv6 not split: %q port %d", addr, port)
+	}
+}

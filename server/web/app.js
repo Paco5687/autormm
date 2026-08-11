@@ -1206,33 +1206,66 @@ function renderMonitorSection(which, list) {
   for (const c of list) {
     const el = document.createElement('div');
     el.className = 'netcard';
-    el.innerHTML =
-      `<span class="status ${c.checked ? (c.up ? 'online' : 'offline') : ''}"></span>` +
-      `<div class="nc-body"><div class="nc-name"></div><div class="nc-sub"></div></div>` +
-      `<button class="nc-del" title="Stop monitoring">✕</button>`;
-    el.querySelector('.nc-name').textContent = c.name || c.address || c.url;
-    el.querySelector('.nc-sub').textContent = monitorSubtitle(c);
 
-    // The card opens the thing it monitors. Not everything has a web interface
-    // — an SSH daemon or a printer's raw port does not — and those stay inert
-    // rather than opening a browser error.
+    const dot = document.createElement('span');
+    dot.className = 'status ' + (c.checked ? (c.up ? 'online' : 'offline') : '');
+
+    // A real link, not window.open. Passing a features string to window.open
+    // makes browsers treat it as a popup rather than a tab, and popup blockers
+    // stop it — which presents as a blank window opening and nothing loading.
+    // An anchor is what the browser expects and is never blocked.
+    const body = document.createElement(c.web ? 'a' : 'div');
+    body.className = 'nc-body';
     if (c.web) {
-      el.classList.add('nc-link');
-      el.title = 'Open ' + c.web;
-      el.onclick = () => window.open(c.web, '_blank', 'noopener');
+      body.href = c.web;
+      body.target = '_blank';
+      body.rel = 'noopener noreferrer';
+      body.title = 'Open ' + c.web;
     } else {
-      el.title = 'No web interface on this port — add a URL to link one';
+      body.title = 'No web interface on this port — add a URL to link one';
     }
-    el.querySelector('.nc-del').onclick = async (e) => {
-      e.stopPropagation(); // removing must not also open it
+    const name = document.createElement('div');
+    name.className = 'nc-name';
+    name.textContent = c.name || c.address || c.url;
+    const sub = document.createElement('div');
+    sub.className = 'nc-sub';
+    sub.textContent = monitorSubtitle(c);
+    // The reason a check failed is the whole diagnosis and was being collected
+    // and then thrown away. It is long, so it goes in the tooltip.
+    if (!c.up && c.error) sub.title = c.error;
+    body.append(name, sub);
+
+    const del = document.createElement('button');
+    del.className = 'nc-del';
+    del.title = 'Stop monitoring';
+    del.textContent = '✕';
+    del.onclick = async (e) => {
+      e.preventDefault();
+      e.stopPropagation(); // removing must not also follow the link
       if (!confirm(`Stop monitoring ${c.name || c.address || c.url}?`)) return;
       try {
         await authJSON('/api/netchecks?id=' + encodeURIComponent(c.id), 'DELETE');
         loadNetChecks();
       } catch (err) { alert('Could not remove: ' + err.message); }
     };
+
+    el.append(dot, body, del);
     grid.appendChild(el);
   }
+}
+
+// shortProbeError turns a Go dial error into something readable at a glance.
+// The full text stays in the tooltip.
+function shortProbeError(err) {
+  if (!err) return '';
+  const e = err.toLowerCase();
+  if (e.includes('no such host')) return 'name not found';
+  if (e.includes('timeout') || e.includes('deadline')) return 'timed out';
+  if (e.includes('refused')) return 'refused';
+  if (e.includes('no route')) return 'no route';
+  if (e.includes('certificate')) return 'TLS problem';
+  if (e.includes('unsupported protocol') || e.includes('invalid')) return 'bad address';
+  return 'unreachable';
 }
 
 // What a card says under its name. An app that answers with something other
@@ -1243,7 +1276,12 @@ function monitorSubtitle(c) {
   const where = c.kind === 'app'
     ? (c.web || '').replace(/^https?:\/\//, '')
     : `${c.address}${c.port ? ':' + c.port : ''}`;
-  if (!c.up) return `${where} · unreachable`;
+  if (!c.up) {
+    // Say what went wrong, briefly. "unreachable" alone gives nothing to act
+    // on, and the full error is in the tooltip.
+    const why = shortProbeError(c.error);
+    return `${where} · ${why || 'unreachable'}`;
+  }
   const code = (c.kind === 'app' && c.code && (c.code < 200 || c.code >= 400)) ? ` · HTTP ${c.code}` : '';
   return `${where} · ${Math.round(c.latency_ms)}ms${code}`;
 }

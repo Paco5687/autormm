@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -387,6 +388,43 @@ func (s *Server) netFirstSeen(id string) bool {
 	return first
 }
 
+// normalizeAddress accepts what people actually paste into an address box and
+// returns something dialable.
+//
+// The field asks for a hostname or IP, and a URL is the obvious thing to paste
+// instead — at which point the dial target becomes "https://10.0.0.1:443",
+// which cannot resolve and reports the device as unreachable while looking
+// perfectly correct on the card. A port written into the address is likewise
+// lifted out rather than left to corrupt the address.
+func normalizeAddress(raw string, port int) (string, int) {
+	a := strings.TrimSpace(raw)
+	if a == "" {
+		return "", port
+	}
+	if i := strings.Index(a, "://"); i >= 0 {
+		if u, err := url.Parse(a); err == nil && u.Host != "" {
+			a = u.Host
+		} else {
+			a = a[i+3:]
+		}
+	}
+	a = strings.TrimSuffix(a, "/")
+	if i := strings.IndexAny(a, "/?#"); i >= 0 {
+		a = a[:i] // a path is not part of an address
+	}
+	// A bracketed IPv6 literal, or host:port. Bare IPv6 has many colons and no
+	// brackets, and must be left exactly as it is.
+	if h, p, err := net.SplitHostPort(a); err == nil {
+		a = h
+		if port == 0 {
+			if n, err := strconv.Atoi(p); err == nil {
+				port = n
+			}
+		}
+	}
+	return a, port
+}
+
 // handleNetChecks lists, creates and deletes agentless checks.
 func (s *Server) handleNetChecks(w http.ResponseWriter, r *http.Request) {
 	if !s.checkAdmin(r) {
@@ -414,6 +452,7 @@ func (s *Server) handleNetChecks(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "a URL is required for an app", http.StatusBadRequest)
 			return
 		}
+		c.Address, c.Port = normalizeAddress(c.Address, c.Port)
 		if !c.IsApp() && c.Address == "" {
 			http.Error(w, "an address is required for a device", http.StatusBadRequest)
 			return
