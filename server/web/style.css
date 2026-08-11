@@ -243,12 +243,41 @@ body {
    bar exists for. Measured at 390px, the full set overflows by ~28px; the short
    labels and tighter padding bring it back with room for the state pill. */
 .lbl-narrow { display: none; }
-@media (max-width: 640px) {
-  .viewer-bar #title { display: none; }
+
+/* The quick-action group is transparent to layout by default, so its buttons
+   sit in the bar exactly as if they were written there — no nesting, no extra
+   box. Only when it becomes a tray does it turn into a real container. */
+.qa { display: contents; }
+#qaToggle { display: none; }
+
+/* Between these two widths everything is still inline, just with abbreviated
+   labels and tighter spacing. Measured: the full set needs ~730px with long
+   labels and ~530px with short ones. */
+@media (max-width: 899px) {
   .lbl-wide { display: none; }
   .lbl-narrow { display: inline; }
   .viewer-bar { gap: 6px; }
   .viewer-bar .btn { padding: 6px 7px; }
+}
+
+/* Phone portrait. Nine buttons plus a status pill do not fit ~390px, and the
+   bar clips rather than wraps, so the overflow would be pushed off the edge
+   unreachable. The quick actions collapse into a tray under ⋯ instead, leaving
+   the bar with the keyboard, the tray toggle and the session controls. */
+@media (max-width: 639px) {
+  .viewer-bar #title { display: none; }
+  #qaToggle { display: inline-flex; }
+  .qa {
+    display: none;
+    position: fixed; top: 34px; left: 6px; z-index: 20;
+    gap: 6px; padding: 8px; max-width: calc(100vw - 12px);
+    flex-wrap: wrap;
+    background: rgba(18,20,26,.97); border: 1px solid var(--line);
+    border-radius: 0 0 10px 10px; box-shadow: 0 10px 30px rgba(0,0,0,.45);
+  }
+  .qa.open { display: flex; }
+  /* The tray follows the bar when it slides away. */
+  .viewer-bar.hide ~ .qa { display: none; }
 }
 
 /* Session info and settings. Everything here either reports a live number or is

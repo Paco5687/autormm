@@ -15,17 +15,25 @@
 </head>
 <body class="viewer-body">
   <!-- Only the controls reached for mid-session live in the bar, anchored to
-       its edges: thumb controls (keyboard, paste) on the left, session controls
-       on the right, with the variable-width state and title between them so
-       nothing that changes width can move a button. Everything that reports a
-       changing number went into the ⓘ panel below — live figures in a flex row
-       shift their neighbours on every update. -->
+       its edges: quick actions on the left, session controls on the right, with
+       the variable-width state and title between them so nothing that changes
+       width can move a button. Everything that reports a changing number went
+       into the ⓘ panel below — live figures in a flex row shift their
+       neighbours on every update. -->
   <div class="viewer-bar" id="bar">
     <button class="btn" id="kbd" title="Show keyboard (for touch devices)">⌨</button>
-    <button class="btn" id="copyBtn" title="Copy on the host (Ctrl+C) — the result syncs to this device">⧉</button>
-    <button class="btn" id="pasteBtn" title="Paste this device's clipboard on the host">📋</button>
-    <button class="btn" id="menuBtn" title="Context menu for the current selection (the Menu key)">☰</button>
-    <button class="btn" id="altTab" title="Switch window (Alt+Tab). Tap again quickly to cycle further; pause to commit."><span class="lbl-wide">Alt+Tab</span><span class="lbl-narrow">Alt⇥</span></button>
+    <button class="btn" id="qaToggle" title="Quick actions" aria-expanded="false">⋯</button>
+    <!-- Quick actions. Laid out directly in the bar wherever there is room —
+         every tablet, and a phone in landscape — and collapsed behind ⋯ into a
+         tray on a narrow screen, where all of them plus the session controls
+         cannot fit without pushing something off the clipped edge. -->
+    <div class="qa" id="quickActions">
+      <button class="btn" id="copyBtn" title="Copy on the host (Ctrl+C) — the result syncs to this device">⧉</button>
+      <button class="btn" id="pasteBtn" title="Paste this device's clipboard on the host">📋</button>
+      <button class="btn" id="menuBtn" title="Context menu for the current selection (the Menu key)">☰</button>
+      <button class="btn" id="altTab" title="Switch window (Alt+Tab). Tap again quickly to cycle further; pause to commit."><span class="lbl-wide">Alt+Tab</span><span class="lbl-narrow">Alt⇥</span></button>
+      <button class="btn" id="taskMgr" title="Open Task Manager (Ctrl+Shift+Esc)"><span class="lbl-wide">Task Mgr</span><span class="lbl-narrow">Task</span></button>
+    </div>
     <span class="pill" id="state">connecting…</span>
     <strong id="title">remote</strong>
     <span class="grow"></span>
@@ -51,7 +59,6 @@
       <label class="muted grow">quality
         <input id="quality" type="range" min="20" max="90" value="90">
       </label>
-      <button class="btn" id="taskMgr" title="Open Task Manager (Ctrl+Shift+Esc)">Task Mgr</button>
     </div>
   </div>
   <div class="viewer-wrap">

@@ -493,13 +493,40 @@ barEl.addEventListener('click', (e) => {
 const infoBtn = document.getElementById('infoBtn');
 const infoPanel = document.getElementById('infoPanel');
 
+// The quick-action tray. It exists only on a narrow screen — everywhere wider
+// the same buttons are laid out in the bar itself and the toggle is not shown,
+// so this only ever runs on a phone.
+const qaToggle = document.getElementById('qaToggle');
+const quickActions = document.getElementById('quickActions');
+
+function toggleQuickActions(show) {
+  if (show === undefined) show = !quickActions.classList.contains('open');
+  quickActions.classList.toggle('open', show);
+  qaToggle.classList.toggle('active', show);
+  qaToggle.setAttribute('aria-expanded', show ? 'true' : 'false');
+}
+qaToggle.addEventListener('click', () => {
+  if (!infoPanel.classList.contains('hidden')) toggleInfo(false); // one at a time
+  toggleQuickActions();
+});
+// The tray stays open after a tap on purpose: Alt+Tab needs several taps in
+// succession to cycle windows, and closing after the first would make that
+// gesture impossible from a phone.
+quickActions.addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  if (b) b.blur();
+});
+
 function toggleInfo(show) {
   if (show === undefined) show = infoPanel.classList.contains('hidden');
   infoPanel.classList.toggle('hidden', !show);
   infoBtn.classList.toggle('active', show);
   infoBtn.setAttribute('aria-expanded', show ? 'true' : 'false');
 }
-infoBtn.addEventListener('click', () => toggleInfo());
+infoBtn.addEventListener('click', () => {
+  if (quickActions.classList.contains('open')) toggleQuickActions(false);
+  toggleInfo();
+});
 infoPanel.addEventListener('click', (e) => {
   // Same reason as the bar: a focused button is re-fired by Space and Enter
   // typed to the host.
@@ -513,8 +540,11 @@ infoPanel.addEventListener('click', (e) => {
 // own pointer handlers, and swallowed: the tap that dismisses the panel should
 // not also click whatever is underneath it on the host.
 vwrap.addEventListener('pointerdown', (e) => {
-  if (infoPanel.classList.contains('hidden')) return;
-  toggleInfo(false);
+  const openPanel = !infoPanel.classList.contains('hidden');
+  const openTray = quickActions.classList.contains('open');
+  if (!openPanel && !openTray) return;
+  if (openPanel) toggleInfo(false);
+  if (openTray) toggleQuickActions(false);
   e.stopPropagation();
   e.preventDefault();
 }, true);
