@@ -1026,15 +1026,56 @@ document.addEventListener('fullscreenchange', layoutCanvas);
 
 // ---- clipboard sync ----
 let lastClip = null;
+let pendingHostClip = null; // resolver for a Copy that is waiting on the host
 
-// Host -> viewer: write the host's clipboard locally (needs a secure context:
-// https or localhost; on plain http the browser blocks clipboard writes).
+// Host -> viewer: the host's clipboard changed.
+//
+// The obvious implementation — call navigator.clipboard.writeText here — cannot
+// work, and quietly did nothing for a long time. writeText requires transient
+// user activation, and this runs on a websocket message with no gesture in
+// flight, so browsers reject it; the rejection was swallowed, so nothing ever
+// appeared on the phone and there was no error anywhere to say why. Copying on
+// the host and pasting on the device simply never worked.
+//
+// The write now happens inside the operator's own tap instead (copyFromHost).
+// This function keeps an opportunistic attempt, which does succeed in a focused
+// desktop tab, but nothing depends on it.
 function setLocalClipboard(text) {
-  if (text == null || text === lastClip) return;
+  if (text == null) return;
+  const changed = text !== lastClip;
   lastClip = text;
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(text).catch(() => {});
+  if (pendingHostClip) {           // someone tapped Copy and is waiting for this
+    const resolve = pendingHostClip;
+    pendingHostClip = null;
+    resolve(text);
   }
+  if (!changed) return;
+  if (!navigator.clipboard || !navigator.clipboard.writeText) return;
+  navigator.clipboard.writeText(text).catch(() => {
+    // Refused for want of a gesture, which is the normal case on a phone. The
+    // host has copied something and this device cannot be given it unasked — so
+    // arm the Copy button and let one tap collect it. This is what makes
+    // copying by any means on the host (Ctrl+C, the context menu, an app's own
+    // button) reachable from the device at all.
+    armCopy(text);
+  });
+}
+
+// awaitHostClip resolves with the host's clipboard once it arrives.
+//
+// Falls back to the last known value on timeout rather than failing: the agent
+// only reports the clipboard when it *changes*, so copying the same text twice
+// produces no message at all, and treating that as an error would be wrong.
+function awaitHostClip(ms) {
+  return new Promise(resolve => {
+    pendingHostClip = resolve;
+    setTimeout(() => {
+      if (pendingHostClip === resolve) {
+        pendingHostClip = null;
+        resolve(lastClip);
+      }
+    }, ms);
+  });
 }
 
 // Viewer -> host: on paste (Ctrl/Cmd+V), set the host clipboard, then paste.
@@ -1060,22 +1101,74 @@ window.addEventListener('paste', e => {
 // button tap is a gesture, and the viewer already requires https for H.264.
 // Some browsers show a paste prompt on the first tap — that is the browser
 // asking, not a bug.
-// Copy on the host. The host's clipboard is already polled and pushed back to
-// this device, so a copy here lands on the phone a moment later without any
-// further action — see the clipboard sync below.
+// Copy on the host and put the result on this device.
 //
-// Worth knowing: writing the phone's clipboard happens when that sync arrives,
-// which is a beat after the tap and therefore outside the browser's
-// user-gesture window. Some browsers refuse a clipboard write there. The
-// keystroke always reaches the host regardless, so the copy itself is reliable;
-// only the automatic hand-back is at the browser's discretion.
-document.getElementById('copyBtn').addEventListener('click', (e) => {
+// The hard part is not the copy, it is the hand-back. Writing another device's
+// clipboard needs transient user activation, and the host's text does not
+// arrive until a round trip later, by which time the tap that authorised it is
+// long over. So the write is started *inside* the tap and handed a promise for
+// the text: ClipboardItem accepts one, and the browser keeps the activation
+// alive until it settles. This is exactly what that API is for.
+//
+// Where the promise form is unsupported, the text is held and the button arms
+// itself — a second tap is a fresh gesture and places it. Two taps, but honest.
+const copyBtn = document.getElementById('copyBtn');
+let armedClip = null; // text waiting for a second tap to place it
+
+function sendHostCopy() {
   send({ t: 'kdown', code: 'ControlLeft' });
   send({ t: 'kdown', code: 'KeyC' });
   send({ t: 'kup', code: 'KeyC' });
   send({ t: 'kup', code: 'ControlLeft' });
-  flashState('copied on host');
+}
+
+function armCopy(text) {
+  armedClip = text;
+  copyBtn.classList.add('active');
+  flashState('tap ⧉ again to place it here');
+  setTimeout(() => {
+    if (armedClip === text) { armedClip = null; copyBtn.classList.remove('active'); }
+  }, 8000);
+}
+
+copyBtn.addEventListener('click', async (e) => {
   e.currentTarget.blur();
+
+  // Second tap of the fallback path: a fresh gesture, so a plain write works.
+  if (armedClip !== null) {
+    const text = armedClip;
+    armedClip = null;
+    copyBtn.classList.remove('active');
+    try {
+      await navigator.clipboard.writeText(text);
+      flashState('copied to this device');
+    } catch (_) {
+      flashState('this browser blocked the clipboard');
+    }
+    return;
+  }
+
+  const arrival = awaitHostClip(2500);
+  sendHostCopy();
+
+  if (window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
+    try {
+      await navigator.clipboard.write([new ClipboardItem({
+        'text/plain': arrival.then(t => new Blob([t == null ? '' : t], { type: 'text/plain' })),
+      })]);
+      const got = await arrival;
+      // Distinguish the two failures that look identical from the outside: the
+      // host never reported a copy, versus the copy never reached this device.
+      flashState(got == null ? 'host reported no copy' : 'copied to this device');
+      return;
+    } catch (_) {
+      // Promise-backed writes unsupported or refused; fall through.
+    }
+  }
+
+  const text = await arrival;
+  if (text == null) { flashState('host reported no copy'); return; }
+  armCopy(text);
 });
 
 // Context menu for whatever is selected on the host, without moving the
