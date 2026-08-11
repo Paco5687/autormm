@@ -32,11 +32,47 @@ type NetCheck struct {
 	Port     int    `json:"port"`          // 0 => try a small set of common ports
 	Interval int    `json:"interval_secs"` // 0 => default
 	Tags     string `json:"tags,omitempty"`
+	// URL of the device's own management interface. Blank means "work it out
+	// from the address and port", which is right for most things and wrong for
+	// the ones that answer on one port and serve their UI on another.
+	URL string `json:"url,omitempty"`
+}
+
+// WebURL is where a device's own control panel lives, so a card can open it.
+//
+// An explicit URL always wins. Otherwise it is inferred from the port being
+// probed, which is usually the management interface — that is why those ports
+// were chosen as the defaults to probe in the first place.
+//
+// Some ports have no web interface at all, and guessing one would send the
+// operator to a browser error: SSH, raw printing and SMB return nothing, and
+// their cards simply are not clickable.
+func (c NetCheck) WebURL() string {
+	if c.URL != "" {
+		return c.URL
+	}
+	switch c.Port {
+	case 22, 445, 9100, 139, 3389:
+		return "" // not web interfaces; a link would only mislead
+	case 0, 80:
+		// No port configured means the probe tries several; http is the right
+		// first guess for a device whose management port is unknown.
+		return "http://" + c.Address
+	case 443:
+		return "https://" + c.Address
+	case 8006, 8443, 9443, 10000:
+		return "https://" + net.JoinHostPort(c.Address, strconv.Itoa(c.Port))
+	default:
+		return "http://" + net.JoinHostPort(c.Address, strconv.Itoa(c.Port))
+	}
 }
 
 // NetStatus is the last observed state of a check.
 type NetStatus struct {
 	NetCheck
+	// WebURL is resolved server-side so the dashboard does not have to repeat
+	// the port-to-scheme reasoning, and so both agree on what a card links to.
+	Web       string    `json:"web,omitempty"`
 	Up        bool      `json:"up"`
 	LatencyMs float64   `json:"latency_ms,omitempty"`
 	Since     time.Time `json:"since"` // when the current state began
@@ -101,10 +137,12 @@ func (n *netChecks) list() []NetStatus {
 	out := make([]NetStatus, 0, len(n.checks))
 	for id, c := range n.checks {
 		if st := n.state[id]; st != nil {
-			out = append(out, *st)
+			s := *st
+			s.Web = s.NetCheck.WebURL()
+			out = append(out, s)
 			continue
 		}
-		out = append(out, NetStatus{NetCheck: *c}) // not yet probed
+		out = append(out, NetStatus{NetCheck: *c, Web: c.WebURL()}) // not yet probed
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
@@ -193,7 +231,7 @@ func (n *netChecks) runChecks(ctx context.Context, now time.Time) []NetStatus {
 	defer n.mu.Unlock()
 	for r := range results {
 		prev := n.state[r.c.ID]
-		st := &NetStatus{NetCheck: r.c, Up: r.up, LatencyMs: r.ms, Checked: now}
+		st := &NetStatus{NetCheck: r.c, Web: r.c.WebURL(), Up: r.up, LatencyMs: r.ms, Checked: now}
 		if r.e != nil && !r.up {
 			st.Error = r.e.Error()
 		}

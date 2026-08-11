@@ -72,6 +72,11 @@ body {
 .netcard .nc-body { min-width: 0; flex: 1; }
 .netcard .nc-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .netcard .nc-sub { font-size: 11px; color: var(--muted); font-family: var(--mono); }
+/* A device with a control panel behind it reads as openable. */
+.netcard.nc-link { cursor: pointer; }
+@media (hover: hover) {
+  .netcard.nc-link:hover { border-color: var(--accent); }
+}
 .netcard .nc-del { opacity: .45; cursor: pointer; background: none; border: 0; color: var(--text); font-size: 14px; }
 .netcard .nc-del:hover { opacity: 1; color: var(--bad); }
 .modal-card.sheet-sm { width: min(460px, 100%); }

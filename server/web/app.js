@@ -1205,7 +1205,18 @@ async function loadNetChecks() {
       `<button class="nc-del" title="Stop monitoring">✕</button>`;
     el.querySelector('.nc-name').textContent = c.name || c.address;
     el.querySelector('.nc-sub').textContent = c.checked ? sub : 'not checked yet';
-    el.querySelector('.nc-del').onclick = async () => {
+    // The card opens the device's own control panel. Not every device has one —
+    // an SSH daemon or a printer's raw port does not — and those stay inert
+    // rather than opening a browser error.
+    if (c.web) {
+      el.classList.add('nc-link');
+      el.title = 'Open ' + c.web;
+      el.onclick = () => window.open(c.web, '_blank', 'noopener');
+    } else {
+      el.title = 'No web interface on this port — add a URL to link one';
+    }
+    el.querySelector('.nc-del').onclick = async (e) => {
+      e.stopPropagation(); // removing a device must not also open it
       if (!confirm(`Stop monitoring ${c.name || c.address}?`)) return;
       try {
         await authJSON('/api/netchecks?id=' + encodeURIComponent(c.id), 'DELETE');
@@ -1232,8 +1243,9 @@ document.getElementById('netSave').addEventListener('click', async () => {
       address: addr,
       port: portRaw ? parseInt(portRaw, 10) : 0,
       tags: document.getElementById('netTags').value.trim(),
+      url: document.getElementById('netURL').value.trim(),
     });
-    for (const id of ['netName', 'netAddr', 'netPort', 'netTags']) document.getElementById(id).value = '';
+    for (const id of ['netName', 'netAddr', 'netPort', 'netTags', 'netURL']) document.getElementById(id).value = '';
     st.textContent = '';
     netModal.classList.add('hidden');
     loadNetChecks();
