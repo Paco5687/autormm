@@ -247,7 +247,8 @@ body {
   .viewer-bar #title { display: none; }
   .lbl-wide { display: none; }
   .lbl-narrow { display: inline; }
-  .viewer-bar .btn { padding: 6px 8px; }
+  .viewer-bar { gap: 6px; }
+  .viewer-bar .btn { padding: 6px 7px; }
 }
 
 /* Session info and settings. Everything here either reports a live number or is

@@ -1030,6 +1030,33 @@ window.addEventListener('paste', e => {
 // button tap is a gesture, and the viewer already requires https for H.264.
 // Some browsers show a paste prompt on the first tap — that is the browser
 // asking, not a bug.
+// Copy on the host. The host's clipboard is already polled and pushed back to
+// this device, so a copy here lands on the phone a moment later without any
+// further action — see the clipboard sync below.
+//
+// Worth knowing: writing the phone's clipboard happens when that sync arrives,
+// which is a beat after the tap and therefore outside the browser's
+// user-gesture window. Some browsers refuse a clipboard write there. The
+// keystroke always reaches the host regardless, so the copy itself is reliable;
+// only the automatic hand-back is at the browser's discretion.
+document.getElementById('copyBtn').addEventListener('click', (e) => {
+  send({ t: 'kdown', code: 'ControlLeft' });
+  send({ t: 'kdown', code: 'KeyC' });
+  send({ t: 'kup', code: 'KeyC' });
+  send({ t: 'kup', code: 'ControlLeft' });
+  flashState('copied on host');
+  e.currentTarget.blur();
+});
+
+// Context menu for whatever is selected on the host, without moving the
+// pointer — which a right click cannot do, since arriving there can disturb the
+// selection. Same key as the strip's Menu button, hoisted into the bar so it
+// does not require opening the keyboard first.
+document.getElementById('menuBtn').addEventListener('click', (e) => {
+  keyTap('ContextMenu');
+  e.currentTarget.blur();
+});
+
 document.getElementById('pasteBtn').addEventListener('click', async () => {
   let text = '';
   try {
