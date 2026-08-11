@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -57,7 +58,10 @@ func (c NetCheck) IsApp() bool { return c.Kind == "app" }
 // their cards simply are not clickable.
 func (c NetCheck) WebURL() string {
 	if c.URL != "" {
-		return c.URL
+		// A URL written without a scheme is displayed as https: it is the safer
+		// of the two to offer, and the probe will correct it to http if that is
+		// what the app actually answers on.
+		return appCandidates(c.URL)[0]
 	}
 	switch c.Port {
 	case 22, 445, 9100, 139, 3389:
@@ -209,39 +213,62 @@ var appClient = &http.Client{
 	},
 }
 
+// appCandidates lists the URLs worth trying for what the operator wrote, most
+// likely first.
+//
+// A scheme they supplied is respected absolutely. Without one, https is tried
+// before http: an app that only serves https fails outright over http, whereas
+// one that only serves http usually redirects — so guessing https costs a
+// retry at worst, and guessing http can mark a working app as down. That is
+// what forcing http:// on a bare hostname used to do.
+func appCandidates(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if strings.HasPrefix(raw, "http://") || strings.HasPrefix(raw, "https://") {
+		return []string{raw}
+	}
+	return []string{"https://" + raw, "http://" + raw}
+}
+
 // probeApp reports whether an application answered, and with what.
 //
 // Any HTTP response counts as reachable, including 401, 403 and 500: the
 // application is running and talking. Only a transport failure — refused,
 // timed out, DNS gone — means it is not there. Treating 401 as down would mark
 // every authenticated app in a homelab as broken.
-func probeApp(ctx context.Context, rawURL string) (up bool, ms float64, code int, err error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return false, 0, 0, err
+func probeApp(ctx context.Context, rawURL string) (up bool, ms float64, code int, used string, err error) {
+	candidates := appCandidates(rawURL)
+	for _, u := range candidates {
+		req, reqErr := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+		if reqErr != nil {
+			err = reqErr
+			continue
+		}
+		req.Header.Set("User-Agent", "autormm-healthcheck")
+		start := time.Now()
+		resp, doErr := appClient.Do(req)
+		elapsed := float64(time.Since(start).Microseconds()) / 1000
+		if doErr != nil {
+			err = doErr
+			continue
+		}
+		resp.Body.Close()
+		return true, elapsed, resp.StatusCode, u, nil
 	}
-	req.Header.Set("User-Agent", "autormm-healthcheck")
-	start := time.Now()
-	resp, err := appClient.Do(req)
-	elapsed := float64(time.Since(start).Microseconds()) / 1000
-	if err != nil {
-		return false, 0, 0, err
-	}
-	resp.Body.Close()
-	return true, elapsed, resp.StatusCode, nil
+	// Nothing answered: report the first candidate so the card still links
+	// somewhere sensible rather than nowhere.
+	return false, 0, 0, candidates[0], err
 }
 
 // probeCheck runs whichever check suits this entry.
-func probeCheck(ctx context.Context, c NetCheck) (up bool, ms float64, code int, err error) {
+func probeCheck(ctx context.Context, c NetCheck) (up bool, ms float64, code int, used string, err error) {
 	if c.IsApp() {
-		target := c.WebURL()
-		if target == "" {
-			return false, 0, 0, errors.New("no URL configured for this app")
+		if c.URL == "" {
+			return false, 0, 0, "", errors.New("no URL configured for this app")
 		}
-		return probeApp(ctx, target)
+		return probeApp(ctx, c.URL)
 	}
 	up, ms, err = probe(ctx, c.Address, c.Port)
-	return up, ms, 0, err
+	return up, ms, 0, c.WebURL(), err
 }
 
 // refused reports whether the peer actively rejected the connection, as opposed
@@ -279,6 +306,7 @@ func (n *netChecks) runChecks(ctx context.Context, now time.Time) []NetStatus {
 		up   bool
 		ms   float64
 		code int
+		used string // the URL that actually answered
 		e    error
 	}
 	results := make(chan result, len(due))
@@ -287,8 +315,8 @@ func (n *netChecks) runChecks(ctx context.Context, now time.Time) []NetStatus {
 		wg.Add(1)
 		go func(c NetCheck) {
 			defer wg.Done()
-			up, ms, code, err := probeCheck(ctx, c)
-			results <- result{c, up, ms, code, err}
+			up, ms, code, used, err := probeCheck(ctx, c)
+			results <- result{c, up, ms, code, used, err}
 		}(c)
 	}
 	wg.Wait()
@@ -299,7 +327,11 @@ func (n *netChecks) runChecks(ctx context.Context, now time.Time) []NetStatus {
 	defer n.mu.Unlock()
 	for r := range results {
 		prev := n.state[r.c.ID]
-		st := &NetStatus{NetCheck: r.c, Web: r.c.WebURL(), Up: r.up, LatencyMs: r.ms, Code: r.code, Checked: now}
+		web := r.used // whichever scheme answered, so the card links to that one
+		if web == "" {
+			web = r.c.WebURL()
+		}
+		st := &NetStatus{NetCheck: r.c, Web: web, Up: r.up, LatencyMs: r.ms, Code: r.code, Checked: now}
 		if r.e != nil && !r.up {
 			st.Error = r.e.Error()
 		}

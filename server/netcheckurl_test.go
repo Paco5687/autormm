@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -63,7 +64,7 @@ func TestAppProbeTreatsAnyResponseAsReachable(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(code)
 		}))
-		up, _, got, err := probeApp(context.Background(), srv.URL)
+		up, _, got, _, err := probeApp(context.Background(), srv.URL)
 		srv.Close()
 		if !up || err != nil {
 			t.Errorf("status %d reported unreachable (err=%v)", code, err)
@@ -79,7 +80,7 @@ func TestAppProbeDownWhenNothingAnswers(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	url := srv.URL
 	srv.Close() // now refused
-	if up, _, _, err := probeApp(context.Background(), url); up || err == nil {
+	if up, _, _, _, err := probeApp(context.Background(), url); up || err == nil {
 		t.Error("a closed server was reported as reachable")
 	}
 }
@@ -93,7 +94,7 @@ func TestAppProbeDoesNotFollowRedirects(t *testing.T) {
 		http.Redirect(w, r, "/login", http.StatusFound)
 	}))
 	defer srv.Close()
-	_, _, code, _ := probeApp(context.Background(), srv.URL)
+	_, _, code, _, _ := probeApp(context.Background(), srv.URL)
 	if code != http.StatusFound {
 		t.Errorf("code = %d, want 302 (the redirect itself)", code)
 	}
@@ -110,7 +111,7 @@ func TestAppProbeAcceptsSelfSignedTLS(t *testing.T) {
 		w.WriteHeader(200)
 	}))
 	defer srv.Close()
-	if up, _, _, err := probeApp(context.Background(), srv.URL); !up {
+	if up, _, _, _, err := probeApp(context.Background(), srv.URL); !up {
 		t.Errorf("a self-signed app was reported down: %v", err)
 	}
 }
@@ -118,7 +119,7 @@ func TestAppProbeAcceptsSelfSignedTLS(t *testing.T) {
 // An app entry with no URL cannot be checked, and must say so rather than
 // silently reporting down.
 func TestAppWithoutURLErrors(t *testing.T) {
-	_, _, _, err := probeCheck(context.Background(), NetCheck{Kind: "app", Name: "sonarr"})
+	_, _, _, _, err := probeCheck(context.Background(), NetCheck{Kind: "app", Name: "sonarr"})
 	if err == nil {
 		t.Error("an app with no URL did not report why it could not be checked")
 	}
@@ -133,5 +134,59 @@ func TestAppWebURLUsesItsURLVerbatim(t *testing.T) {
 	}
 	if !c.IsApp() {
 		t.Error("kind app not recognised")
+	}
+}
+
+// An app written without a scheme must not be assumed to be http. Trying https
+// first costs a retry when it is wrong; assuming http marks an https-only app
+// as down, which is the failure that prompted this.
+func TestSchemelessAppPrefersHTTPS(t *testing.T) {
+	got := appCandidates("jellyfin.example.com")
+	want := []string{"https://jellyfin.example.com", "http://jellyfin.example.com"}
+	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("candidates = %v, want %v", got, want)
+	}
+}
+
+// A scheme the operator supplied is respected absolutely — never second-guessed
+// by trying the other one.
+func TestExplicitSchemeIsNotSecondGuessed(t *testing.T) {
+	for _, u := range []string{"http://box.example.com:8096", "https://box.example.com"} {
+		if got := appCandidates(u); len(got) != 1 || got[0] != u {
+			t.Errorf("appCandidates(%q) = %v, want exactly [%q]", u, got, u)
+		}
+	}
+}
+
+// The scheme that answered is what the card must link to, so an https-only app
+// entered without a scheme opens over https.
+func TestProbeReportsTheSchemeThatAnswered(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+	bare := strings.TrimPrefix(srv.URL, "https://")
+	up, _, _, used, err := probeApp(context.Background(), bare)
+	if !up {
+		t.Fatalf("https-only app reported down: %v", err)
+	}
+	if used != srv.URL {
+		t.Errorf("answered URL = %q, want %q", used, srv.URL)
+	}
+}
+
+// And a schemeless http-only app still resolves, after https fails.
+func TestSchemelessFallsBackToHTTP(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+	bare := strings.TrimPrefix(srv.URL, "http://")
+	up, _, _, used, err := probeApp(context.Background(), bare)
+	if !up {
+		t.Fatalf("http-only app reported down: %v", err)
+	}
+	if used != srv.URL {
+		t.Errorf("answered URL = %q, want %q", used, srv.URL)
 	}
 }

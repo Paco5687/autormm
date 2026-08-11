@@ -1260,11 +1260,14 @@ document.getElementById('appSave').addEventListener('click', async () => {
   const st = document.getElementById('appStatus');
   let url = document.getElementById('appURL').value.trim();
   if (!url) { st.textContent = 'a URL is required'; return; }
-  // Typing "jellyfin.example.com" is the natural thing to do; make it work
-  // rather than failing on a missing scheme.
-  if (!/^https?:\/\//i.test(url)) url = 'http://' + url;
+  // A bare hostname is sent as written: the hub tries https before http and
+  // links the card to whichever answered. Forcing a scheme here would decide
+  // for an app that only serves the other one, which is how an https-only app
+  // ended up reported as down.
   let host = '';
-  try { host = new URL(url).hostname; } catch (_) { st.textContent = 'that URL is not valid'; return; }
+  try {
+    host = new URL(/^https?:\/\//i.test(url) ? url : 'https://' + url).hostname;
+  } catch (_) { st.textContent = 'that URL is not valid'; return; }
 
   st.textContent = 'saving…';
   try {
