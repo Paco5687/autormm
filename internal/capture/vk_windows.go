@@ -14,7 +14,10 @@ var codeToVK = map[string]uint16{
 	"Digit5": 0x35, "Digit6": 0x36, "Digit7": 0x37, "Digit8": 0x38, "Digit9": 0x39,
 	"Space": 0x20, "Enter": 0x0d, "Tab": 0x09, "Backspace": 0x08,
 	"Escape": 0x1b, "Delete": 0x2e, "Insert": 0x2d,
-	"ArrowLeft": 0x25, "ArrowUp": 0x26, "ArrowRight": 0x27, "ArrowDown": 0x28,
+	// VK_APPS — the context-menu key. It opens the menu for whatever is selected
+	// without moving the pointer, which a right click cannot do.
+	"ContextMenu": 0x5d,
+	"ArrowLeft":   0x25, "ArrowUp": 0x26, "ArrowRight": 0x27, "ArrowDown": 0x28,
 	"Home": 0x24, "End": 0x23, "PageUp": 0x21, "PageDown": 0x22,
 	"Minus": 0xbd, "Equal": 0xbb, "BracketLeft": 0xdb, "BracketRight": 0xdd,
 	"Backslash": 0xdc, "Semicolon": 0xba, "Quote": 0xde, "Backquote": 0xc0,

@@ -584,20 +584,31 @@ canvas.addEventListener('contextmenu', e => e.preventDefault());
 // with ours) and send the clicks ourselves:
 //
 //   tap                 left click
-//   double tap          right click
+//   double tap          double click
+//   two-finger tap      right click
 //   press and hold      grab, then drag until you lift
 //   one-finger drag     move the pointer (no button held)
 //   two-finger drag     scroll
+//
+// Right click used to be a double tap, and it could not work. A tap has to send
+// its left click immediately — waiting out a double-tap window would put a
+// quarter second of lag on every ordinary tap — so the first tap of the pair
+// always landed as a real left click first. Select some text, double tap to
+// bring up the menu, and the selection was gone before the right click arrived.
+//
+// A two-finger tap has no such problem: two fingers on the glass is
+// unambiguous from the very first touch, so nothing needs delaying and no
+// left click is ever sent. It also frees double tap to be a genuine double
+// click, which touch could not do at all before.
 const SCROLL_PX_PER_NOTCH = 40;  // finger travel for one wheel click
 const LONG_PRESS_MS = 450;       // hold this long to grab
 const TAP_MOVE_TOL = 12;         // px of drift still counted as a tap, not a drag
-const DOUBLE_TAP_MS = 300;
-const DOUBLE_TAP_TOL = 40;       // px between taps to still count as a double
+const TWO_FINGER_TAP_MS = 400;   // longer than this and it was a hold, not a tap
+const TWO_FINGER_TAP_TOL = 16;   // px of drift before it is a scroll, not a tap
 
 let twoFinger = null;
 let scrollAccum = 0;
 let touch = null;                // the in-flight single-finger gesture
-let lastTapAt = 0, lastTapX = 0, lastTapY = 0;
 
 function touchMid(t) {
   return { x: (t[0].clientX + t[1].clientX) / 2, y: (t[0].clientY + t[1].clientY) / 2 };
@@ -622,7 +633,11 @@ canvas.addEventListener('touchstart', e => {
   if (e.touches.length === 2) {
     e.preventDefault();      // stop the browser treating it as pan/zoom
     cancelTouch();           // a second finger ends any single-finger gesture
-    twoFinger = touchMid(e.touches);
+    const mid = touchMid(e.touches);
+    // Every two-finger gesture starts as a possible right click and stops being
+    // one the moment it moves or is held — that is what separates it from a
+    // scroll without either gesture needing to wait for the other.
+    twoFinger = { x: mid.x, y: mid.y, startX: mid.x, startY: mid.y, at: performance.now(), tap: true };
     scrollAccum = 0;
     return;
   }
@@ -648,10 +663,15 @@ canvas.addEventListener('touchmove', e => {
   if (e.touches.length === 2 && twoFinger) {
     e.preventDefault();
     const mid = touchMid(e.touches);
+    if (twoFinger.tap &&
+        (Math.abs(mid.x - twoFinger.startX) > TWO_FINGER_TAP_TOL ||
+         Math.abs(mid.y - twoFinger.startY) > TWO_FINGER_TAP_TOL)) {
+      twoFinger.tap = false; // it is a scroll
+    }
     // Dragging up scrolls down, as on a phone. Accumulate so slow drags still
     // move eventually instead of rounding away to nothing.
     scrollAccum += (twoFinger.y - mid.y) / SCROLL_PX_PER_NOTCH;
-    twoFinger = mid;
+    twoFinger.x = mid.x; twoFinger.y = mid.y;
     const notches = Math.trunc(scrollAccum);
     if (notches !== 0) {
       scrollAccum -= notches;
@@ -671,6 +691,22 @@ canvas.addEventListener('touchmove', e => {
 }, { passive: false });
 
 canvas.addEventListener('touchend', e => {
+  // A two-finger tap fires as soon as the first finger leaves, and clears the
+  // candidate so the second lift cannot repeat it.
+  if (twoFinger && twoFinger.tap && e.touches.length < 2) {
+    if (performance.now() - twoFinger.at <= TWO_FINGER_TAP_MS) {
+      e.preventDefault();
+      twoFinger.tap = false;
+      // Put the pointer where the fingers were before clicking, exactly as a
+      // mouse would arrive there — a context menu belongs under the tap.
+      const p = moveTo({ clientX: twoFinger.x, clientY: twoFinger.y });
+      send({ t: 'mdown', x: p.x, y: p.y, button: 2 });
+      send({ t: 'mup', x: p.x, y: p.y, button: 2 });
+      if (navigator.vibrate) navigator.vibrate(12);
+    } else {
+      twoFinger.tap = false; // held too long to be a tap
+    }
+  }
   if (!e.touches.length) { twoFinger = null; scrollAccum = 0; }
   if (!touch) return;
   e.preventDefault();
@@ -684,19 +720,10 @@ canvas.addEventListener('touchend', e => {
   }
   if (g.moved) return;                    // that was a pointer move, not a click
 
-  const now = performance.now();
-  const isDouble = now - lastTapAt < DOUBLE_TAP_MS &&
-    Math.abs(g.x - lastTapX) < DOUBLE_TAP_TOL && Math.abs(g.y - lastTapY) < DOUBLE_TAP_TOL;
-  if (isDouble) {
-    lastTapAt = 0;                        // don't let a third tap chain
-    send({ t: 'mdown', x: lastPos.x, y: lastPos.y, button: 2 });
-    send({ t: 'mup', x: lastPos.x, y: lastPos.y, button: 2 });
-    return;
-  }
-  lastTapAt = now; lastTapX = g.x; lastTapY = g.y;
-  // Sent immediately rather than waiting out the double-tap window: a quarter
-  // second of lag on every tap is far more annoying than the stray left click
-  // that precedes a right click.
+  // Sent immediately, with no double-tap window to wait out. Two taps in quick
+  // succession therefore reach the host as two ordinary clicks close together,
+  // which is precisely what a double click is — the host decides, using its own
+  // double-click interval, and touch gets a real double click for free.
   send({ t: 'mdown', x: lastPos.x, y: lastPos.y, button: 0 });
   send({ t: 'mup', x: lastPos.x, y: lastPos.y, button: 0 });
 }, { passive: false });

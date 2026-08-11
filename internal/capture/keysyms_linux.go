@@ -19,6 +19,7 @@ var codeToKeysym = map[string]uint32{
 	// whitespace / editing
 	"Space": 0x20, "Enter": 0xff0d, "Tab": 0xff09, "Backspace": 0xff08,
 	"Escape": 0xff1b, "Delete": 0xffff, "Insert": 0xff63,
+	"ContextMenu": 0xff67, // XK_Menu
 	// navigation
 	"ArrowLeft": 0xff51, "ArrowUp": 0xff52, "ArrowRight": 0xff53, "ArrowDown": 0xff54,
 	"Home": 0xff50, "End": 0xff57, "PageUp": 0xff55, "PageDown": 0xff56,
