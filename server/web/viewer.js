@@ -1088,6 +1088,40 @@ function awaitHostClip(ms) {
   });
 }
 
+// Device -> host: keep the host's clipboard matching this device's, so that
+// pasting *on the host* — its own Ctrl+V, its own right-click Paste — finds
+// what was copied here. Without this the sharing is one-way: text only reached
+// the host as part of an explicit paste from the viewer.
+//
+// A page cannot read your clipboard whenever it likes; that is a deliberate
+// browser restriction. So this runs at the one moment it is both permitted and
+// meaningful — when the viewer regains focus, which is exactly when someone has
+// copied something elsewhere and come back to use it.
+//
+// Only attempted where the read permission is already granted. Querying first
+// avoids provoking a permission prompt (or Safari's paste affordance) on every
+// single focus, which would be far more annoying than not syncing at all.
+async function pushDeviceClipboard() {
+  if (!navigator.clipboard || !navigator.clipboard.readText) return;
+  try {
+    const st = await navigator.permissions.query({ name: 'clipboard-read' });
+    if (st.state !== 'granted') return;
+  } catch (_) {
+    return; // not queryable here; never risk an unprompted prompt
+  }
+  try {
+    const text = await navigator.clipboard.readText();
+    if (text && text !== lastClip) {
+      lastClip = text;
+      send({ t: 'clip', clip: text }); // sync only — no keystroke, nothing pasted
+    }
+  } catch (_) {}
+}
+window.addEventListener('focus', pushDeviceClipboard);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) pushDeviceClipboard();
+});
+
 // Viewer -> host: on paste (Ctrl/Cmd+V), set the host clipboard, then paste.
 // getData in a paste handler works even on plain http.
 window.addEventListener('paste', e => {
@@ -1216,6 +1250,10 @@ function stashForDevice(text) {
 // await before it spends the activation.
 function flushPendingClip() {
   if (pendingPlace == null) return;
+  // Not while typing. Placing text focuses a scratch field for an instant, and
+  // doing that between keystrokes would take the caret out of the on-screen
+  // keyboard mid-word. It waits for the next touch instead.
+  if (document.activeElement === softkbd) return;
   const text = pendingPlace;
   pendingPlace = null;
   copyBtn.classList.remove('armed');
