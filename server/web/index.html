@@ -21,6 +21,7 @@
     <select id="tagFilter" class="inv-filter hidden" title="Show only hosts with this tag"></select>
     <span id="alertBadge" class="alert-badge hidden"></span>
     <button id="enrollBtn" class="btn">＋ Add host</button>
+    <button id="appAdd" class="btn ghost" title="Add a self-hosted app to the dashboard">＋ App</button>
     <button id="netAdd" class="btn ghost" title="Monitor a device that can't run an agent (switch, printer, appliance)">＋ Device</button>
     <button id="scriptsBtn" class="btn ghost" title="Scripts &amp; schedules">📜</button>
     <button id="updatesBtn" class="btn ghost" title="Check for updates">⟳</button>
@@ -29,6 +30,14 @@
   </header>
 
   <main id="grid" class="grid"></main>
+
+  <section id="appSection" class="netsec hidden">
+    <div class="netsec-head">
+      <b>Apps</b>
+      <span id="appSummary" class="muted"></span>
+    </div>
+    <div id="appGrid" class="netgrid"></div>
+  </section>
 
   <section id="netSection" class="netsec hidden">
     <div class="netsec-head">
@@ -111,6 +120,22 @@
         </div>
         <div id="mInvList" class="inv-list"></div>
       </div>
+    </div>
+  </div>
+
+  <div id="appModal" class="modal hidden">
+    <div class="modal-card sheet-sm">
+      <div class="modal-head">
+        <div class="modal-title">
+          <div class="name">Add a hosted app</div>
+          <div class="platform muted">Anything you self-host with a web interface. Click its card to open it.</div>
+        </div>
+        <button id="appClose" class="btn ghost">✕</button>
+      </div>
+      <div class="cmd-row"><input id="appName" class="inv-filter" style="max-width:none" placeholder="name (e.g. Jellyfin)"></div>
+      <div class="cmd-row"><input id="appURL" class="inv-filter" style="max-width:none" placeholder="https://jellyfin.example.com  or  http://10.0.0.5:8096"></div>
+      <div class="cmd-row"><input id="appTags" class="inv-filter" style="max-width:none" placeholder="tags (optional)"></div>
+      <div class="cmd-row"><button id="appSave" class="btn">Add app</button><span id="appStatus" class="muted"></span></div>
     </div>
   </div>
 

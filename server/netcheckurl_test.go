@@ -1,6 +1,11 @@
 package server
 
-import "testing"
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
 
 func TestWebURLInferredFromPort(t *testing.T) {
 	for _, tc := range []struct {
@@ -47,5 +52,86 @@ func TestWebURLBracketsIPv6(t *testing.T) {
 	c := NetCheck{Address: "2001:db8::1", Port: 8080}
 	if got := c.WebURL(); got != "http://[2001:db8::1]:8080" {
 		t.Errorf("IPv6 address not bracketed: %q", got)
+	}
+}
+
+// An app is reachable if it answers at all. 401 and 403 mean it is running and
+// asking for credentials, which is how most self-hosted things behave behind a
+// login — reporting those as down would mark a healthy homelab as broken.
+func TestAppProbeTreatsAnyResponseAsReachable(t *testing.T) {
+	for _, code := range []int{200, 204, 302, 401, 403, 500, 502} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(code)
+		}))
+		up, _, got, err := probeApp(context.Background(), srv.URL)
+		srv.Close()
+		if !up || err != nil {
+			t.Errorf("status %d reported unreachable (err=%v)", code, err)
+		}
+		if got != code {
+			t.Errorf("status reported as %d, want %d", got, code)
+		}
+	}
+}
+
+// Nothing listening is the only thing that means down.
+func TestAppProbeDownWhenNothingAnswers(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	url := srv.URL
+	srv.Close() // now refused
+	if up, _, _, err := probeApp(context.Background(), url); up || err == nil {
+		t.Error("a closed server was reported as reachable")
+	}
+}
+
+// Redirects are not followed: a 302 to a login page is a healthy app, and
+// chasing it risks wandering off to an identity provider entirely.
+func TestAppProbeDoesNotFollowRedirects(t *testing.T) {
+	var hits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		http.Redirect(w, r, "/login", http.StatusFound)
+	}))
+	defer srv.Close()
+	_, _, code, _ := probeApp(context.Background(), srv.URL)
+	if code != http.StatusFound {
+		t.Errorf("code = %d, want 302 (the redirect itself)", code)
+	}
+	if hits != 1 {
+		t.Errorf("made %d requests; the redirect was followed", hits)
+	}
+}
+
+// Self-signed certificates are the norm for homelab apps. Verifying would
+// report every one of them as down while proving nothing — this checks
+// liveness and trusts none of what it receives.
+func TestAppProbeAcceptsSelfSignedTLS(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+	if up, _, _, err := probeApp(context.Background(), srv.URL); !up {
+		t.Errorf("a self-signed app was reported down: %v", err)
+	}
+}
+
+// An app entry with no URL cannot be checked, and must say so rather than
+// silently reporting down.
+func TestAppWithoutURLErrors(t *testing.T) {
+	_, _, _, err := probeCheck(context.Background(), NetCheck{Kind: "app", Name: "sonarr"})
+	if err == nil {
+		t.Error("an app with no URL did not report why it could not be checked")
+	}
+}
+
+// An app is identified by its URL, a device by its address. Requiring both of
+// each would reject perfectly ordinary entries of either kind.
+func TestAppWebURLUsesItsURLVerbatim(t *testing.T) {
+	c := NetCheck{Kind: "app", Name: "Jellyfin", URL: "https://jellyfin.example.com/web/"}
+	if got := c.WebURL(); got != "https://jellyfin.example.com/web/" {
+		t.Errorf("app URL mangled: %q", got)
+	}
+	if !c.IsApp() {
+		t.Error("kind app not recognised")
 	}
 }

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"log"
@@ -36,7 +37,14 @@ type NetCheck struct {
 	// from the address and port", which is right for most things and wrong for
 	// the ones that answer on one port and serve their UI on another.
 	URL string `json:"url,omitempty"`
+	// Kind is "app" for a hosted web application, or empty for a device. Apps
+	// are checked over HTTP rather than by opening a socket, because "the port
+	// is open" says almost nothing about whether an application is serving.
+	Kind string `json:"kind,omitempty"`
 }
+
+// IsApp reports whether this entry is a hosted application rather than a device.
+func (c NetCheck) IsApp() bool { return c.Kind == "app" }
 
 // WebURL is where a device's own control panel lives, so a card can open it.
 //
@@ -72,7 +80,10 @@ type NetStatus struct {
 	NetCheck
 	// WebURL is resolved server-side so the dashboard does not have to repeat
 	// the port-to-scheme reasoning, and so both agree on what a card links to.
-	Web       string    `json:"web,omitempty"`
+	Web string `json:"web,omitempty"`
+	// Code is the HTTP status an app answered with, so a card can tell
+	// "serving" from "answering with 502".
+	Code      int       `json:"code,omitempty"`
 	Up        bool      `json:"up"`
 	LatencyMs float64   `json:"latency_ms,omitempty"`
 	Since     time.Time `json:"since"` // when the current state began
@@ -177,6 +188,62 @@ func probe(ctx context.Context, address string, port int) (up bool, ms float64, 
 	return false, 0, err
 }
 
+// appClient checks that an application is serving, without judging what it
+// serves.
+//
+// Redirects are not followed: a 302 to a login page is a perfectly healthy
+// application, and chasing it only risks wandering off to an identity provider.
+// Certificates are not verified either — homelab applications routinely carry
+// self-signed ones, and refusing to look would report every one of them as down
+// while proving nothing: this is a liveness check, and nothing it receives is
+// trusted or shown.
+var appClient = &http.Client{
+	Timeout: checkTimeout,
+	CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	},
+	Transport: &http.Transport{
+		TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
+		DisableKeepAlives:   true,
+		TLSHandshakeTimeout: checkTimeout,
+	},
+}
+
+// probeApp reports whether an application answered, and with what.
+//
+// Any HTTP response counts as reachable, including 401, 403 and 500: the
+// application is running and talking. Only a transport failure — refused,
+// timed out, DNS gone — means it is not there. Treating 401 as down would mark
+// every authenticated app in a homelab as broken.
+func probeApp(ctx context.Context, rawURL string) (up bool, ms float64, code int, err error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return false, 0, 0, err
+	}
+	req.Header.Set("User-Agent", "autormm-healthcheck")
+	start := time.Now()
+	resp, err := appClient.Do(req)
+	elapsed := float64(time.Since(start).Microseconds()) / 1000
+	if err != nil {
+		return false, 0, 0, err
+	}
+	resp.Body.Close()
+	return true, elapsed, resp.StatusCode, nil
+}
+
+// probeCheck runs whichever check suits this entry.
+func probeCheck(ctx context.Context, c NetCheck) (up bool, ms float64, code int, err error) {
+	if c.IsApp() {
+		target := c.WebURL()
+		if target == "" {
+			return false, 0, 0, errors.New("no URL configured for this app")
+		}
+		return probeApp(ctx, target)
+	}
+	up, ms, err = probe(ctx, c.Address, c.Port)
+	return up, ms, 0, err
+}
+
 // refused reports whether the peer actively rejected the connection, as opposed
 // to never answering.
 func refused(err error) bool {
@@ -208,10 +275,11 @@ func (n *netChecks) runChecks(ctx context.Context, now time.Time) []NetStatus {
 	// would otherwise take the better part of a minute in series, and the slow
 	// ones are precisely the ones in trouble.
 	type result struct {
-		c  NetCheck
-		up bool
-		ms float64
-		e  error
+		c    NetCheck
+		up   bool
+		ms   float64
+		code int
+		e    error
 	}
 	results := make(chan result, len(due))
 	var wg sync.WaitGroup
@@ -219,8 +287,8 @@ func (n *netChecks) runChecks(ctx context.Context, now time.Time) []NetStatus {
 		wg.Add(1)
 		go func(c NetCheck) {
 			defer wg.Done()
-			up, ms, err := probe(ctx, c.Address, c.Port)
-			results <- result{c, up, ms, err}
+			up, ms, code, err := probeCheck(ctx, c)
+			results <- result{c, up, ms, code, err}
 		}(c)
 	}
 	wg.Wait()
@@ -231,7 +299,7 @@ func (n *netChecks) runChecks(ctx context.Context, now time.Time) []NetStatus {
 	defer n.mu.Unlock()
 	for r := range results {
 		prev := n.state[r.c.ID]
-		st := &NetStatus{NetCheck: r.c, Web: r.c.WebURL(), Up: r.up, LatencyMs: r.ms, Checked: now}
+		st := &NetStatus{NetCheck: r.c, Web: r.c.WebURL(), Up: r.up, LatencyMs: r.ms, Code: r.code, Checked: now}
 		if r.e != nil && !r.up {
 			st.Error = r.e.Error()
 		}
@@ -303,12 +371,26 @@ func (s *Server) handleNetChecks(w http.ResponseWriter, r *http.Request) {
 
 	case http.MethodPost:
 		var c NetCheck
-		if json.NewDecoder(r.Body).Decode(&c) != nil || c.Address == "" {
-			http.Error(w, "address is required", http.StatusBadRequest)
+		if json.NewDecoder(r.Body).Decode(&c) != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		// The two kinds need different things: a device is an address to
+		// connect to, an app is a URL to fetch. Requiring an address of both
+		// would reject an app that is only ever known by its URL.
+		if c.IsApp() && c.URL == "" {
+			http.Error(w, "a URL is required for an app", http.StatusBadRequest)
+			return
+		}
+		if !c.IsApp() && c.Address == "" {
+			http.Error(w, "an address is required for a device", http.StatusBadRequest)
 			return
 		}
 		if c.Name == "" {
 			c.Name = c.Address
+			if c.Name == "" {
+				c.Name = c.URL
+			}
 		}
 		if c.ID == "" {
 			c.ID = auth.RandomID(10)

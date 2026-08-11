@@ -1180,33 +1180,41 @@ const netSection = document.getElementById('netSection');
 const netGrid = document.getElementById('netGrid');
 const netModal = document.getElementById('netModal');
 
+// One store serves both: an entry is an app when it says so, and the only
+// differences are how it is checked (HTTP rather than a socket) and which
+// section it appears in.
 async function loadNetChecks() {
   let list = [];
   try {
     list = await authJSON('/api/netchecks', 'GET');
-  } catch (e) { return; } // unauthenticated or unsupported: leave the section alone
+  } catch (e) { return; } // unauthenticated or unsupported: leave the sections alone
   list = list || [];
+  renderMonitorSection('app', list.filter(c => c.kind === 'app'));
+  renderMonitorSection('net', list.filter(c => c.kind !== 'app'));
+}
+
+function renderMonitorSection(which, list) {
+  const section = document.getElementById(which === 'app' ? 'appSection' : 'netSection');
+  const grid = document.getElementById(which === 'app' ? 'appGrid' : 'netGrid');
+  const summary = document.getElementById(which === 'app' ? 'appSummary' : 'netSummary');
   // Hidden entirely when nothing is configured, so a fleet that does not use
   // this never sees an empty shelf.
-  netSection.classList.toggle('hidden', list.length === 0);
-  document.getElementById('netSummary').textContent =
-    list.length ? `${list.filter(c => c.up).length}/${list.length} reachable` : '';
+  section.classList.toggle('hidden', list.length === 0);
+  summary.textContent = list.length ? `${list.filter(c => c.up).length}/${list.length} reachable` : '';
 
-  netGrid.innerHTML = '';
+  grid.innerHTML = '';
   for (const c of list) {
     const el = document.createElement('div');
     el.className = 'netcard';
-    const sub = c.up
-      ? `${c.address}${c.port ? ':' + c.port : ''} · ${Math.round(c.latency_ms)}ms`
-      : `${c.address}${c.port ? ':' + c.port : ''} · unreachable`;
     el.innerHTML =
       `<span class="status ${c.checked ? (c.up ? 'online' : 'offline') : ''}"></span>` +
       `<div class="nc-body"><div class="nc-name"></div><div class="nc-sub"></div></div>` +
       `<button class="nc-del" title="Stop monitoring">✕</button>`;
-    el.querySelector('.nc-name').textContent = c.name || c.address;
-    el.querySelector('.nc-sub').textContent = c.checked ? sub : 'not checked yet';
-    // The card opens the device's own control panel. Not every device has one —
-    // an SSH daemon or a printer's raw port does not — and those stay inert
+    el.querySelector('.nc-name').textContent = c.name || c.address || c.url;
+    el.querySelector('.nc-sub').textContent = monitorSubtitle(c);
+
+    // The card opens the thing it monitors. Not everything has a web interface
+    // — an SSH daemon or a printer's raw port does not — and those stay inert
     // rather than opening a browser error.
     if (c.web) {
       el.classList.add('nc-link');
@@ -1216,18 +1224,63 @@ async function loadNetChecks() {
       el.title = 'No web interface on this port — add a URL to link one';
     }
     el.querySelector('.nc-del').onclick = async (e) => {
-      e.stopPropagation(); // removing a device must not also open it
-      if (!confirm(`Stop monitoring ${c.name || c.address}?`)) return;
+      e.stopPropagation(); // removing must not also open it
+      if (!confirm(`Stop monitoring ${c.name || c.address || c.url}?`)) return;
       try {
         await authJSON('/api/netchecks?id=' + encodeURIComponent(c.id), 'DELETE');
         loadNetChecks();
-      } catch (e) { alert('Could not remove: ' + e.message); }
+      } catch (err) { alert('Could not remove: ' + err.message); }
     };
-    netGrid.appendChild(el);
+    grid.appendChild(el);
   }
 }
 
+// What a card says under its name. An app that answers with something other
+// than success is reachable *and* worth knowing about — 502 means the proxy is
+// up and whatever sits behind it is not, which a bare green dot would hide.
+function monitorSubtitle(c) {
+  if (!c.checked) return 'not checked yet';
+  const where = c.kind === 'app'
+    ? (c.web || '').replace(/^https?:\/\//, '')
+    : `${c.address}${c.port ? ':' + c.port : ''}`;
+  if (!c.up) return `${where} · unreachable`;
+  const code = (c.kind === 'app' && c.code && (c.code < 200 || c.code >= 400)) ? ` · HTTP ${c.code}` : '';
+  return `${where} · ${Math.round(c.latency_ms)}ms${code}`;
+}
+
 document.getElementById('netAdd').addEventListener('click', () => netModal.classList.remove('hidden'));
+
+// ---- hosted apps ----
+const appModal = document.getElementById('appModal');
+document.getElementById('appAdd').addEventListener('click', () => appModal.classList.remove('hidden'));
+document.getElementById('appClose').addEventListener('click', () => appModal.classList.add('hidden'));
+appModal.addEventListener('click', e => { if (e.target === appModal) appModal.classList.add('hidden'); });
+
+document.getElementById('appSave').addEventListener('click', async () => {
+  const st = document.getElementById('appStatus');
+  let url = document.getElementById('appURL').value.trim();
+  if (!url) { st.textContent = 'a URL is required'; return; }
+  // Typing "jellyfin.example.com" is the natural thing to do; make it work
+  // rather than failing on a missing scheme.
+  if (!/^https?:\/\//i.test(url)) url = 'http://' + url;
+  let host = '';
+  try { host = new URL(url).hostname; } catch (_) { st.textContent = 'that URL is not valid'; return; }
+
+  st.textContent = 'saving…';
+  try {
+    await authJSON('/api/netchecks', 'POST', {
+      kind: 'app',
+      name: document.getElementById('appName').value.trim(),
+      address: host,   // so the entry still has a host for display and grouping
+      url,
+      tags: document.getElementById('appTags').value.trim(),
+    });
+    for (const id of ['appName', 'appURL', 'appTags']) document.getElementById(id).value = '';
+    st.textContent = '';
+    appModal.classList.add('hidden');
+    loadNetChecks();
+  } catch (e) { st.textContent = 'failed: ' + e.message; }
+});
 document.getElementById('netClose').addEventListener('click', () => netModal.classList.add('hidden'));
 netModal.addEventListener('click', e => { if (e.target === netModal) netModal.classList.add('hidden'); });
 
