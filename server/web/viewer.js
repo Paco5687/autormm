@@ -1062,12 +1062,12 @@ function setLocalClipboard(text) {
   // the offer most. Returning early there left copying on the host (Ctrl+C, the
   // context menu, an application's own button) doing nothing whatsoever.
   if (!navigator.clipboard || !navigator.clipboard.writeText) {
-    armCopy(text);
+    stashForDevice(text);
     return;
   }
   navigator.clipboard.writeText(text).then(
-    () => {},                  // landed automatically; a focused desktop tab
-    () => armCopy(text),       // refused for want of a gesture: offer one
+    () => {},                      // landed automatically; a focused desktop tab
+    () => stashForDevice(text),    // refused: place it at the next touch
   );
 }
 
@@ -1123,7 +1123,6 @@ window.addEventListener('paste', e => {
 // Where the promise form is unsupported, the text is held and the button arms
 // itself — a second tap is a fresh gesture and places it. Two taps, but honest.
 const copyBtn = document.getElementById('copyBtn');
-let armedClip = null; // text waiting for a second tap to place it
 
 function sendHostCopy() {
   send({ t: 'kdown', code: 'ControlLeft' });
@@ -1191,52 +1190,81 @@ function clipboardBlockedMsg(err) {
   return 'blocked: ' + name;
 }
 
-function armCopy(text) {
-  armedClip = text;
+// Text the host copied that this device has not been given yet.
+//
+// Nothing can write a clipboard without a user gesture, and the host's copy
+// arrives over the network with none in flight. So it waits here and is placed
+// at the operator's next touch — which costs them nothing, because they are
+// about to touch something anyway.
+let pendingPlace = null;
+
+function stashForDevice(text) {
+  // The gesture that caused the copy may still be live: browsers keep an
+  // activation valid for a few seconds, and the host's clipboard arrives well
+  // inside that. Try immediately, synchronously, before giving up on this tap.
+  if (legacyCopy(text)) {
+    flashState('copied to this device');
+    return;
+  }
+  pendingPlace = text;
   copyBtn.classList.add('armed');
-  flashState('host copied — tap ⧉ to bring it here');
-  // Long enough to copy on the host, look up, and reach for the phone. It ends
-  // rather than persisting so a tap much later cannot quietly place something
-  // stale, and any newer copy replaces it in the meantime.
-  setTimeout(() => {
-    if (armedClip === text) { armedClip = null; copyBtn.classList.remove('armed'); }
-  }, 30000);
+  flashState('copied on host — touch anywhere to sync');
+}
+
+// flushPendingClip places whatever is waiting, using the gesture currently in
+// progress. Synchronous: execCommand must run inside the activation, and an
+// await before it spends the activation.
+function flushPendingClip() {
+  if (pendingPlace == null) return;
+  const text = pendingPlace;
+  pendingPlace = null;
+  copyBtn.classList.remove('armed');
+  if (legacyCopy(text)) { flashState('clipboard synced'); return; }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(
+      () => flashState('clipboard synced'),
+      (err) => flashState(clipboardBlockedMsg(err)),
+    );
+  }
+}
+
+// Any interaction is an activation this can spend. Captured, so it runs before
+// the control the operator actually meant to use — including ⧉ itself, whose
+// own job stays "copy on the host" and is never displaced by a pending sync.
+//
+// touchend and mouseup rather than the corresponding down events: both grant
+// activation, and acting after the gesture completes cannot interfere with a
+// drag or long-press in progress.
+for (const ev of ['touchend', 'mouseup', 'keydown']) {
+  window.addEventListener(ev, flushPendingClip, { capture: true });
 }
 
 copyBtn.addEventListener('click', async (e) => {
   e.currentTarget.blur();
-
-  // Second tap of the fallback path: a fresh gesture, so a plain write works.
-  if (armedClip !== null) {
-    const text = armedClip;
-    armedClip = null;
-    copyBtn.classList.remove('armed');
-    const res = await placeOnDevice(text);
-    flashState(res.ok ? 'copied to this device' : clipboardBlockedMsg(res.err));
-    return;
-  }
-
+  // Anything pending was just synced by the capture-phase handler above, so
+  // this tap is free to mean what the button says: copy on the host.
   const arrival = awaitHostClip(2500);
   sendHostCopy();
 
+  // Where supported this is a genuine single tap: ClipboardItem accepts a
+  // promise and the browser holds the activation open until the host's text
+  // arrives.
   if (window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
     try {
       await navigator.clipboard.write([new ClipboardItem({
         'text/plain': arrival.then(t => new Blob([t == null ? '' : t], { type: 'text/plain' })),
       })]);
       const got = await arrival;
-      // Distinguish the two failures that look identical from the outside: the
-      // host never reported a copy, versus the copy never reached this device.
       flashState(got == null ? 'host reported no copy' : 'copied to this device');
       return;
     } catch (_) {
-      // Promise-backed writes unsupported or refused; fall through.
+      // Unsupported or refused; the text still lands via the stash below.
     }
   }
 
   const text = await arrival;
   if (text == null) { flashState('host reported no copy'); return; }
-  armCopy(text);
+  stashForDevice(text);
 });
 
 // Context menu for whatever is selected on the host, without moving the
