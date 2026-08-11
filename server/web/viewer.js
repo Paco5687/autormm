@@ -1044,21 +1044,31 @@ function setLocalClipboard(text) {
   if (text == null) return;
   const changed = text !== lastClip;
   lastClip = text;
-  if (pendingHostClip) {           // someone tapped Copy and is waiting for this
+  if (pendingHostClip) {
+    // Someone tapped Copy and is waiting for exactly this, inside their own
+    // gesture. Hand it over and stop: arming as well would light the button up
+    // immediately after a copy that just succeeded.
     const resolve = pendingHostClip;
     pendingHostClip = null;
     resolve(text);
+    return;
   }
   if (!changed) return;
-  if (!navigator.clipboard || !navigator.clipboard.writeText) return;
-  navigator.clipboard.writeText(text).catch(() => {
-    // Refused for want of a gesture, which is the normal case on a phone. The
-    // host has copied something and this device cannot be given it unasked — so
-    // arm the Copy button and let one tap collect it. This is what makes
-    // copying by any means on the host (Ctrl+C, the context menu, an app's own
-    // button) reachable from the device at all.
+
+  // Whatever happens, the operator must end up able to get this text. Nothing
+  // can place it without a gesture, so every route that cannot place it now has
+  // to arm the button rather than give up — including the route where the
+  // Clipboard API is absent entirely, which is precisely the case that needs
+  // the offer most. Returning early there left copying on the host (Ctrl+C, the
+  // context menu, an application's own button) doing nothing whatsoever.
+  if (!navigator.clipboard || !navigator.clipboard.writeText) {
     armCopy(text);
-  });
+    return;
+  }
+  navigator.clipboard.writeText(text).then(
+    () => {},                  // landed automatically; a focused desktop tab
+    () => armCopy(text),       // refused for want of a gesture: offer one
+  );
 }
 
 // awaitHostClip resolves with the host's clipboard once it arrives.
@@ -1183,11 +1193,14 @@ function clipboardBlockedMsg(err) {
 
 function armCopy(text) {
   armedClip = text;
-  copyBtn.classList.add('active');
-  flashState('tap ⧉ again to place it here');
+  copyBtn.classList.add('armed');
+  flashState('host copied — tap ⧉ to bring it here');
+  // Long enough to copy on the host, look up, and reach for the phone. It ends
+  // rather than persisting so a tap much later cannot quietly place something
+  // stale, and any newer copy replaces it in the meantime.
   setTimeout(() => {
-    if (armedClip === text) { armedClip = null; copyBtn.classList.remove('active'); }
-  }, 8000);
+    if (armedClip === text) { armedClip = null; copyBtn.classList.remove('armed'); }
+  }, 30000);
 }
 
 copyBtn.addEventListener('click', async (e) => {
@@ -1197,7 +1210,7 @@ copyBtn.addEventListener('click', async (e) => {
   if (armedClip !== null) {
     const text = armedClip;
     armedClip = null;
-    copyBtn.classList.remove('active');
+    copyBtn.classList.remove('armed');
     const res = await placeOnDevice(text);
     flashState(res.ok ? 'copied to this device' : clipboardBlockedMsg(res.err));
     return;

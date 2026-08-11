@@ -83,6 +83,12 @@ body {
 /* An explicitly-on toggle, as opposed to a momentary button that merely has a
    stuck :hover on it. */
 .btn.active { color: var(--text); border-color: var(--accent); background: var(--panel); }
+/* Armed: the host has copied something this device can only take when asked.
+   Louder than .active because it is an offer with a deadline, not a mode. */
+.btn.armed {
+  color: var(--text); border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 34%, transparent);
+}
 .card-actions { margin-left: auto; display: flex; gap: 6px; }
 
 .grid {
