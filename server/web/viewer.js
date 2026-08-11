@@ -1122,6 +1122,65 @@ function sendHostCopy() {
   send({ t: 'kup', code: 'ControlLeft' });
 }
 
+// legacyCopy places text using the pre-permissions mechanism: select it in a
+// throwaway field and let the browser's own copy command take it.
+//
+// document.execCommand is deprecated and still the most widely allowed way to
+// write a clipboard from a user gesture — it predates the Clipboard API's
+// permission model, so the rules that refuse writeText do not apply. Kept as a
+// last resort precisely because those rules vary by browser, by engine version
+// and by whether the page is installed, and are not worth predicting.
+//
+// readonly is what stops mobile browsers raising the on-screen keyboard for a
+// field the operator never sees, and the explicit selection range is what iOS
+// needs in place of select() alone.
+function legacyCopy(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;';
+  document.body.appendChild(ta);
+  const prev = document.activeElement;
+  let ok = false;
+  try {
+    ta.focus();
+    ta.select();
+    if (ta.setSelectionRange) ta.setSelectionRange(0, text.length);
+    ok = document.execCommand('copy');
+  } catch (_) {
+    ok = false;
+  }
+  ta.remove();
+  if (prev && prev.focus) { try { prev.focus(); } catch (_) {} }
+  return ok;
+}
+
+// placeOnDevice writes text to this device's clipboard, trying each mechanism
+// the browser might allow. Must be called from inside a user gesture.
+async function placeOnDevice(text) {
+  let err = null;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return { ok: true };
+    } catch (e) {
+      err = e;
+    }
+  }
+  if (legacyCopy(text)) return { ok: true };
+  return { ok: false, err };
+}
+
+// clipboardBlockedMsg names the actual reason rather than "blocked", which is
+// the same word for a dozen unrelated browser rules.
+function clipboardBlockedMsg(err) {
+  if (!window.isSecureContext) return 'needs https to copy';
+  if (!navigator.clipboard) return 'no clipboard API here';
+  const name = err && err.name ? err.name : 'unknown';
+  if (name === 'NotAllowedError' && !document.hasFocus()) return 'blocked: page not focused';
+  return 'blocked: ' + name;
+}
+
 function armCopy(text) {
   armedClip = text;
   copyBtn.classList.add('active');
@@ -1139,12 +1198,8 @@ copyBtn.addEventListener('click', async (e) => {
     const text = armedClip;
     armedClip = null;
     copyBtn.classList.remove('active');
-    try {
-      await navigator.clipboard.writeText(text);
-      flashState('copied to this device');
-    } catch (_) {
-      flashState('this browser blocked the clipboard');
-    }
+    const res = await placeOnDevice(text);
+    flashState(res.ok ? 'copied to this device' : clipboardBlockedMsg(res.err));
     return;
   }
 
