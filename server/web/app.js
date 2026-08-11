@@ -1273,9 +1273,12 @@ function shortProbeError(err) {
 // up and whatever sits behind it is not, which a bare green dot would hide.
 function monitorSubtitle(c) {
   if (!c.checked) return 'not checked yet';
+  // A MAC-tracked device is worth showing at the address it is at *now* —
+  // that changing number is the whole point of tracking it by MAC.
+  const host = (c.mac && c.ip) ? c.ip : c.address;
   const where = c.kind === 'app'
     ? (c.web || '').replace(/^https?:\/\//, '')
-    : `${c.address}${c.port ? ':' + c.port : ''}`;
+    : `${host || c.mac}${c.port ? ':' + c.port : ''}`;
   if (!c.up) {
     // Say what went wrong, briefly. "unreachable" alone gives nothing to act
     // on, and the full error is in the tooltip.
@@ -1327,8 +1330,9 @@ netModal.addEventListener('click', e => { if (e.target === netModal) netModal.cl
 
 document.getElementById('netSave').addEventListener('click', async () => {
   const addr = document.getElementById('netAddr').value.trim();
+  const mac = document.getElementById('netMAC').value.trim();
   const st = document.getElementById('netStatus');
-  if (!addr) { st.textContent = 'an address is required'; return; }
+  if (!addr && !mac) { st.textContent = 'an address or a MAC is required'; return; }
   const portRaw = document.getElementById('netPort').value.trim();
   st.textContent = 'saving…';
   try {
@@ -1338,8 +1342,9 @@ document.getElementById('netSave').addEventListener('click', async () => {
       port: portRaw ? parseInt(portRaw, 10) : 0,
       tags: document.getElementById('netTags').value.trim(),
       url: document.getElementById('netURL').value.trim(),
+      mac,
     });
-    for (const id of ['netName', 'netAddr', 'netPort', 'netTags', 'netURL']) document.getElementById(id).value = '';
+    for (const id of ['netName', 'netAddr', 'netPort', 'netTags', 'netURL', 'netMAC']) document.getElementById(id).value = '';
     st.textContent = '';
     netModal.classList.add('hidden');
     loadNetChecks();

@@ -43,6 +43,11 @@ type NetCheck struct {
 	// are checked over HTTP rather than by opening a socket, because "the port
 	// is open" says almost nothing about whether an application is serving.
 	Kind string `json:"kind,omitempty"`
+	// MAC identifies a device that gets its address from DHCP, where writing
+	// down an IP is writing down something that will change. When set, the
+	// address is looked up from the hub's ARP table at check time and Address
+	// is only a fallback for before the first lookup succeeds.
+	MAC string `json:"mac,omitempty"`
 }
 
 // IsApp reports whether this entry is a hosted application rather than a device.
@@ -88,7 +93,9 @@ type NetStatus struct {
 	Web string `json:"web,omitempty"`
 	// Code is the HTTP status an app answered with, so a card can tell
 	// "serving" from "answering with 502".
-	Code      int       `json:"code,omitempty"`
+	Code int `json:"code,omitempty"`
+	// IP is where a MAC-identified device was found this time round.
+	IP        string    `json:"ip,omitempty"`
 	Up        bool      `json:"up"`
 	LatencyMs float64   `json:"latency_ms,omitempty"`
 	Since     time.Time `json:"since"` // when the current state began
@@ -112,10 +119,21 @@ type netChecks struct {
 	path   string
 	checks map[string]*NetCheck
 	state  map[string]*NetStatus
+	macs   *macIndex
+}
+
+// hasMACs reports whether any of these checks is identified by MAC.
+func hasMACs(list []NetCheck) bool {
+	for _, c := range list {
+		if c.MAC != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func newNetChecks(dir string) *netChecks {
-	n := &netChecks{checks: map[string]*NetCheck{}, state: map[string]*NetStatus{}}
+	n := &netChecks{checks: map[string]*NetCheck{}, state: map[string]*NetStatus{}, macs: newMACIndex()}
 	if dir != "" {
 		n.path = filepath.Join(dir, "netchecks.json")
 		if b, err := os.ReadFile(n.path); err == nil {
@@ -171,11 +189,17 @@ func (n *netChecks) list() []NetStatus {
 // port. Treating that as down would cry wolf on every device whose port guess
 // was wrong — and guessing is exactly what happens when no port is configured.
 // Silence (a timeout) is the only thing that means gone.
-func probe(ctx context.Context, address string, port int) (up bool, ms float64, err error) {
+func probe(ctx context.Context, address string, port int) (up bool, ms float64, answered int, err error) {
 	ports := []int{port}
 	if port == 0 {
 		ports = commonPorts
 	}
+	// A refusal proves the host is alive, but says nothing about where its
+	// interface lives — so when several ports are in play it is remembered and
+	// the scan continues. Stopping at the first refusal is how a firewall that
+	// rejects 80 and serves on 443 got recorded as "up on port 80", and then
+	// linked to http://host, which opens a blank page.
+	sawRefused, refusedMs := false, float64(0)
 	for _, p := range ports {
 		start := time.Now()
 		d := net.Dialer{Timeout: checkTimeout}
@@ -183,14 +207,70 @@ func probe(ctx context.Context, address string, port int) (up bool, ms float64, 
 		elapsed := float64(time.Since(start).Microseconds()) / 1000
 		if dialErr == nil {
 			conn.Close()
-			return true, elapsed, nil
+			return true, elapsed, p, nil
 		}
 		err = dialErr
-		if refused(dialErr) {
-			return true, elapsed, nil
+		if refused(dialErr) && !sawRefused {
+			sawRefused, refusedMs = true, elapsed
 		}
 	}
-	return false, 0, err
+	if sawRefused {
+		return true, refusedMs, 0, nil
+	}
+	return false, 0, 0, err
+}
+
+// urlFor writes the URL for a scheme and port, leaving the port off when it is
+// that scheme's default so the link reads the way an operator would type it.
+func urlFor(scheme, host string, port int) string {
+	if (scheme == "http" && port == 80) || (scheme == "https" && port == 443) {
+		return scheme + "://" + host
+	}
+	return scheme + "://" + net.JoinHostPort(host, strconv.Itoa(port))
+}
+
+// deviceCandidates lists the URLs worth trying for a device found on a port,
+// most likely first. Nil means this port serves no web interface.
+func deviceCandidates(c NetCheck, port int) []string {
+	if c.URL != "" {
+		return appCandidates(c.URL)
+	}
+	if port == 0 {
+		port = c.Port
+	}
+	switch port {
+	case 0, 22, 139, 445, 3389, 9100:
+		return nil // not web interfaces; a link would only mislead
+	case 80, 8000, 8080:
+		return []string{urlFor("http", c.Address, port), urlFor("https", c.Address, port)}
+	}
+	// Everything else leads with https. Appliances that serve plaintext on an
+	// unusual port are rarer than ones that serve TLS, and the fallback costs
+	// one request on a check that already runs a minute apart.
+	return []string{urlFor("https", c.Address, port), urlFor("http", c.Address, port)}
+}
+
+// deviceWebURL asks the device which scheme it actually serves instead of
+// inferring one from the port number, and returns "" if it serves neither.
+//
+// The inference was wrong often enough to matter: an appliance answering TLS on
+// 8080, or anything reached through the common-port scan, produced a link that
+// opened a blank page. Trying both is a fact where the port number was a guess.
+func deviceWebURL(ctx context.Context, c NetCheck, port int) string {
+	for _, u := range deviceCandidates(c, port) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+		if err != nil {
+			continue
+		}
+		req.Header.Set("User-Agent", "autormm-healthcheck")
+		resp, err := appClient.Do(req)
+		if err != nil {
+			continue
+		}
+		resp.Body.Close()
+		return u
+	}
+	return ""
 }
 
 // appClient checks that an application is serving, without judging what it
@@ -268,8 +348,17 @@ func probeCheck(ctx context.Context, c NetCheck) (up bool, ms float64, code int,
 		}
 		return probeApp(ctx, c.URL)
 	}
-	up, ms, err = probe(ctx, c.Address, c.Port)
-	return up, ms, 0, c.WebURL(), err
+	up, ms, answered, err := probe(ctx, c.Address, c.Port)
+	if !up {
+		return false, 0, 0, c.WebURL(), err
+	}
+	// Reachable: now find out what it actually serves, so the card links
+	// somewhere that loads. WebURL stays the fallback for a device that answers
+	// TCP but no HTTP, which still deserves the operator's best guess.
+	if u := deviceWebURL(ctx, c, answered); u != "" {
+		return true, ms, 0, u, nil
+	}
+	return true, ms, 0, c.WebURL(), nil
 }
 
 // refused reports whether the peer actively rejected the connection, as opposed
@@ -299,6 +388,22 @@ func (n *netChecks) runChecks(ctx context.Context, now time.Time) []NetStatus {
 	}
 	n.mu.RUnlock()
 
+	// Anything identified by MAC needs its current address before it can be
+	// checked. Sweep only when at least one is unresolved: the traffic is
+	// justified by looking for something, not by habit.
+	needSweep := false
+	for _, c := range due {
+		if c.MAC != "" {
+			if _, ok := n.macs.lookup(c.MAC); !ok {
+				needSweep = true
+				break
+			}
+		}
+	}
+	if hasMACs(due) {
+		n.macs.refresh(ctx, needSweep)
+	}
+
 	// Probed concurrently: a dozen devices each waiting up to four seconds
 	// would otherwise take the better part of a minute in series, and the slow
 	// ones are precisely the ones in trouble.
@@ -308,6 +413,7 @@ func (n *netChecks) runChecks(ctx context.Context, now time.Time) []NetStatus {
 		ms   float64
 		code int
 		used string // the URL that actually answered
+		ip   string // where a MAC-identified device was found
 		e    error
 	}
 	results := make(chan result, len(due))
@@ -316,8 +422,17 @@ func (n *netChecks) runChecks(ctx context.Context, now time.Time) []NetStatus {
 		wg.Add(1)
 		go func(c NetCheck) {
 			defer wg.Done()
+			found := ""
+			if c.MAC != "" {
+				if ip, ok := n.macs.lookup(c.MAC); ok {
+					c.Address, found = ip, ip
+				}
+			}
 			up, ms, code, used, err := probeCheck(ctx, c)
-			results <- result{c, up, ms, code, used, err}
+			if c.MAC != "" && found == "" && err == nil {
+				err = errors.New("no device with that MAC found on the hub's networks")
+			}
+			results <- result{c, up, ms, code, used, found, err}
 		}(c)
 	}
 	wg.Wait()
@@ -332,15 +447,20 @@ func (n *netChecks) runChecks(ctx context.Context, now time.Time) []NetStatus {
 		if web == "" {
 			web = r.c.WebURL()
 		}
-		st := &NetStatus{NetCheck: r.c, Web: web, Up: r.up, LatencyMs: r.ms, Code: r.code, Checked: now}
-		if r.e != nil && !r.up {
+		// One up-state, decided here and used for the record, the error and the
+		// alert alike. A device tracked by MAC that was not found is down even
+		// if the address it used to hold answers, because whatever answered is
+		// somebody else.
+		up := r.up && !(r.c.MAC != "" && r.ip == "")
+		st := &NetStatus{NetCheck: r.c, Web: web, Up: up, LatencyMs: r.ms, Code: r.code, IP: r.ip, Checked: now}
+		if r.e != nil && !up {
 			st.Error = r.e.Error()
 		}
 		switch {
 		case prev == nil:
 			st.Since = now
 			changed = append(changed, *st) // first result is worth reporting
-		case prev.Up != r.up:
+		case prev.Up != up:
 			st.Since = now
 			changed = append(changed, *st)
 		default:
@@ -453,7 +573,15 @@ func (s *Server) handleNetChecks(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		c.Address, c.Port = normalizeAddress(c.Address, c.Port)
-		if !c.IsApp() && c.Address == "" {
+		if c.MAC != "" {
+			if m := normalizeMAC(c.MAC); m != "" {
+				c.MAC = m
+			} else {
+				http.Error(w, "that MAC address is not valid", http.StatusBadRequest)
+				return
+			}
+		}
+		if !c.IsApp() && c.Address == "" && c.MAC == "" {
 			http.Error(w, "an address is required for a device", http.StatusBadRequest)
 			return
 		}

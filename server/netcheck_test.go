@@ -27,7 +27,7 @@ func TestProbeReachableDevice(t *testing.T) {
 	host, port, _ := net.SplitHostPort(ln.Addr().String())
 	p := atoiTest(t, port)
 
-	up, ms, err := probe(context.Background(), host, p)
+	up, ms, _, err := probe(context.Background(), host, p)
 	if !up || err != nil {
 		t.Fatalf("a listening device reported down: up=%v err=%v", up, err)
 	}
@@ -45,7 +45,7 @@ func TestProbeTreatsRefusedAsUp(t *testing.T) {
 	ln.Close() // nothing is listening now, but the host answers
 
 	p := atoiTest(t, port)
-	up, _, _ := probe(context.Background(), "127.0.0.1", p)
+	up, _, _, _ := probe(context.Background(), "127.0.0.1", p)
 	if !up {
 		t.Error("a refused connection was reported as an unreachable device")
 	}
@@ -56,7 +56,7 @@ func TestProbeUnreachableAddressIsDown(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 	defer cancel()
 	// RFC 5737 documentation range: guaranteed not to be routable anywhere.
-	up, _, err := probe(ctx, "192.0.2.1", 9)
+	up, _, _, err := probe(ctx, "192.0.2.1", 9)
 	if up {
 		t.Error("an unroutable address reported as up")
 	}
