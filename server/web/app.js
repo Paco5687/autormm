@@ -1830,6 +1830,17 @@ function renderMonitorSection(which, list) {
     if (!c.up && c.error) sub.title = c.error;
     // An SNMP failure does not make the device unreachable, so it is a tooltip
     // and a marker rather than a red dot that would misreport the device.
+    // A learned MAC is worth showing: it is the difference between a device
+    // that survives a DHCP change and one that does not, and it happened
+    // without anyone asking for it.
+    const detail = snmpDetail(c.snmp);
+    if (detail) sub.title = detail;
+    if (c.mac && c.mac_learned) {
+      sub.title = (sub.title ? sub.title + '\n' : '') +
+        'MAC learned automatically (' + c.mac + ') — this device is now found ' +
+        'by MAC if its address changes, and still checked at its address if the ' +
+        'MAC cannot be found.';
+    }
     if (c.snmp && c.snmp.error) {
       sub.title = 'SNMP: ' + c.snmp.error;
       name.textContent += ' ⚠';
@@ -1880,6 +1891,10 @@ function snmpSummary(s) {
     }
     if (s.ups.battery_low) bits.push('battery low');
     if (s.ups.charge_percent >= 0) bits.push(`battery ${s.ups.charge_percent}%`);
+    // How long it would last and how hard it is working — the two figures that
+    // decide whether a power cut is a shrug or a scramble.
+    if (s.ups.minutes_remaining) bits.push(`${s.ups.minutes_remaining}m left`);
+    if (s.ups.load_percent) bits.push(`${s.ups.load_percent}% load`);
   }
   // Only supplies that reported a figure; the MIB's "will not say" is not 0%.
   const known = (s.supplies || []).filter(x => x.percent >= 0);
@@ -1889,9 +1904,66 @@ function snmpSummary(s) {
     const low = known.reduce((a, b) => (a.percent <= b.percent ? a : b));
     bits.push(`${low.percent}% ${low.name}`);
   }
-  if (s.if_total) bits.push(`${s.if_up}/${s.if_total} up`);
+  // Host-style readings come before the port count: a firewall's CPU and memory
+  // are what you look at, and its interface total counts loopback and pflog
+  // alongside the real ports anyway.
+  if (s.cpu_percent) bits.push(`cpu ${s.cpu_percent}%`);
+  if (s.mem_percent) bits.push(`mem ${s.mem_percent}%`);
+  if (s.disk_percent) bits.push(`disk ${s.disk_percent}%`);
+  if (s.pf_states) {
+    const text = s.pf_state_limit
+      ? `${fmtCount(s.pf_states)}/${fmtCount(s.pf_state_limit)} states`
+      : `${fmtCount(s.pf_states)} states`;
+    // A firewall runs out of state table before it runs out of anything else,
+    // so when it is filling up it goes to the front rather than being trimmed
+    // off the end behind cpu and memory.
+    if (pfStatePressure(s) >= 0.8) bits.unshift(text);
+    else bits.push(text);
+  }
+  // Not on a UPS: its management card reports a loopback and an ethernet port,
+  // so "2/2 up" is two words of nothing next to the battery state.
+  if (s.if_total && !s.ups) bits.push(`${s.if_up}/${s.if_total} up`);
   if (!bits.length && s.uptime_secs) bits.push('up ' + fmtUptime(s.uptime_secs));
-  return bits.slice(0, 2).join(' · ');
+  return bits.slice(0, 3).join(' · ');
+}
+
+// pfStatePressure is how full the state table is, 0 when not reported.
+function pfStatePressure(s) {
+  if (!s || !s.pf_states || !s.pf_state_limit) return 0;
+  return s.pf_states / s.pf_state_limit;
+}
+
+// fmtCount keeps a state table's occupancy readable: "42.1k", not "42133".
+function fmtCount(n) {
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
+  return String(n);
+}
+
+// snmpDetail is everything the device reported, for the tooltip. The subtitle
+// has room for three figures; a firewall reports rather more than three.
+function snmpDetail(s) {
+  if (!s) return '';
+  const rows = [];
+  if (s.sys_name) rows.push('name: ' + s.sys_name);
+  if (s.sys_descr) rows.push(s.sys_descr);
+  if (s.uptime_secs) rows.push('uptime: ' + fmtUptime(s.uptime_secs));
+  if (s.cpu_percent) rows.push('cpu: ' + s.cpu_percent + '%');
+  if (s.load1) rows.push('load: ' + s.load1.toFixed(2));
+  if (s.mem_percent) rows.push('memory: ' + s.mem_percent + '%');
+  if (s.disk_percent) rows.push('disk: ' + s.disk_percent + '%' + (s.disk_name ? ' (' + s.disk_name + ')' : ''));
+  if (s.pf_states) rows.push('pf states: ' + s.pf_states + (s.pf_state_limit ? ' of ' + s.pf_state_limit : ''));
+  if (s.if_total) rows.push('interfaces: ' + s.if_up + ' up of ' + s.if_total);
+  for (const x of (s.supplies || [])) {
+    rows.push(x.name + ': ' + (x.percent >= 0 ? x.percent + '%' : 'not reported'));
+  }
+  if (s.ups) {
+    rows.push('battery: ' + (s.ups.charge_percent >= 0 ? s.ups.charge_percent + '%' : 'unknown') +
+      (s.ups.on_battery ? ' — ON BATTERY' : ''));
+    if (s.ups.minutes_remaining) rows.push('runtime: ' + s.ups.minutes_remaining + ' minutes');
+    if (s.ups.load_percent) rows.push('output load: ' + s.ups.load_percent + '%');
+  }
+  if (s.version) rows.push('(SNMP ' + s.version + ')');
+  return rows.join('\n');
 }
 
 // snmpLevel grades a reading, so a UPS running on battery is not the same
@@ -1903,6 +1975,11 @@ function snmpLevel(s) {
   if (known.some(x => x.percent <= 10)) return 'bad';
   if (known.some(x => x.percent <= 25)) return 'warn';
   if (s.if_total && s.if_up === 0) return 'bad';
+  // A full state table drops connections; a filling one is the warning before.
+  const pf = pfStatePressure(s);
+  if (pf >= 0.9) return 'bad';
+  if (pf >= 0.8) return 'warn';
+  if (s.disk_percent >= 90 || s.mem_percent >= 95) return 'warn';
   return '';
 }
 
@@ -1968,6 +2045,11 @@ function openCheckEditor(c) {
   set('netTags', c.tags);
   set('netURL', c.url);
   set('netMAC', c.mac);
+  // A learned MAC is shown in the field so it can be corrected or cleared;
+  // saving it makes it the operator's, which is the stricter interpretation.
+  document.getElementById('netMACHint').textContent = c.mac_learned
+    ? 'learned automatically — saving this form adopts it as fixed'
+    : '';
   // The secrets come back as a placeholder, and leaving it is what tells the
   // hub to keep what it has.
   set('netSNMP', c.snmp);
@@ -2093,6 +2175,10 @@ document.getElementById('netSave').addEventListener('click', async () => {
       snmp_auth_pass: document.getElementById('netSNMPAuthPass').value,
       snmp_priv_proto: document.getElementById('netSNMPPrivProto').value,
       snmp_priv_pass: document.getElementById('netSNMPPrivPass').value,
+      // Saving a form makes whatever is in the MAC box the operator's own,
+      // which is the stricter reading: not finding it then means the device is
+      // missing rather than merely forgotten by ARP.
+      mac_learned: false,
       ...(editingCheck ? { id: editingCheck } : {}),
     });
     resetCheckEditor();

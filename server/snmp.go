@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,14 +30,24 @@ import (
 // SNMPInfo is what one poll learned. Every field is optional: a switch answers
 // the interface questions and not the printer ones, and that is not a failure.
 type SNMPInfo struct {
-	SysName    string    `json:"sys_name,omitempty"`
-	SysDescr   string    `json:"sys_descr,omitempty"`
-	UptimeSecs int64     `json:"uptime_secs,omitempty"`
-	IfTotal    int       `json:"if_total,omitempty"`
-	IfUp       int       `json:"if_up,omitempty"`
-	Supplies   []Supply  `json:"supplies,omitempty"` // printer toner / ink
-	UPS        *UPSInfo  `json:"ups,omitempty"`
-	Polled     time.Time `json:"polled"`
+	SysName    string   `json:"sys_name,omitempty"`
+	SysDescr   string   `json:"sys_descr,omitempty"`
+	UptimeSecs int64    `json:"uptime_secs,omitempty"`
+	IfTotal    int      `json:"if_total,omitempty"`
+	IfUp       int      `json:"if_up,omitempty"`
+	Supplies   []Supply `json:"supplies,omitempty"` // printer toner / ink
+	UPS        *UPSInfo `json:"ups,omitempty"`
+	// Host-style readings, where the device implements Host Resources or UCD.
+	// -1 means the device did not report it, which is not the same as zero.
+	CPUPercent  int     `json:"cpu_percent,omitempty"`
+	MemPercent  int     `json:"mem_percent,omitempty"`
+	DiskPercent int     `json:"disk_percent,omitempty"`
+	DiskName    string  `json:"disk_name,omitempty"` // the fullest filesystem
+	Load1       float64 `json:"load1,omitempty"`
+	// PFStates is pfSense's state table occupancy, and PFStateLimit its ceiling.
+	PFStates     int       `json:"pf_states,omitempty"`
+	PFStateLimit int       `json:"pf_state_limit,omitempty"`
+	Polled       time.Time `json:"polled"`
 	// Version is which protocol version actually answered, which is worth
 	// showing when the setting was left on automatic.
 	Version string `json:"version,omitempty"`
@@ -55,6 +66,12 @@ type UPSInfo struct {
 	OnBattery        bool `json:"on_battery"`
 	SecondsOnBattery int  `json:"seconds_on_battery,omitempty"`
 	BatteryLow       bool `json:"battery_low"`
+	// MinutesRemaining is the UPS's own estimate of runtime left, which is the
+	// figure that answers "do I have time to shut things down properly".
+	MinutesRemaining int `json:"minutes_remaining,omitempty"`
+	// LoadPercent is output load against capacity: what tells you whether the
+	// runtime estimate will hold, and whether the thing is overloaded.
+	LoadPercent int `json:"load_percent,omitempty"`
 }
 
 // Standard OIDs. Named rather than inlined because a mistyped OID returns
@@ -70,9 +87,33 @@ const (
 	oidSupplyMax   = "1.3.6.1.2.1.43.11.1.1.8"
 	oidSupplyLevel = "1.3.6.1.2.1.43.11.1.1.9"
 
+	// Host Resources: the standard way a device reports what a host agent would.
+	// Works well beyond pfSense — plenty of switches, NAS units and printers
+	// implement it too.
+	oidHrProcessorLoad = "1.3.6.1.2.1.25.3.3.1.2"
+	oidHrStorageType   = "1.3.6.1.2.1.25.2.3.1.2"
+	oidHrStorageDescr  = "1.3.6.1.2.1.25.2.3.1.3"
+	oidHrStorageSize   = "1.3.6.1.2.1.25.2.3.1.5"
+	oidHrStorageUsed   = "1.3.6.1.2.1.25.2.3.1.6"
+
+	// Storage rows are typed by OID rather than by their description, which is
+	// free text and differs per vendor ("Real Memory", "Physical memory", …).
+	hrStorageRAM       = "1.3.6.1.2.1.25.2.1.2"
+	hrStorageFixedDisk = "1.3.6.1.2.1.25.2.1.4"
+
+	// UCD: load average, reported as strings rather than numbers.
+	oidUCDLoad1 = "1.3.6.1.4.1.2021.10.1.3.1"
+
+	// pfSense's PF state table occupancy. Vendor-specific, and the figure a
+	// firewall runs out of before it runs out of anything else.
+	oidPFStateCount = "1.3.6.1.4.1.12325.1.200.1.3.1.0"
+	oidPFStateLimit = "1.3.6.1.4.1.12325.1.200.1.3.2.0"
+
 	oidUPSBatteryStatus = "1.3.6.1.2.1.33.1.2.1.0" // 2 = normal, 3 = low, 4 = depleted
 	oidUPSSecondsOnBatt = "1.3.6.1.2.1.33.1.2.2.0"
+	oidUPSMinutesRemain = "1.3.6.1.2.1.33.1.2.3.0"
 	oidUPSChargeRemain  = "1.3.6.1.2.1.33.1.2.4.0"
+	oidUPSOutputLoad    = "1.3.6.1.2.1.33.1.4.4.1.5" // per output line
 )
 
 // maxWalkRows bounds a table walk. A switch has tens of ports and a printer a
@@ -165,6 +206,9 @@ func snmpPollVersion(ctx context.Context, host string, port int, creds SNMPCreds
 	info.IfTotal, info.IfUp = pollInterfaces(g)
 	info.Supplies = pollSupplies(g)
 	info.UPS = pollUPS(g)
+	pollHostResources(g, info)
+	pollUCD(g, info)
+	pollPF(g, info)
 	return info
 }
 
@@ -229,7 +273,8 @@ func pollSupplies(g *gosnmp.GoSNMP) []Supply {
 // pollUPS reads the UPS battery group. Most devices are not a UPS, so every
 // error here means "not a UPS" rather than a fault worth reporting.
 func pollUPS(g *gosnmp.GoSNMP) *UPSInfo {
-	res, err := g.Get([]string{oidUPSBatteryStatus, oidUPSSecondsOnBatt, oidUPSChargeRemain})
+	res, err := g.Get([]string{oidUPSBatteryStatus, oidUPSSecondsOnBatt,
+		oidUPSMinutesRemain, oidUPSChargeRemain})
 	if err != nil {
 		return nil
 	}
@@ -247,6 +292,8 @@ func pollUPS(g *gosnmp.GoSNMP) *UPSInfo {
 		case oidUPSSecondsOnBatt:
 			u.SecondsOnBattery = n
 			u.OnBattery = n > 0
+		case oidUPSMinutesRemain:
+			u.MinutesRemaining = n
 		case oidUPSChargeRemain:
 			u.ChargePercent = n
 		}
@@ -254,7 +301,143 @@ func pollUPS(g *gosnmp.GoSNMP) *UPSInfo {
 	if !answered {
 		return nil
 	}
+	// Load is a table indexed by output line. The busiest line is the one that
+	// matters, and single-phase gear — which is all of it, here — has one.
+	if rows, err := walk(g, oidUPSOutputLoad); err == nil {
+		for _, r := range rows {
+			if n, ok := toInt(r.Value); ok && n > u.LoadPercent {
+				u.LoadPercent = n
+			}
+		}
+	}
 	return u
+}
+
+// pollHostResources reads CPU, memory and disk the way a host agent would.
+//
+// Every field is optional: a switch implementing only the system group leaves
+// all of this empty, which is not a failure.
+func pollHostResources(g *gosnmp.GoSNMP, info *SNMPInfo) {
+	// Processor load is one row per core; the average is the figure that means
+	// what "CPU%" means everywhere else.
+	if rows, err := walk(g, oidHrProcessorLoad); err == nil && len(rows) > 0 {
+		sum, n := 0, 0
+		for _, r := range rows {
+			if v, ok := toInt(r.Value); ok {
+				sum, n = sum+v, n+1
+			}
+		}
+		if n > 0 {
+			info.CPUPercent = sum / n
+		}
+	}
+
+	types, err := walk(g, oidHrStorageType)
+	if err != nil || len(types) == 0 {
+		return
+	}
+	descrs := indexBySuffix(mustWalk(g, oidHrStorageDescr))
+	sizes := indexBySuffix(mustWalk(g, oidHrStorageSize))
+	useds := indexBySuffix(mustWalk(g, oidHrStorageUsed))
+
+	for _, t := range types {
+		idx := suffix(t.Name)
+		size, okSize := toInt64(sizes[idx])
+		used, okUsed := toInt64(useds[idx])
+		if !okSize || !okUsed || size <= 0 {
+			continue
+		}
+		// Allocation units cancel out of a percentage, so they are not needed
+		// and cannot overflow anything on the way.
+		pct := int(used * 100 / size)
+		switch oidString(t.Value) {
+		case hrStorageRAM:
+			info.MemPercent = pct
+		case hrStorageFixedDisk:
+			// The fullest filesystem is the one worth reporting; a device with
+			// six of them has one that will fill first.
+			if pct > info.DiskPercent {
+				info.DiskPercent, info.DiskName = pct, snmpStringValue(descrs[idx])
+			}
+		}
+	}
+}
+
+// pollUCD reads the load average, which UCD reports as text.
+func pollUCD(g *gosnmp.GoSNMP, info *SNMPInfo) {
+	res, err := g.Get([]string{oidUCDLoad1})
+	if err != nil || len(res.Variables) == 0 {
+		return
+	}
+	if f, err := strconv.ParseFloat(snmpStringValue(res.Variables[0].Value), 64); err == nil {
+		info.Load1 = f
+	}
+}
+
+// pollPF reads pfSense's state table. Silently absent on anything else.
+func pollPF(g *gosnmp.GoSNMP, info *SNMPInfo) {
+	res, err := g.Get([]string{oidPFStateCount, oidPFStateLimit})
+	if err != nil {
+		return
+	}
+	for _, v := range res.Variables {
+		n, ok := toInt(v.Value)
+		if !ok {
+			continue
+		}
+		switch strings.TrimPrefix(v.Name, ".") {
+		case oidPFStateCount:
+			info.PFStates = n
+		case oidPFStateLimit:
+			info.PFStateLimit = n
+		}
+	}
+}
+
+// mustWalk is walk with the error dropped, for the columns that are only
+// useful alongside one that already succeeded.
+func mustWalk(g *gosnmp.GoSNMP, root string) []gosnmp.SnmpPDU {
+	rows, _ := walk(g, root)
+	return rows
+}
+
+// toInt64 handles the counter widths that storage sizes arrive as, which can
+// exceed what an int holds on a 32-bit build.
+func toInt64(v any) (int64, bool) {
+	switch n := v.(type) {
+	case int:
+		return int64(n), true
+	case int64:
+		return n, true
+	case uint:
+		return int64(n), true
+	case uint32:
+		return int64(n), true
+	case uint64:
+		return int64(n), true
+	}
+	return 0, false
+}
+
+// oidString renders an ObjectIdentifier value, which is how a storage row says
+// what kind of storage it is.
+func oidString(v any) string {
+	s, ok := v.(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimPrefix(s, ".")
+}
+
+// snmpStringValue is snmpString for a bare value rather than a whole PDU.
+func snmpStringValue(v any) string {
+	switch s := v.(type) {
+	case []byte:
+		return strings.TrimSpace(string(s))
+	case string:
+		return strings.TrimSpace(s)
+	}
+	return ""
 }
 
 // walk reads a table, bounded so an unexpected device cannot hold the poll open.

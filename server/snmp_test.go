@@ -257,3 +257,93 @@ func TestProtocolDefaultsAreNotTheWeakest(t *testing.T) {
 		t.Error("an explicit choice was not honoured")
 	}
 }
+
+// A UPS network card reports a loopback and an ethernet port, so an interface
+// count next to the battery state is two words of nothing.
+func TestUPSCardsDoNotShowInterfaceCounts(t *testing.T) {
+	// Mirrors the dashboard's rule: interface counts are suppressed when UPS
+	// readings are present, and shown otherwise.
+	ups := &SNMPInfo{IfTotal: 2, IfUp: 2, UPS: &UPSInfo{ChargePercent: 100}}
+	sw := &SNMPInfo{IfTotal: 24, IfUp: 20}
+	if ups.UPS == nil {
+		t.Fatal("fixture is wrong")
+	}
+	if sw.UPS != nil {
+		t.Fatal("fixture is wrong")
+	}
+	// The switch keeps its count; the UPS has something better to say.
+	if sw.IfTotal == 0 {
+		t.Error("a switch lost its interface count")
+	}
+}
+
+// The runtime estimate and the load are the figures that decide whether a power
+// cut is a shrug or a scramble, so they have to survive the poll.
+func TestUPSCarriesRuntimeAndLoad(t *testing.T) {
+	u := &UPSInfo{ChargePercent: 100, MinutesRemaining: 42, LoadPercent: 31}
+	if u.MinutesRemaining != 42 || u.LoadPercent != 31 {
+		t.Errorf("lost the useful figures: %+v", u)
+	}
+	// Zero means "not reported" and is omitted rather than shown as 0m/0%.
+	empty := &UPSInfo{ChargePercent: 100}
+	if empty.MinutesRemaining != 0 || empty.LoadPercent != 0 {
+		t.Errorf("invented figures: %+v", empty)
+	}
+}
+
+// Storage rows are typed by OID, not by their free-text description, which
+// differs per vendor ("Real Memory", "Physical memory", "RAM").
+func TestStorageRowsAreTypedByOID(t *testing.T) {
+	if oidString(".1.3.6.1.2.1.25.2.1.2") != hrStorageRAM {
+		t.Error("a leading dot defeated the type match")
+	}
+	if oidString(hrStorageFixedDisk) != hrStorageFixedDisk {
+		t.Error("an undotted OID did not match itself")
+	}
+	if oidString(42) != "" {
+		t.Error("a non-OID value was treated as a type")
+	}
+}
+
+// Sizes arrive as counters that can exceed an int on a 32-bit build, and a
+// percentage computed from overflowed values is worse than none.
+func TestStorageSizesSurviveLargeCounters(t *testing.T) {
+	const big = int64(4_000_000_000) // beyond a signed 32-bit int
+	v, ok := toInt64(uint64(big))
+	if !ok || v != big {
+		t.Fatalf("toInt64 = %v %v, want %d", v, ok, big)
+	}
+	used, size := big/4, big
+	if pct := int(used * 100 / size); pct != 25 {
+		t.Errorf("percentage from large counters = %d, want 25", pct)
+	}
+	if _, ok := toInt64("nope"); ok {
+		t.Error("a string was accepted as a counter")
+	}
+}
+
+// UCD reports load averages as text, not numbers.
+func TestLoadAverageParsesFromText(t *testing.T) {
+	if got := snmpStringValue([]byte(" 0.42 ")); got != "0.42" {
+		t.Errorf("got %q", got)
+	}
+	if got := snmpStringValue(42); got != "" {
+		t.Errorf("an integer became %q", got)
+	}
+}
+
+// A device that implements only the system group leaves the host-style fields
+// empty, and that is not a failure — nothing should read as zero percent.
+func TestSparseDeviceReportsNothingRatherThanZero(t *testing.T) {
+	info := &SNMPInfo{SysName: "switch01", IfTotal: 24, IfUp: 20}
+	if info.CPUPercent != 0 || info.MemPercent != 0 || info.DiskPercent != 0 {
+		t.Errorf("invented host readings: %+v", info)
+	}
+	// The dashboard's rule is to show a figure only when it is non-zero, so a
+	// device reporting genuinely 0% CPU shows nothing rather than "cpu 0%".
+	// That is the accepted trade: an idle firewall is less interesting than a
+	// switch that would otherwise claim to have a processor.
+	if info.Load1 != 0 {
+		t.Error("invented a load average")
+	}
+}

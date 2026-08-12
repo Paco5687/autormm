@@ -58,6 +58,13 @@ type NetCheck struct {
 	SNMPAuthPass  string `json:"snmp_auth_pass,omitempty"`
 	SNMPPrivProto string `json:"snmp_priv_proto,omitempty"` // DES | AES | AES192 | AES256
 	SNMPPrivPass  string `json:"snmp_priv_pass,omitempty"`
+	// MACLearned marks a MAC the hub worked out itself rather than one the
+	// operator supplied. A learned MAC is a hint: if it cannot be found the
+	// check falls back to the recorded address, because the device was being
+	// monitored perfectly well by address before the hub got clever. A MAC that
+	// was typed in is authoritative, and not finding it means the device is not
+	// there — see the up/down handling below.
+	MACLearned bool `json:"mac_learned,omitempty"`
 	// MAC identifies a device that gets its address from DHCP, where writing
 	// down an IP is writing down something that will change. When set, the
 	// address is looked up from the hub's ARP table at check time and Address
@@ -138,6 +145,17 @@ type netChecks struct {
 	checks map[string]*NetCheck
 	state  map[string]*NetStatus
 	macs   *macIndex
+}
+
+// canLearnMAC reports whether any check is watched by address alone, and so
+// could have its MAC filled in.
+func canLearnMAC(list []NetCheck) bool {
+	for _, c := range list {
+		if c.MAC == "" && c.Address != "" && !c.IsApp() {
+			return true
+		}
+	}
+	return false
 }
 
 // hasMACs reports whether any of these checks is identified by MAC.
@@ -453,7 +471,11 @@ func (n *netChecks) runChecks(ctx context.Context, now time.Time) []NetStatus {
 			}
 		}
 	}
-	if hasMACs(due) {
+	// Refreshed whenever anything could use it — either to resolve a MAC or to
+	// learn one. No sweep is needed to learn: probing a device is itself what
+	// puts it in the hub's ARP table, so by the time a check has succeeded the
+	// answer is already there for the taking.
+	if hasMACs(due) || canLearnMAC(due) {
 		n.macs.refresh(ctx, needSweep)
 	}
 
@@ -499,8 +521,8 @@ func (n *netChecks) runChecks(ctx context.Context, now time.Time) []NetStatus {
 	close(results)
 
 	var changed []NetStatus
+	learned := false
 	n.mu.Lock()
-	defer n.mu.Unlock()
 	for r := range results {
 		prev := n.state[r.c.ID]
 		web := r.used // whichever scheme answered, so the card links to that one
@@ -511,7 +533,10 @@ func (n *netChecks) runChecks(ctx context.Context, now time.Time) []NetStatus {
 		// alert alike. A device tracked by MAC that was not found is down even
 		// if the address it used to hold answers, because whatever answered is
 		// somebody else.
-		up := r.up && !(r.c.MAC != "" && r.ip == "")
+		// A typed-in MAC that cannot be found means the device is not there.
+		// A learned one means only that ARP has forgotten it, and the address
+		// it was always checked at still stands.
+		up := r.up && !(r.c.MAC != "" && !r.c.MACLearned && r.ip == "")
 		st := &NetStatus{NetCheck: r.c, Web: web, Up: up, LatencyMs: r.ms, Code: r.code, IP: r.ip, Checked: now}
 		// A poll that failed keeps the previous reading rather than replacing it
 		// with nothing: one dropped UDP packet should not blank a card.
@@ -540,6 +565,30 @@ func (n *netChecks) runChecks(ctx context.Context, now time.Time) []NetStatus {
 			st.Since = prev.Since
 		}
 		n.state[r.c.ID] = st
+
+		// Fill in the MAC of a device watched by address alone, so it keeps
+		// working when DHCP moves it. Only for a device that answered: the ARP
+		// entry for something unreachable may belong to whoever holds that
+		// address now, and binding a check to the wrong machine permanently is
+		// worse than not binding it at all.
+		if stored := n.checks[r.c.ID]; stored != nil && stored.MAC == "" &&
+			!stored.IsApp() && up && stored.Address != "" {
+			if mac := n.macs.macFor(stored.Address); mac != "" {
+				stored.MAC, stored.MACLearned = mac, true
+				st.MAC, st.MACLearned = mac, true
+				learned = true
+			}
+		}
+	}
+	n.mu.Unlock()
+
+	// Saved after the lock is released and outside the results loop: save takes
+	// the lock itself, and one write covers a whole round however many MACs
+	// were learned in it.
+	if learned {
+		if err := n.save(); err != nil {
+			log.Printf("netcheck: could not persist learned MACs: %v", err)
+		}
 	}
 	return changed
 }

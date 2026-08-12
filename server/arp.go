@@ -63,6 +63,21 @@ func (m *macIndex) snapshot() map[string]string {
 	return out
 }
 
+// macFor is the reverse lookup: which MAC currently holds this address.
+func (m *macIndex) macFor(ip string) string {
+	if ip == "" {
+		return ""
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for mac, addr := range m.byMAC {
+		if addr == ip {
+			return mac
+		}
+	}
+	return ""
+}
+
 // refresh rebuilds the index. sweep provokes ARP entries for devices the hub
 // has not spoken to lately, which is most of them — it is only worth the
 // traffic when something is actually being looked for.
