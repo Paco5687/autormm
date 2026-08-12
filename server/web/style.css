@@ -29,16 +29,34 @@ body {
   backdrop-filter: blur(6px); z-index: 5;
 }
 .brand { font-weight: 700; letter-spacing: .3px; font-size: 16px; }
+/* The icon-only buttons are a cluster of tools, not peers of "Add host" — a
+   hairline keeps the eye from reading eight equal-weight controls. */
+.tools { display: flex; align-items: center; gap: 6px; padding-left: 10px; margin-left: 4px; border-left: 1px solid var(--line); }
 .brand .dot { color: var(--ok); margin-left: 4px; font-size: 10px; vertical-align: middle; }
-.summary { color: var(--muted); font-size: 13px; }
+.summary { color: var(--muted); font-size: 13px; white-space: nowrap; }
+.hostsearch {
+  background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
+  border-radius: 8px; padding: 6px 10px; font-size: 13px; width: 170px;
+}
+.hostsearch::placeholder { color: var(--muted); }
+.hostsearch:focus { outline: none; border-color: var(--accent); }
 .alert-badge {
   font-size: 12px; padding: 3px 10px; border-radius: 999px; font-weight: 600;
   background: rgba(248,81,73,.18); color: var(--bad); border: 1px solid rgba(248,81,73,.4);
+  white-space: nowrap;
 }
+
+
 
 .btn {
   background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
   border-radius: 8px; padding: 6px 12px; cursor: pointer; font-size: 13px;
+  white-space: nowrap;
+}
+/* The one action on this bar that creates something. */
+.btn.primary { border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); }
+@media (hover: hover) {
+  .btn.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 16%, transparent); }
 }
 /* Hover feedback only where there is a real pointer. A touchscreen emulates
    :hover on tap and leaves it stuck until something else is tapped, so a
@@ -61,8 +79,18 @@ body {
 .fb-row .fb-size { color: var(--muted); flex-shrink: 0; }
 .fb-row.fb-dir .fb-name { color: var(--accent); }
 .fb-empty { padding: 14px; }
-.netsec { padding: 0 20px 20px; }
-.netsec-head { display: flex; align-items: center; gap: 10px; padding: 6px 0 10px; }
+.netsec { padding: 0 20px 22px; }
+/* A real section rule, so Apps and Network devices read as separate shelves
+   rather than as more cards that happen to be smaller. */
+.netsec-head {
+  display: flex; align-items: baseline; gap: 10px; padding: 4px 0 10px;
+  border-top: 1px solid var(--line); margin-top: 4px; padding-top: 14px;
+}
+.netsec-head b {
+  font-size: 11px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted);
+  font-weight: 600;
+}
+.netsec-head .muted { font-size: 12px; }
 .netgrid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); }
 .netcard {
   display: flex; align-items: center; gap: 8px; padding: 10px 12px;
@@ -72,7 +100,10 @@ body {
 .netcard .nc-body { min-width: 0; flex: 1; color: inherit; text-decoration: none; }
 a.nc-body:hover .nc-name { text-decoration: underline; }
 .netcard .nc-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.netcard .nc-sub { font-size: 11px; color: var(--muted); font-family: var(--mono); }
+.netcard .nc-sub {
+  font-size: 11px; color: var(--muted); font-family: var(--mono);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 /* A device with a control panel behind it reads as openable. */
 .netcard.nc-link { cursor: pointer; }
 @media (hover: hover) {
@@ -81,6 +112,47 @@ a.nc-body:hover .nc-name { text-decoration: underline; }
 .netcard .nc-del { opacity: .45; cursor: pointer; background: none; border: 0; color: var(--text); font-size: 14px; }
 .netcard .nc-del:hover { opacity: 1; color: var(--bad); }
 .modal-card.sheet-sm { width: min(460px, 100%); }
+.lib {
+  display: grid; gap: 6px; margin-bottom: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  max-height: 46vh; overflow-y: auto;
+}
+.lib-item {
+  display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; text-align: left;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 9px;
+  padding: 9px 11px; cursor: pointer; color: var(--text); font: inherit;
+}
+@media (hover: hover) { .lib-item:hover { border-color: var(--accent); } }
+.lib-os {
+  grid-row: span 2; align-self: center; font-size: 10px; letter-spacing: .5px;
+  text-transform: uppercase; color: var(--muted); min-width: 46px;
+}
+.lib-name { font-size: 13px; font-weight: 600; }
+.lib-about { font-size: 11.5px; color: var(--muted); }
+.lib-warn { grid-column: 2; font-size: 10.5px; color: var(--warn); }
+
+.disc-known td { opacity: .55; }
+
+.fix {
+  display: inline-block; background: var(--panel-2); border: 1px solid var(--line);
+  border-radius: 999px; padding: 2px 10px; margin-right: 6px; font-size: 11.5px;
+}
+.fix a { color: var(--muted); text-decoration: none; margin-left: 4px; }
+.fix a:hover { color: var(--bad); }
+
+.aud-detail {
+  max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--mono); font-size: 11.5px;
+}
+
+.run-ok { color: var(--ok); }
+.run-bad { color: var(--bad); }
+
+.pol-list { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; font-size: 12px; }
+.pol { display: flex; gap: 10px; align-items: baseline; }
+.pol-k { font-family: var(--mono); color: var(--accent); min-width: 120px; }
+.pol-v { color: var(--muted); }
+
 .prefnum { width: 62px; background: #0d0f13; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; }
 .btn.danger { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, var(--line)); }
 @media (hover: hover) {
@@ -95,7 +167,54 @@ a.nc-body:hover .nc-name { text-decoration: underline; }
   color: var(--text); border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 34%, transparent);
 }
-.card-actions { margin-left: auto; display: flex; gap: 6px; }
+/* Equal halves of the card's width, so the row of buttons is the same shape on
+   every card no matter how long the host's name is. The auto margin belongs
+   here rather than on any content block: the footer is the one row that is
+   always present, so it is the only reliable thing to pin to the bottom. */
+.card-actions { display: flex; gap: 6px; margin-top: auto; padding-top: 2px; }
+.card-actions .btn { flex: 1; text-align: center; }
+
+/* ---- fleet strip ---- */
+.fleet {
+  display: grid; gap: 12px; padding: 18px 20px 4px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+.tile {
+  /* min-width:0 is load-bearing: a grid item defaults to min-content width, so
+     the widest tile's text (the network figures) was propping every track open
+     and forcing the strip into a single column on a phone. */
+  min-width: 0; position: relative; overflow: hidden;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; min-height: 92px;
+}
+.t-label {
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted);
+  font-weight: 600;
+}
+.t-val { font-size: 26px; font-weight: 650; line-height: 1.05; letter-spacing: -.5px; }
+.t-val.t-net {
+  font-size: 15px; font-family: var(--mono); letter-spacing: 0; padding-top: 6px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.t-unit { font-size: 13px; font-weight: 400; color: var(--muted); margin-left: 2px; }
+.t-foot { font-size: 11px; color: var(--muted); margin-top: auto; }
+/* A tile with something wrong reads by colour before it is read as text. The
+   two states are kept apart deliberately: a machine being switched off is not
+   the same news as a threshold being breached. */
+.tile.t-bad { border-color: color-mix(in srgb, var(--bad) 45%, var(--line)); }
+.tile.t-bad .t-val, .tile.t-bad .t-foot { color: var(--bad); }
+.tile.t-warn { border-color: color-mix(in srgb, var(--warn) 40%, var(--line)); }
+.tile.t-warn .t-val, .tile.t-warn .t-foot { color: var(--warn); }
+.t-bar { height: 6px; background: var(--panel-2); border-radius: 6px; overflow: hidden; margin-top: auto; }
+.t-bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .4s ease; }
+.t-bar i.hot { background: var(--bad); }
+/* Bled to the tile's edges: the trace is scenery for the number above it. */
+.t-spark {
+  position: absolute; left: 0; right: 0; bottom: 0; width: 100%; height: 34px;
+  pointer-events: none;
+}
+.t-spark .fleetLine { fill: none; stroke: var(--accent); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.t-spark .fleetFill { fill: url(#sparkfill); stroke: none; }
 
 .grid {
   display: grid; gap: 14px; padding: 20px;
@@ -104,15 +223,31 @@ a.nc-body:hover .nc-name { text-decoration: underline; }
 .card {
   background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
   padding: 14px; display: flex; flex-direction: column; gap: 10px;
-  cursor: pointer; transition: border-color .15s;
+  cursor: pointer; transition: border-color .15s, background .15s;
 }
-.card:hover { border-color: var(--accent); }
-.card-head { display: flex; align-items: center; gap: 10px; }
+@media (hover: hover) {
+  .card:hover { border-color: var(--accent); background: var(--panel-2); }
+}
+/* Top-aligned, not centred: the name/platform block is a different height on
+   every host, and centring let the Terminal and Remote buttons float to a
+   different spot on each card. The status dot gets the same treatment, nudged
+   onto the name's optical centre. */
+.card-head { display: flex; align-items: flex-start; gap: 10px; }
 .status { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); flex: none; }
+.card-head .status { margin-top: 5px; }
 .status.online { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
 .status.offline { background: var(--bad); }
-.host .name { font-weight: 600; }
-.host .platform { font-size: 12px; }
+/* min-width:0 is what actually lets the name ellipsis inside a flex row. */
+.host { min-width: 0; flex: 1; }
+.host .name {
+  font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* One line, always. Wrapping "Windows 11 Pro · amd64" made the card header two
+   rows tall on some hosts and one on others, which is most of why the grid
+   looked ragged. */
+.host .platform {
+  font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 
 .alerts { display: flex; flex-wrap: wrap; gap: 6px; }
 .alerts:empty { display: none; }
@@ -124,7 +259,9 @@ a.nc-body:hover .nc-name { text-decoration: underline; }
 
 .metrics { display: flex; flex-direction: column; gap: 8px; }
 .metric { display: flex; align-items: center; gap: 8px; }
-.metric label { width: 34px; font-size: 11px; color: var(--muted); }
+.metric label {
+  width: 50px; font-size: 11px; color: var(--muted); flex: none; white-space: nowrap;
+}
 .bar { flex: 1; height: 8px; background: var(--panel-2); border-radius: 6px; overflow: hidden; }
 .bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .4s ease; }
 .bar i.hot { background: var(--bad); }
@@ -134,10 +271,50 @@ a.nc-body:hover .nc-name { text-decoration: underline; }
 .gpu-metrics { margin-top: 6px; }
 .val { width: 46px; text-align: right; font-family: var(--mono); font-size: 12px; }
 
+.card.nodata .metrics, .card.nodata .spark { display: none; }
+
 .spark { width: 100%; height: 24px; }
 .spark polyline { fill: none; stroke: var(--accent); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.spark .cpuSparkFill { fill: url(#sparkfill); stroke: none; }
 
-.details { font-size: 12px; font-family: var(--mono); white-space: pre-line; }
+/* State on the card itself, so a host in trouble is findable by colour instead
+   of by reading every chip on the grid. */
+.card.is-warn { border-color: color-mix(in srgb, var(--warn) 40%, var(--line)); }
+.card.is-offline { border-color: color-mix(in srgb, var(--bad) 35%, var(--line)); }
+.card.is-offline .host .name, .card.is-offline .host .platform { opacity: .72; }
+
+/* The platform mark takes the text colour, so it dims with the rest of an
+   offline card rather than staying stubbornly bright. */
+.osic { display: inline-flex; width: 13px; height: 13px; margin-right: 7px; vertical-align: -1px; }
+.osic svg { width: 100%; height: 100%; fill: var(--muted); }
+.host .name { display: flex; align-items: center; }
+.host .nametext { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* One row per filesystem: a run of percentages made the reader parse a string
+   to find the volume that is nearly full. */
+.disks { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.dk { display: flex; align-items: center; gap: 8px; font-size: 11px; }
+.dk-m {
+  color: var(--muted); font-family: var(--mono); max-width: 92px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dk-bar { flex: 1; height: 5px; background: var(--panel-2); border-radius: 4px; overflow: hidden; }
+.dk-bar i { display: block; height: 100%; background: var(--muted); transition: width .4s ease; }
+.dk-bar i.hot { background: var(--bad); }
+.dk-v { font-family: var(--mono); color: var(--muted); width: 30px; text-align: right; }
+
+/* Pushed to the bottom so cards of differing content still line up along their
+   lower edge, which is what makes a grid of them look deliberate. */
+.details { font-size: 12px; }
+/* Labels and figures in two columns: the old block was one monospace string
+   with newlines in it, which read as a log dump rather than a summary. */
+.dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; align-items: baseline; }
+.dl dt { color: var(--muted); font-size: 11px; }
+.dl dd {
+  margin: 0; font-family: var(--mono); font-size: 12px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.details .waiting { color: var(--muted); font-size: 12px; }
 
 .empty { text-align: center; margin-top: 15vh; color: var(--muted); }
 
@@ -152,6 +329,25 @@ a.nc-body:hover .nc-name { text-decoration: underline; }
 }
 .modal-head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
 .modal-title { margin-right: auto; }
+.mtabs {
+  display: flex; gap: 2px; margin: 0 -18px 16px; padding: 0 18px;
+  border-bottom: 1px solid var(--line); overflow-x: auto;
+}
+.mtab {
+  background: none; border: 0; border-bottom: 2px solid transparent; color: var(--muted);
+  padding: 8px 12px; cursor: pointer; font-size: 13px; white-space: nowrap;
+  font-family: inherit;
+}
+.mtab.active { color: var(--text); border-bottom-color: var(--accent); }
+@media (hover: hover) {
+  .mtab:hover:not(.active) { color: var(--text); }
+}
+.pane-head {
+  display: flex; align-items: center; gap: 10px; margin: 16px 0 8px;
+  font-size: 13px;
+}
+.pane-head b { font-weight: 600; }
+
 .ranges { display: flex; gap: 4px; }
 .ranges button {
   background: var(--panel-2); color: var(--muted); border: 1px solid var(--line);
@@ -366,4 +562,28 @@ a.nc-body:hover .nc-name { text-decoration: underline; }
   transform: translate(-2px, -2px);
   background: no-repeat center/contain
     url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M4 2 L4 19 L8.6 14.7 L11.4 20.6 L13.9 19.5 L11.1 13.7 L17 13.7 Z' fill='white' stroke='black' stroke-width='1.3' stroke-linejoin='round'/></svg>");
+}
+
+/* ---- narrow screens ----
+   Kept at the very end of the stylesheet on purpose: a media query carries no
+   extra specificity, so anything declared below it for the same selector wins
+   regardless of viewport. This block sat higher up and its .fleet and .tile
+   rules were being silently overridden by the base ones.
+
+   On a phone the bar is a single unwrapped row wider than the screen, so the
+   right-hand buttons — including every icon tool — are simply off the edge and
+   unreachable. Let it wrap onto a second line instead: the spacer that pushes
+   things apart on a desktop is exactly what breaks this, so it goes. */
+@media (max-width: 760px) {
+  .topbar { flex-wrap: wrap; gap: 8px; padding: 10px 14px; }
+  .topbar .grow { display: none; }
+  .brand { margin-right: auto; }
+  .tools { margin-left: auto; border-left: 0; padding-left: 0; }
+  .grid { padding: 14px; gap: 12px; }
+  .fleet { padding: 14px 14px 0; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+  .t-val { font-size: 21px; }
+  .t-val.t-net { font-size: 13px; }
+  .tile { min-height: 84px; padding: 10px 12px; }
+  .hostsearch { width: 100%; order: 9; }
+  .netsec { padding: 0 14px 18px; }
 }

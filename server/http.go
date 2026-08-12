@@ -74,6 +74,9 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/session", s.handleCreateSession)
 	mux.HandleFunc("/api/action", s.handleAction)
 	mux.HandleFunc("/api/reboot", s.handleReboot)
+	mux.HandleFunc("/api/fleet", s.handleFleetAction)
+	mux.HandleFunc("/api/audit", s.handleAudit)
+	mux.HandleFunc("/api/discover", s.handleDiscover)
 	mux.HandleFunc("/api/wol", s.handleWOL)
 	mux.HandleFunc("/api/eventlog", s.handleEventLog)
 	mux.HandleFunc("/api/hostprefs", s.handleHostPrefs)
@@ -180,11 +183,11 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.admins.Verify(req.Username, req.Password) {
-		log.Printf("AUDIT login failed user=%q from=%s", req.Username, r.RemoteAddr)
+		s.audit(r, "login", req.Username, "", "denied")
 		http.Error(w, "invalid username or password", http.StatusUnauthorized)
 		return
 	}
-	log.Printf("AUDIT login ok user=%q from=%s", req.Username, r.RemoteAddr)
+	s.audit(r, "login", req.Username, "", "ok")
 	tok := auth.SignTicket(s.secret, loginSubjectPrefix+req.Username, "", loginSessionTTL)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"token":   tok,
@@ -238,7 +241,7 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	log.Printf("AUDIT setup: created first admin %q from=%s", req.Username, r.RemoteAddr)
+	s.audit(r, "setup", req.Username, "created the first admin account", "ok")
 	tok := auth.SignTicket(s.secret, loginSubjectPrefix+req.Username, "", loginSessionTTL)
 	writeJSON(w, http.StatusOK, map[string]any{"token": tok})
 }
@@ -258,7 +261,15 @@ func (s *Server) handleHosts(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	writeJSON(w, http.StatusOK, s.store.views())
+	// Watched-service state lives in the hub rather than in what the agent
+	// reports, so it is attached here on the way out.
+	views := s.store.views()
+	for i := range views {
+		if st := s.svc.states(views[i].AgentID); len(st) > 0 {
+			views[i].Services = st
+		}
+	}
+	writeJSON(w, http.StatusOK, views)
 }
 
 func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
@@ -280,8 +291,13 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "agent_id and command are required", http.StatusBadRequest)
 		return
 	}
+	// The command itself is recorded: a shell command typed at a host is the
+	// single most consequential thing this hub can be asked to do, and "somebody
+	// ran something on TRON" answers nothing.
+	s.audit(r, "exec", req.AgentID, req.Shell+": "+req.Command, "ok")
 	res, err := s.runOnAgent(req.AgentID, req.Command, req.Shell, req.TimeoutSecs)
 	if err != nil {
+		s.audit(r, "exec", req.AgentID, "failed: "+err.Error(), "failed")
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}

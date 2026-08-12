@@ -2,7 +2,7 @@ package server
 
 import (
 	"encoding/json"
-	"log"
+	"fmt"
 	"net"
 	"net/http"
 
@@ -109,7 +109,8 @@ func (s *Server) handleWOL(w http.ResponseWriter, r *http.Request) {
 	// and a second voice when one does.
 	hubErr := wol.Send(target.Facts.MACs)
 
-	log.Printf("AUDIT wol agent=%s macs=%v relays=%v from=%s", req.AgentID, target.Facts.MACs, relays, r.RemoteAddr)
+	s.audit(r, "wake", req.AgentID,
+		fmt.Sprintf("macs=%v relays=%v", target.Facts.MACs, relays), "ok")
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":     len(relays) > 0 || hubErr == nil,
 		"relays": len(relays),

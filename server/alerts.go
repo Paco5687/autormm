@@ -60,6 +60,13 @@ type Alerter struct {
 	// prefs supplies per-host threshold overrides and mute windows. Optional:
 	// nil means every host uses the global configuration.
 	prefs *hostPrefs
+	// Watched-service states, supplied by the hub. A nil provider (as in tests
+	// that build an Alerter directly) simply raises no service rules.
+	svcStates func(agentID string) map[string]bool
+	watched   func(v protocol.HostView) []string
+	// remediate is given a firing alert and reports whether it ran a fix. When
+	// it does, the alert is held: the next evaluation decides whether it took.
+	remediate func(Alert) bool
 
 	mu     sync.Mutex
 	states map[alertKey]*alertState
@@ -91,9 +98,30 @@ func (a *Alerter) Run(ctx context.Context, store *Store) {
 			return
 		case <-t.C:
 			for _, tr := range a.evaluate(store.views()) {
+				// A fix that works should produce no alert at all, rather than
+				// one immediately followed by a resolution.
+				if a.remediate != nil && a.remediate(tr) {
+					a.hold(tr.AgentID, tr.Rule)
+					continue
+				}
 				a.notifier.dispatch(tr)
 			}
 		}
+	}
+}
+
+// hold rewinds a condition that is being auto-fixed, so it can fire again on a
+// later cycle if the fix did not work.
+//
+// Resetting `firing` also prevents a resolution being announced for an alert
+// that was never sent — the sustain clock restarts, so a rule with a duration
+// must stay true that long again before it counts.
+func (a *Alerter) hold(agentID, ruleName string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if st := a.states[alertKey{agentID, ruleName}]; st != nil {
+		st.firing = false
+		st.trueSince = a.now()
 	}
 }
 
@@ -174,18 +202,19 @@ func (a *Alerter) notifyNetCheck(st NetStatus) {
 	}
 }
 
-// prefFor returns this host's overrides, or the zero value when none are set
-// (or no store is attached, as in tests).
-func (a *Alerter) prefFor(agentID string) HostPref {
+// prefFor returns the thresholds in force for a host: any policies that match
+// it, with its own overrides on top. Zero value when no store is attached, as
+// in tests.
+func (a *Alerter) prefFor(v protocol.HostView) HostPref {
 	if a.prefs == nil {
 		return HostPref{}
 	}
-	return a.prefs.get(agentID)
+	return a.prefs.resolve(v)
 }
 
 func (a *Alerter) rulesFor(v protocol.HostView) []rule {
 	var rules []rule
-	pref := a.prefFor(v.AgentID)
+	pref := a.prefFor(v)
 	// A silenced host produces no rules at all, so nothing can fire and anything
 	// already firing resolves. Silence means silence — including the offline
 	// alert, which is the one people most want muted while a box is deliberately
@@ -233,6 +262,24 @@ func (a *Alerter) rulesFor(v protocol.HostView) []rule {
 				}
 			}
 			rules = append(rules, rule{name: "disk", threshold: t, value: dmax, active: dmax >= t, forDur: a.cfg.For, label: "disk"})
+		}
+	}
+
+	// A watched service that is not running. Only services actually reported on
+	// are considered: a host that has not been polled yet has no state, and
+	// treating "unknown" as "down" would page on every hub restart.
+	if a.svcStates != nil && a.watched != nil {
+		states := a.svcStates(v.AgentID)
+		for _, name := range a.watched(v) {
+			running, known := states[name]
+			if !known {
+				continue
+			}
+			rules = append(rules, rule{
+				name:   "service:" + name,
+				active: !running,
+				label:  "service " + name + " stopped",
+			})
 		}
 	}
 	return rules

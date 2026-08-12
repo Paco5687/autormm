@@ -2,7 +2,6 @@ package server
 
 import (
 	"encoding/json"
-	"log"
 	"net/http"
 	"strings"
 )
@@ -76,7 +75,7 @@ func (s *Server) handleReboot(w http.ResponseWriter, r *http.Request) {
 
 	// Logged in its own right, not just as the exec it turns into: "who
 	// restarted that machine" is a question worth being able to answer directly.
-	log.Printf("AUDIT reboot agent=%s from=%s", req.AgentID, r.RemoteAddr)
+	s.audit(r, "reboot", req.AgentID, "", "ok")
 
 	res, err := s.runOnAgent(req.AgentID, cmd, shell, 30)
 	if err != nil {

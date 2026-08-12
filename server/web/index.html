@@ -14,20 +14,66 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 </head>
 <body>
+  <!-- Gradient defs referenced by every sparkline on the page. Defining them
+       once avoids repeating an id in each card's SVG. -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+    <linearGradient id="sparkfill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="var(--accent)" stop-opacity=".38"/>
+      <stop offset="100%" stop-color="var(--accent)" stop-opacity="0"/>
+    </linearGradient>
+  </defs></svg>
   <header class="topbar">
     <div class="brand">autormm<span class="dot">●</span></div>
     <div class="grow"></div>
+    <input id="hostSearch" class="hostsearch" type="search" placeholder="Search hosts…" autocomplete="off" spellcheck="false">
     <div id="summary" class="summary"></div>
     <select id="tagFilter" class="inv-filter hidden" title="Show only hosts with this tag"></select>
     <span id="alertBadge" class="alert-badge hidden"></span>
-    <button id="enrollBtn" class="btn">＋ Add host</button>
+    <button id="enrollBtn" class="btn primary">＋ Add host</button>
     <button id="appAdd" class="btn ghost" title="Add a self-hosted app to the dashboard">＋ App</button>
     <button id="netAdd" class="btn ghost" title="Monitor a device that can't run an agent (switch, printer, appliance)">＋ Device</button>
-    <button id="scriptsBtn" class="btn ghost" title="Scripts &amp; schedules">📜</button>
-    <button id="updatesBtn" class="btn ghost" title="Check for updates">⟳</button>
-    <button id="acctBtn" class="btn ghost" title="Accounts">👤</button>
-    <button id="tokenBtn" class="btn ghost" title="Set access token">🔑</button>
+    <button id="fleetBtn" class="btn ghost" title="Run an action across many hosts at once">⚡ Fleet</button>
+    <div class="tools">
+      <button id="auditBtn" class="btn ghost" title="Activity — who did what">🕘</button>
+      <button id="scriptsBtn" class="btn ghost" title="Scripts &amp; schedules">📜</button>
+      <button id="updatesBtn" class="btn ghost" title="Check for updates">⟳</button>
+      <button id="acctBtn" class="btn ghost" title="Accounts">👤</button>
+      <button id="tokenBtn" class="btn ghost" title="Set access token">🔑</button>
+    </div>
   </header>
+
+  <!-- Fleet totals. Every figure here is derived from the same /api/hosts poll
+       the cards use, so it costs no extra request and can never disagree with
+       the cards below it. -->
+  <section id="fleet" class="fleet hidden">
+    <div class="tile" id="tileHosts">
+      <div class="t-label">Hosts</div>
+      <div class="t-val"><span id="fHosts">—</span><span class="t-unit" id="fHostsSub"></span></div>
+      <div class="t-foot" id="fHostsFoot"></div>
+    </div>
+    <div class="tile" id="tileCPU">
+      <div class="t-label">Fleet CPU</div>
+      <div class="t-val"><span id="fCPU">—</span><span class="t-unit">%</span></div>
+      <svg class="t-spark" viewBox="0 0 100 26" preserveAspectRatio="none">
+        <path class="fleetFill" d=""/><polyline class="fleetLine" points=""/>
+      </svg>
+    </div>
+    <div class="tile" id="tileMem">
+      <div class="t-label">Memory</div>
+      <div class="t-val"><span id="fMem">—</span><span class="t-unit" id="fMemTotal"></span></div>
+      <div class="t-bar"><i id="fMemBar"></i></div>
+    </div>
+    <div class="tile" id="tileNet">
+      <div class="t-label">Network</div>
+      <div class="t-val t-net"><span id="fNet">—</span></div>
+      <div class="t-foot" id="fNetFoot"></div>
+    </div>
+    <div class="tile" id="tileAlerts">
+      <div class="t-label">Alerts</div>
+      <div class="t-val"><span id="fAlerts">—</span></div>
+      <div class="t-foot" id="fAlertsFoot"></div>
+    </div>
+  </section>
 
   <main id="grid" class="grid"></main>
 
@@ -43,6 +89,8 @@
     <div class="netsec-head">
       <b>Network devices</b>
       <span id="netSummary" class="muted"></span>
+      <span class="grow"></span>
+      <button id="discoverBtn" class="btn ghost" title="Find devices on the hub's networks">Discover</button>
     </div>
     <div id="netGrid" class="netgrid"></div>
   </section>
@@ -59,12 +107,6 @@
           <div id="mTitle" class="name"></div>
           <div id="mSub" class="platform muted"></div>
         </div>
-        <div id="mRanges" class="ranges">
-          <button data-range="1h">1h</button>
-          <button data-range="6h" class="active">6h</button>
-          <button data-range="24h">24h</button>
-          <button data-range="7d">7d</button>
-        </div>
         <button id="mTerm" class="btn">Terminal</button>
         <button id="mFiles" class="btn">Files</button>
         <button id="mRemote" class="btn remote">Remote</button>
@@ -72,54 +114,112 @@
         <button id="mWake" class="btn hidden" title="Send Wake-on-LAN packets to this host">Wake</button>
         <button id="mClose" class="btn ghost" title="Close">✕</button>
       </div>
-      <div id="mFacts" class="facts"></div>
-      <div id="mCharts" class="charts"></div>
-      <div id="mProcs"></div>
-      <div id="mServices" class="msvc">
-        <input id="svcName" class="inv-filter" placeholder="service name (e.g. sshd, spooler)">
-        <button class="btn" data-svc="start">Start</button>
-        <button class="btn" data-svc="stop">Stop</button>
-        <button class="btn" data-svc="restart">Restart</button>
-      </div>
-      <div id="mAlertPrefs" class="mpatch">
-        <div class="mpatch-row">
-          <b>Alerting</b>
-          <label class="muted">CPU <input id="prefCPU" type="number" min="0" max="100" placeholder="global" class="prefnum"></label>
-          <label class="muted">MEM <input id="prefMem" type="number" min="0" max="100" placeholder="global" class="prefnum"></label>
-          <label class="muted">DISK <input id="prefDisk" type="number" min="0" max="100" placeholder="global" class="prefnum"></label>
-          <button id="prefSave" class="btn">Save</button>
-          <button id="prefMute1" class="btn ghost" title="Silence every alert for this host for an hour">Mute 1h</button>
-          <button id="prefMute8" class="btn ghost">Mute 8h</button>
-          <button id="prefUnmute" class="btn ghost">Unmute</button>
-          <span id="prefStatus" class="muted"></span>
+      <!-- Panels are grouped into tabs rather than stacked. There are nine of
+           them, and stacking meant the software inventory sat below a patch
+           panel below an alerting form, so reaching anything was a scroll. -->
+      <nav class="mtabs" id="mTabs">
+        <button class="mtab active" data-pane="overview">Overview</button>
+        <button class="mtab" data-pane="procs">Processes</button>
+        <button class="mtab" data-pane="software">Software</button>
+        <button class="mtab" data-pane="patches">Patches</button>
+        <button class="mtab" data-pane="logs">Logs</button>
+        <button class="mtab" data-pane="alerting">Alerting</button>
+      </nav>
+
+      <section class="mpane" data-pane="overview">
+        <div id="mFacts" class="facts"></div>
+        <div class="pane-head">
+          <b>History</b>
+          <span class="grow"></span>
+          <div id="mRanges" class="ranges">
+            <button data-range="1h">1h</button>
+            <button data-range="6h" class="active">6h</button>
+            <button data-range="24h">24h</button>
+            <button data-range="7d">7d</button>
+          </div>
         </div>
-      </div>
-      <div id="mLogs" class="mpatch">
-        <div class="mpatch-row">
-          <b>Recent problems</b>
-          <button id="logsBtn" class="btn ghost">Load errors &amp; warnings</button>
-          <span id="logsStatus" class="muted"></span>
+        <div id="mCharts" class="charts"></div>
+      </section>
+
+      <section class="mpane hidden" data-pane="procs">
+        <div id="mProcs"></div>
+        <div class="pane-head"><b>Services</b></div>
+        <div id="mServices" class="msvc">
+          <input id="svcName" class="inv-filter" placeholder="service name (e.g. sshd, spooler)">
+          <button class="btn" data-svc="start">Start</button>
+          <button class="btn" data-svc="stop">Stop</button>
+          <button class="btn" data-svc="restart">Restart</button>
         </div>
-        <pre id="logsOut" class="mpatch-out hidden"></pre>
-      </div>
-      <div id="mPatch" class="mpatch">
-        <div class="mpatch-row">
-          <b>Patches</b>
-          <button id="patchCheck" class="btn ghost">Check for updates</button>
-          <button id="patchInstall" class="btn">Install updates</button>
-          <button id="patchReboot" class="btn ghost">Reboot</button>
-          <span id="patchStatus" class="muted"></span>
+      </section>
+
+      <section class="mpane hidden" data-pane="software">
+        <div class="software">
+          <div class="software-head">
+            <button id="mInvBtn" class="btn">Load software inventory</button>
+            <input id="mInvFilter" class="inv-filter hidden" placeholder="filter packages…">
+            <span id="mInvCount" class="muted"></span>
+          </div>
+          <div id="mInvList" class="inv-list"></div>
         </div>
-        <pre id="patchOut" class="mpatch-out"></pre>
-      </div>
-      <div class="software">
-        <div class="software-head">
-          <button id="mInvBtn" class="btn">Load software inventory</button>
-          <input id="mInvFilter" class="inv-filter hidden" placeholder="filter packages…">
-          <span id="mInvCount" class="muted"></span>
+      </section>
+
+      <section class="mpane hidden" data-pane="patches">
+        <div id="mPatch" class="mpatch">
+          <div class="mpatch-row">
+            <b>Patches</b>
+            <button id="patchCheck" class="btn ghost">Check for updates</button>
+            <button id="patchInstall" class="btn">Install updates</button>
+            <button id="patchReboot" class="btn ghost">Reboot</button>
+            <span id="patchStatus" class="muted"></span>
+          </div>
+          <pre id="patchOut" class="mpatch-out"></pre>
         </div>
-        <div id="mInvList" class="inv-list"></div>
-      </div>
+      </section>
+
+      <section class="mpane hidden" data-pane="logs">
+        <div id="mLogs" class="mpatch">
+          <div class="mpatch-row">
+            <b>Recent problems</b>
+            <button id="logsBtn" class="btn ghost">Load errors &amp; warnings</button>
+            <span id="logsStatus" class="muted"></span>
+          </div>
+          <pre id="logsOut" class="mpatch-out hidden"></pre>
+        </div>
+      </section>
+
+      <section class="mpane hidden" data-pane="alerting">
+        <div id="mAlertPrefs" class="mpatch">
+          <div class="mpatch-row">
+            <b>Thresholds</b>
+            <label class="muted">CPU <input id="prefCPU" type="number" min="0" max="100" placeholder="global" class="prefnum"></label>
+            <label class="muted">MEM <input id="prefMem" type="number" min="0" max="100" placeholder="global" class="prefnum"></label>
+            <label class="muted">DISK <input id="prefDisk" type="number" min="0" max="100" placeholder="global" class="prefnum"></label>
+            <button id="prefSave" class="btn">Save</button>
+            <span id="prefStatus" class="muted"></span>
+          </div>
+          <div class="mpatch-row">
+            <b>Watch services</b>
+            <input id="prefSvc" class="inv-filter" style="max-width:none"
+                   placeholder="comma-separated, e.g. sshd, docker, plexmediaserver">
+            <button id="prefSvcSave" class="btn">Save</button>
+          </div>
+          <div class="mpatch-row"><span id="prefSvcState" class="muted"></span></div>
+          <div class="mpatch-row">
+            <b>Auto-fix</b>
+            <select id="fixRule" class="inv-filter"></select>
+            <span class="muted">run</span>
+            <select id="fixScript" class="inv-filter"></select>
+            <button id="fixAdd" class="btn">Add</button>
+          </div>
+          <div class="mpatch-row"><span id="fixList" class="muted"></span></div>
+          <div class="mpatch-row">
+            <b>Silence</b>
+            <button id="prefMute1" class="btn ghost" title="Silence every alert for this host for an hour">Mute 1h</button>
+            <button id="prefMute8" class="btn ghost">Mute 8h</button>
+            <button id="prefUnmute" class="btn ghost">Unmute</button>
+          </div>
+        </div>
+      </section>
     </div>
   </div>
 
@@ -168,23 +268,31 @@
       <div class="card-head">
         <span class="status"></span>
         <div class="host">
-          <div class="name"></div>
+          <div class="name"><span class="osic"></span><span class="nametext"></span></div>
           <div class="platform muted"></div>
         </div>
-        <div class="card-actions">
-          <button class="btn term" disabled>Terminal</button>
-          <button class="btn remote" disabled>Remote</button>
-        </div>
       </div>
-      <div class="alerts"></div>
+      <!-- Metrics come before the alert chips so that CPU/MEM sit at the same
+           height on every card. With the chips above them, one alerting host
+           pushed its bars down and the whole grid read as misaligned. -->
       <div class="metrics">
         <div class="metric"><label>CPU</label><div class="bar"><i class="cpu"></i></div><span class="cpuVal val"></span></div>
         <div class="metric"><label>MEM</label><div class="bar"><i class="mem"></i></div><span class="memVal val"></span></div>
       </div>
       <!-- Populated only for hosts that report a GPU; absent everywhere else. -->
       <div class="metrics gpu-metrics hidden"></div>
-      <svg class="spark" viewBox="0 0 100 24" preserveAspectRatio="none"><polyline class="cpuSpark" points=""/></svg>
+      <svg class="spark" viewBox="0 0 100 24" preserveAspectRatio="none">
+        <path class="cpuSparkFill" d=""/><polyline class="cpuSpark" points=""/>
+      </svg>
+      <div class="alerts"></div>
       <div class="details muted"></div>
+      <!-- Actions in a footer rather than beside the name: at this column width
+           they left the hostname about ten characters, so every card read as
+           "workshop-m…". -->
+      <div class="card-actions">
+        <button class="btn term" disabled>Terminal</button>
+        <button class="btn remote" disabled>Remote</button>
+      </div>
     </article>
   </template>
 
@@ -248,8 +356,10 @@
       <div class="modal-head">
         <div class="modal-title"><div class="name">Scripts &amp; schedules</div></div>
         <button id="scNew" class="btn">New script</button>
+        <button id="scLib" class="btn ghost" title="Start from a ready-made script">Library</button>
         <button id="scClose" class="btn ghost" title="Close">✕</button>
       </div>
+      <div id="scLibList" class="lib hidden"></div>
       <div id="scDisabled" class="no-data hidden">Scripts require the server to be started with <code>--db</code>.</div>
       <div class="sc-layout">
         <div class="sc-list" id="scList"></div>
@@ -281,6 +391,94 @@
       <div id="scSchedules"></div>
       <h4 class="sc-h">Recent runs</h4>
       <div id="scRuns"></div>
+    </div>
+  </div>
+
+  <!-- Fleet actions. The hub could already target a set of hosts for scripts;
+       this exposes the same targeting for the operations that were reachable
+       only one machine at a time. -->
+  <div id="fleetModal" class="modal hidden">
+    <div class="modal-card sheet-sm">
+      <div class="modal-head">
+        <div class="modal-title">
+          <div class="name">Run across the fleet</div>
+          <div class="platform muted">Pick who, then what. Only hosts that are online and allow commands can be targeted.</div>
+        </div>
+        <button id="fleetClose" class="btn ghost" title="Close">✕</button>
+      </div>
+      <div class="cmd-row">
+        <select id="fleetTarget" class="inv-filter" style="max-width:none"></select>
+      </div>
+      <div class="cmd-row">
+        <select id="fleetAction" class="inv-filter" style="max-width:none">
+          <option value="patch-check">Check for updates</option>
+          <option value="patch-install">Install updates</option>
+          <option value="reboot">Reboot</option>
+        </select>
+      </div>
+      <div class="cmd-row">
+        <button id="fleetRun" class="btn">Run</button>
+        <span id="fleetStatus" class="muted"></span>
+      </div>
+      <pre id="fleetOut" class="mpatch-out hidden"></pre>
+
+      <!-- Alerting policy for a group. A threshold set here applies to every
+           matching host; a host that carries its own number keeps it. -->
+      <div class="pane-head" style="border-top:1px solid var(--line); padding-top:14px">
+        <b>Alerting policy for this selection</b>
+      </div>
+      <div class="cmd-row">
+        <input id="polSvc" class="inv-filter" style="max-width:none"
+               placeholder="watch services on these hosts — comma-separated, e.g. sshd, docker">
+      </div>
+      <div class="cmd-row">
+        <label class="muted">CPU <input id="polCPU" type="number" min="0" max="100" placeholder="—" class="prefnum"></label>
+        <label class="muted">MEM <input id="polMem" type="number" min="0" max="100" placeholder="—" class="prefnum"></label>
+        <label class="muted">DISK <input id="polDisk" type="number" min="0" max="100" placeholder="—" class="prefnum"></label>
+        <button id="polSave" class="btn">Save policy</button>
+        <button id="polClear" class="btn ghost">Clear</button>
+        <span id="polStatus" class="muted"></span>
+      </div>
+      <div id="polList" class="pol-list"></div>
+    </div>
+  </div>
+
+  <!-- The audit trail. Every privileged act the hub performs was already
+       logged; this is where it becomes answerable without reading the journal
+       on the hub itself. -->
+  <!-- Discovery. The hub already sweeps its networks to resolve MAC-tracked
+       devices; this shows what it found rather than keeping it to itself. -->
+  <div id="discoverModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <div class="modal-title">
+          <div class="name">Devices on the network</div>
+          <div class="platform muted">Everything answering on the networks the hub is on. ARP does not cross a router, so other VLANs will not appear.</div>
+        </div>
+        <button id="discoverClose" class="btn ghost" title="Close">✕</button>
+      </div>
+      <div id="discoverBody"><div class="muted">sweeping…</div></div>
+    </div>
+  </div>
+
+  <div id="auditModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <div class="modal-title">
+          <div class="name">Activity</div>
+          <div class="platform muted">Who did what, to which host, from where.</div>
+        </div>
+        <select id="auditFilter" class="inv-filter">
+          <option value="">Everything</option>
+          <option value="login">Sign-ins</option>
+          <option value="exec">Commands</option>
+          <option value="reboot">Reboots</option>
+          <option value="fleet">Fleet actions</option>
+          <option value="action">Service &amp; process actions</option>
+        </select>
+        <button id="auditClose" class="btn ghost" title="Close">✕</button>
+      </div>
+      <div id="auditBody"></div>
     </div>
   </div>
 
@@ -354,6 +552,7 @@
   </div>
 
   <script src="/static/app.js"></script>
+  <script src="/static/scriptlib.js"></script>
   <script src="/static/scripts.js"></script>
 </body>
 </html>

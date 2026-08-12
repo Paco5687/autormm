@@ -5,6 +5,7 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"log"
 	"net/http"
 	"path/filepath"
@@ -34,21 +35,24 @@ type Config struct {
 
 // Server is the running hub.
 type Server struct {
-	cfg       Config
-	secret    []byte
-	store     *Store
-	sessions  *sessionRegistry
-	execReg   *execRegistry
-	invReg    *invRegistry
-	history   *History
-	scripts   *ScriptStore
-	alerter   *Alerter
-	prefs     *hostPrefs
-	netChecks *netChecks
-	netSeenMu sync.Mutex
-	netSeen   map[string]bool
-	admins    *adminstore.Store
-	httpSrv   *http.Server
+	cfg        Config
+	secret     []byte
+	store      *Store
+	svc        *svcWatcher
+	remediator *remediator
+	sessions   *sessionRegistry
+	execReg    *execRegistry
+	invReg     *invRegistry
+	history    *History
+	auditLog   *auditLog
+	scripts    *ScriptStore
+	alerter    *Alerter
+	prefs      *hostPrefs
+	netChecks  *netChecks
+	netSeenMu  sync.Mutex
+	netSeen    map[string]bool
+	admins     *adminstore.Store
+	httpSrv    *http.Server
 }
 
 // New builds a Server from cfg.
@@ -77,16 +81,26 @@ func New(cfg Config) *Server {
 			scripts = ss
 		}
 	}
+	// Shares the history database when there is one; without it the audit log
+	// still logs, exactly as the hub did before it existed.
+	var auditDB *sql.DB
+	if hist != nil {
+		auditDB = hist.DB()
+	}
+
 	s := &Server{
-		cfg:      cfg,
-		secret:   auth.DeriveSecret(cfg.SecretPhrase),
-		store:    NewStore(cfg.HistoryLen, cfg.OfflineAfter, hist),
-		sessions: newSessionRegistry(),
-		execReg:  newExecRegistry(),
-		invReg:   newInvRegistry(),
-		history:  hist,
-		scripts:  scripts,
-		alerter:  NewAlerter(cfg.Alerts),
+		cfg:        cfg,
+		secret:     auth.DeriveSecret(cfg.SecretPhrase),
+		store:      NewStore(cfg.HistoryLen, cfg.OfflineAfter, hist),
+		svc:        newSvcWatcher(),
+		remediator: newRemediator(),
+		sessions:   newSessionRegistry(),
+		execReg:    newExecRegistry(),
+		invReg:     newInvRegistry(),
+		history:    hist,
+		auditLog:   newAuditLog(auditDB),
+		scripts:    scripts,
+		alerter:    NewAlerter(cfg.Alerts),
 		// Per-host alert overrides live beside the admin store, which is the
 		// hub's existing home for small persisted state.
 		prefs: newHostPrefs(filepath.Dir(cfg.AdminStore)),
@@ -108,7 +122,15 @@ func (s *Server) Run(ctx context.Context) error {
 	go s.pruneLoop(ctx)
 	go s.alerter.Run(ctx, s.store)
 	go s.schedulerLoop(ctx)
+	// The alerter reads watched-service state through the hub rather than
+	// holding it, so an Alerter built directly in a test raises no service
+	// rules and behaves exactly as it did before this existed.
+	s.alerter.svcStates = s.svc.states
+	s.alerter.watched = s.watchedServicesFor
+	s.alerter.remediate = s.tryRemediate
+
 	go s.netCheckLoop(ctx)
+	go s.svcWatchLoop(ctx)
 
 	errCh := make(chan error, 1)
 	go func() {

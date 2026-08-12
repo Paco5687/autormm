@@ -52,6 +52,17 @@ func (m *macIndex) lookup(mac string) (string, bool) {
 	return ip, ok
 }
 
+// snapshot copies the current MAC to address mapping.
+func (m *macIndex) snapshot() map[string]string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make(map[string]string, len(m.byMAC))
+	for k, v := range m.byMAC {
+		out[k] = v
+	}
+	return out
+}
+
 // refresh rebuilds the index. sweep provokes ARP entries for devices the hub
 // has not spoken to lately, which is most of them — it is only worth the
 // traffic when something is actually being looked for.

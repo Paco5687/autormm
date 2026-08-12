@@ -24,7 +24,7 @@ func TestHostPrefsPersist(t *testing.T) {
 	}
 	// Clearing back to defaults removes the entry rather than leaving clutter.
 	_ = again.set("nas", HostPref{})
-	if got := newHostPrefs(dir).get("nas"); got != (HostPref{}) {
+	if got := newHostPrefs(dir).get("nas"); !got.isZero() {
 		t.Errorf("cleared prefs persisted: %+v", got)
 	}
 }

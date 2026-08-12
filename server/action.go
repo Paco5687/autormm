@@ -70,6 +70,9 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// Stopping a service or killing a process is a change to a machine, so it
+	// belongs in the trail beside reboots rather than only in the hub's log.
+	s.audit(r, "action:"+req.Kind+":"+req.Action, req.AgentID, actionDetail(req), "ok")
 	res, err := s.runOnAgent(req.AgentID, cmd, shell, 30)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
@@ -81,6 +84,17 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request) {
 		"output":    strings.TrimSpace(res.Stdout + res.Stderr),
 		"err":       res.Err,
 	})
+}
+
+// actionDetail names whatever the action was aimed at.
+func actionDetail(req actionRequest) string {
+	if req.Service != "" {
+		return req.Service
+	}
+	if req.PID > 0 {
+		return "pid " + strconv.Itoa(req.PID)
+	}
+	return ""
 }
 
 // restartProcOnAgent asks the agent to restart a process and waits for the

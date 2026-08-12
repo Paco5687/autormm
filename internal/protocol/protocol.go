@@ -398,6 +398,9 @@ type HostView struct {
 	Facts        HostFacts `json:"facts,omitempty"`
 	Metrics      *Metrics  `json:"metrics,omitempty"`
 	Alerts       []string  `json:"alerts,omitempty"`
+	// Services is the last observed state of each watched service, running or
+	// not. Absent for a host with none configured or none yet polled.
+	Services map[string]bool `json:"services,omitempty"`
 	CPUHistory   []float64 `json:"cpu_history,omitempty"`
 	MemHistory   []float64 `json:"mem_history,omitempty"`
 }

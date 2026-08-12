@@ -246,7 +246,8 @@ tokenBtn.addEventListener('click', () => {
   showLogin();
 });
 
-const cards = new Map(); // agentID -> element
+const cards = new Map();
+let hostQuery = ''; // agentID -> element
 let lastHosts = [];
 const detail = { agent: null, range: '6h' };
 
@@ -328,15 +329,31 @@ function render(allHosts) {
   lastHosts = allHosts;
   loadNetChecks();
   refreshTagFilter(allHosts);
-  const hosts = tagFilter
+  let hosts = tagFilter
     ? allHosts.filter(h => hostTags(h).some(t => t.toLowerCase() === tagFilter))
     : allHosts;
+  if (hostQuery) {
+    hosts = hosts.filter(h =>
+      `${h.hostname || ''} ${h.platform || h.os || ''} ${hostTags(h).join(' ')}`
+        .toLowerCase().includes(hostQuery));
+  }
+  // Totals describe the whole fleet, not the current filter — otherwise the
+  // strip would quietly stop counting an offline host the moment you searched.
+  renderFleet(allHosts);
   emptyEl.classList.toggle('hidden', hosts.length > 0);
   const online = hosts.filter(h => h.online).length;
-  summaryEl.textContent = `${online}/${hosts.length} online` + (tagFilter ? ` · ${tagFilter}` : '');
+  summaryEl.textContent = `${online}/${hosts.length} online`
+    + (tagFilter ? ` · ${tagFilter}` : '') + (hostQuery ? ` · "${hostQuery}"` : '');
+
+  // Ordered by CSS `order` rather than by moving nodes: the cards are reused
+  // across polls, and re-appending them would restart every bar transition a
+  // few times a minute. Problems sort to the front.
+  const rank = h => (!h.online ? 0 : (h.alerts || []).length ? 1 : 2);
+  const ordered = [...hosts].sort((a, b) =>
+    rank(a) - rank(b) || String(a.hostname || '').localeCompare(String(b.hostname || '')));
 
   const seen = new Set();
-  for (const h of hosts) {
+  for (const [i, h] of ordered.entries()) {
     seen.add(h.agent_id);
     let el = cards.get(h.agent_id);
     if (!el) {
@@ -344,6 +361,7 @@ function render(allHosts) {
       cards.set(h.agent_id, el);
       grid.appendChild(el);
     }
+    el.style.order = i;
     updateCard(el, h);
   }
   for (const [id, el] of cards) {
@@ -352,11 +370,119 @@ function render(allHosts) {
   if (detail.agent) refreshDetailLive();
 }
 
+// Simple monochrome marks rather than an icon font or emoji: emoji render as a
+// tofu box wherever the platform lacks the glyph, and a webfont is another
+// asset this hub would have to serve.
+const OS_MARKS = {
+  windows: '<svg viewBox="0 0 16 16"><path d="M0 2.4l6.4-.9v6.1H0zM7.2 1.4L16 .2v7.4H7.2zM0 8.4h6.4v6.1L0 13.6zM7.2 8.4H16v7.4l-8.8-1.2z"/></svg>',
+  darwin: '<svg viewBox="0 0 16 16"><path d="M10.9 8.5c0-1.7 1.4-2.5 1.4-2.6-.8-1.1-2-1.3-2.4-1.3-1-.1-2 .6-2.5.6s-1.3-.6-2.1-.6c-1.1 0-2.1.6-2.7 1.6-1.1 2-.3 4.9.8 6.5.5.8 1.2 1.7 2 1.6.8 0 1.1-.5 2-.5s1.2.5 2 .5 1.4-.8 1.9-1.6c.6-.9.8-1.8.8-1.8s-1.6-.6-1.6-2.4zM9.3 3.3c.4-.5.7-1.3.6-2-.6 0-1.4.4-1.9 1-.4.5-.7 1.3-.6 2 .7.1 1.4-.4 1.9-1z"/></svg>',
+  linux: '<svg viewBox="0 0 16 16"><path d="M8 .8c-1.9 0-3 1.5-3 3.3 0 1.1.1 1.7-.3 2.5-.5.9-1.6 2-2 3.3-.3.9-.2 1.7.3 2 .4.3.9.1 1.3.4.4.3.5.8 1 1.1.9.6 3.1.6 4 0 .5-.3.6-.8 1-1.1.4-.3.9-.1 1.3-.4.5-.3.6-1.1.3-2-.4-1.3-1.5-2.4-2-3.3-.4-.8-.3-1.4-.3-2.5 0-1.8-1.1-3.3-3-3.3zm-1 2.4c.3 0 .5.3.5.7s-.2.7-.5.7-.5-.3-.5-.7.2-.7.5-.7zm2 0c.3 0 .5.3.5.7s-.2.7-.5.7-.5-.3-.5-.7.2-.7.5-.7zM8 5.4c.7 0 1.7.4 1.7.9 0 .4-1 1-1.7 1s-1.7-.6-1.7-1c0-.5 1-.9 1.7-.9z"/></svg>',
+};
+function osMark(os) { return OS_MARKS[os] || ''; }
+
+// Relative time, because "last seen 8/11/2026, 6:37:44 PM" makes the reader do
+// the arithmetic that matters — how long has this been down.
+function fmtAgo(ts) {
+  const secs = Math.max(0, (Date.now() - new Date(ts).getTime()) / 1000);
+  if (secs < 90) return `${Math.round(secs)}s ago`;
+  if (secs < 5400) return `${Math.round(secs / 60)}m ago`;
+  if (secs < 172800) return `${Math.round(secs / 3600)}h ago`;
+  return `${Math.round(secs / 86400)}d ago`;
+}
+
+// ---- fleet totals ----
+//
+// Derived from the same poll that feeds the cards, so the strip can never
+// disagree with what is displayed under it.
+const fleetEl = document.getElementById('fleet');
+let fleetHist = [];
+let fleetSampled = 0;
+
+function renderFleet(hosts) {
+  fleetEl.classList.toggle('hidden', hosts.length === 0);
+  if (!hosts.length) return;
+  const live = hosts.filter(h => h.online && h.metrics);
+  const online = hosts.filter(h => h.online).length;
+
+  setText('fHosts', String(online));
+  setText('fHostsSub', ` / ${hosts.length}`);
+  const down = hosts.length - online;
+  setText('fHostsFoot', down ? `${down} offline` : 'all reporting');
+  document.getElementById('tileHosts').classList.toggle('t-warn', down > 0);
+
+  // A mean across hosts, which is the figure that answers "is the fleet busy".
+  const cpu = live.length ? live.reduce((a, h) => a + h.metrics.cpu_percent, 0) / live.length : 0;
+  setText('fCPU', cpu.toFixed(0));
+  // Seeded from the per-host histories the hosts already send, so the trace is
+  // there on the first paint. Accumulating only from live polls left the tile
+  // showing a flat line along the bottom for the first minute after a reload,
+  // which reads as "the fleet is idle" rather than "no data yet".
+  if (!fleetHist.length) fleetHist = averageHistories(live);
+  // Sampled on the clock, not per render: render() also runs on every keystroke
+  // in the search box, which would otherwise stuff the trace with duplicates of
+  // whatever the fleet happened to be doing while someone was typing.
+  const now = Date.now();
+  if (now - fleetSampled >= 2500) {
+    fleetSampled = now;
+    fleetHist.push(cpu);
+    if (fleetHist.length > 60) fleetHist.shift();
+  }
+  sparkline(document.querySelector('.fleetLine'), fleetHist,
+    document.querySelector('.fleetFill'), 26);
+
+  const used = live.reduce((a, h) => a + (h.metrics.mem_used || 0), 0);
+  const total = live.reduce((a, h) => a + (h.metrics.mem_total || 0), 0);
+  setText('fMem', total ? fmtBytes(used) : '—');
+  setText('fMemTotal', total ? ` / ${fmtBytes(total)}` : '');
+  const memPct = total ? (used / total) * 100 : 0;
+  const memBar = document.getElementById('fMemBar');
+  memBar.style.width = memPct.toFixed(1) + '%';
+  memBar.classList.toggle('hot', memPct >= 85);
+
+  const rx = live.reduce((a, h) => a + (h.metrics.net_recv || 0), 0);
+  const tx = live.reduce((a, h) => a + (h.metrics.net_sent || 0), 0);
+  setText('fNet', `↓${fmtBytes(rx)}  ↑${fmtBytes(tx)}`);
+  setText('fNetFoot', 'per second, all hosts');
+
+  const alerting = hosts.reduce((a, h) => a + (h.alerts || []).length, 0);
+  setText('fAlerts', String(alerting));
+  setText('fAlertsFoot', alerting ? 'conditions firing' : 'nothing firing');
+  document.getElementById('tileAlerts').classList.toggle('t-bad', alerting > 0);
+}
+
+// Mean CPU across hosts at each point in time. Histories can differ in length,
+// so each index averages only the hosts that actually reach back that far.
+function averageHistories(hosts) {
+  const hs = hosts.map(h => h.cpu_history || []).filter(a => a.length);
+  if (!hs.length) return [];
+  const n = Math.min(60, Math.max(...hs.map(a => a.length)));
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    let sum = 0, count = 0;
+    for (const a of hs) {
+      // Right-align: the newest sample of every host is its last one.
+      const v = a[a.length - n + i];
+      if (v !== undefined) { sum += v; count++; }
+    }
+    if (count) out.push(sum / count);
+  }
+  return out;
+}
+
+function setText(id, v) { const el = document.getElementById(id); if (el) el.textContent = v; }
+
 function updateCard(el, h) {
   const status = el.querySelector('.status');
   status.className = 'status ' + (h.online ? 'online' : 'offline');
-  el.querySelector('.name').textContent = h.hostname || h.agent_id;
+  el.querySelector('.nametext').textContent = h.hostname || h.agent_id;
   el.querySelector('.platform').textContent = `${h.platform || h.os} · ${h.arch}`;
+  const osic = el.querySelector('.osic');
+  if (osic.dataset.os !== h.os) { osic.dataset.os = h.os; osic.innerHTML = osMark(h.os); }
+
+  // The card itself carries the state, so a host in trouble is findable by
+  // colour from across the room rather than by reading every chip.
+  el.classList.toggle('is-offline', !h.online);
+  el.classList.toggle('is-warn', !!(h.online && (h.alerts || []).length));
 
   const alerts = el.querySelector('.alerts');
   alerts.innerHTML = '';
@@ -367,7 +493,10 @@ function updateCard(el, h) {
     alerts.appendChild(c);
   }
 
+  // A host with no telemetry gets no bars at all: empty rails and a flat
+  // sparkline look like real readings of zero.
   const m = h.metrics;
+  el.classList.toggle('nodata', !m);
   const cpu = m ? m.cpu_percent : 0;
   const mem = m ? m.mem_percent : 0;
   setBar(el.querySelector('.cpu'), cpu);
@@ -380,19 +509,37 @@ function updateCard(el, h) {
 
   renderGPUs(el.querySelector('.gpu-metrics'), (m && m.gpus) || []);
 
-  sparkline(el.querySelector('.cpuSpark'), h.cpu_history || []);
+  sparkline(el.querySelector('.cpuSpark'), h.cpu_history || [], el.querySelector('.cpuSparkFill'));
 
   const det = el.querySelector('.details');
   if (m) {
-    const disk = (m.disks || []).map(d => `${d.mount} ${d.percent.toFixed(0)}%`).join('  ');
-    det.textContent =
-      `up ${fmtUptime(m.uptime_secs)}  ·  load ${m.load1.toFixed(2)}\n` +
-      `mem ${fmtBytes(m.mem_used)} / ${fmtBytes(m.mem_total)}\n` +
-      `net ↓${fmtBytes(m.net_recv)}/s ↑${fmtBytes(m.net_sent)}/s\n` +
-      (m.gpus || []).map(g => `${g.name}  ${fmtBytes(g.mem_used)} / ${fmtBytes(g.mem_total)}\n`).join('') +
-      (disk ? disk : '');
+    const rows = [
+      ['up', `${fmtUptime(m.uptime_secs)}  ·  load ${m.load1.toFixed(2)}`],
+      ['mem', `${fmtBytes(m.mem_used)} / ${fmtBytes(m.mem_total)}`],
+      ['net', `↓${fmtBytes(m.net_recv)}/s  ↑${fmtBytes(m.net_sent)}/s`],
+    ];
+    for (const g of (m.gpus || [])) rows.push(['gpu', `${fmtBytes(g.mem_used)} / ${fmtBytes(g.mem_total)}`]);
+    // Built as a definition list rather than one newline-joined string: the
+    // figures line up in a column, and each carries its full text as a tooltip
+    // for when the card is too narrow to show all of it. Mount points and GPU
+    // names are host-reported, so they are escaped rather than trusted.
+    // Disks get a bar each rather than a run of percentages: "C: 71%  D: 22%"
+    // makes the reader parse a string to find the one that is nearly full.
+    const disks = (m.disks || []).map(d =>
+      `<div class="dk" title="${escapeHtml(d.mount)} — ${d.percent.toFixed(0)}% used">` +
+        `<span class="dk-m">${escapeHtml(d.mount)}</span>` +
+        `<span class="dk-bar"><i class="${d.percent >= 85 ? 'hot' : ''}" style="width:${d.percent.toFixed(0)}%"></i></span>` +
+        `<span class="dk-v">${d.percent.toFixed(0)}%</span>` +
+      `</div>`).join('');
+    det.innerHTML = '<dl class="dl">' + rows.map(([k, v]) =>
+      `<dt>${k}</dt><dd title="${escapeHtml(v)}">${escapeHtml(v)}</dd>`).join('') + '</dl>' +
+      (disks ? `<div class="disks">${disks}</div>` : '');
   } else {
-    det.textContent = h.online ? 'waiting for telemetry…' : `last seen ${new Date(h.last_seen).toLocaleString()}`;
+    det.innerHTML = '<div class="waiting"></div>';
+    det.firstChild.textContent = h.online
+      ? 'waiting for telemetry…'
+      : `last seen ${fmtAgo(h.last_seen)}`;
+    if (!h.online) det.firstChild.title = new Date(h.last_seen).toLocaleString();
   }
 
   const btn = el.querySelector('.remote');
@@ -446,15 +593,26 @@ function setBar(el, pct) {
   el.classList.toggle('hot', pct >= 85);
 }
 
-function sparkline(poly, data) {
-  if (!data.length) { poly.setAttribute('points', ''); return; }
+// Draws the line and, when given a path element, the area beneath it. The fill
+// is what makes a 24px-tall trace legible at a glance — a hairline alone reads
+// as decoration.
+function sparkline(poly, data, fill, h) {
+  h = h || 24;
+  if (!data.length) {
+    poly.setAttribute('points', '');
+    if (fill) fill.setAttribute('d', '');
+    return;
+  }
   const n = data.length;
-  const pts = data.map((v, i) => {
-    const x = (i / Math.max(1, n - 1)) * 100;
-    const y = 24 - (Math.max(0, Math.min(100, v)) / 100) * 24;
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  });
-  poly.setAttribute('points', pts.join(' '));
+  const xy = data.map((v, i) => [
+    (i / Math.max(1, n - 1)) * 100,
+    h - (Math.max(0, Math.min(100, v)) / 100) * h,
+  ]);
+  poly.setAttribute('points', xy.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' '));
+  if (fill) {
+    const d = `M0,${h} ` + xy.map(([x, y]) => `L${x.toFixed(1)},${y.toFixed(1)}`).join(' ') + ` L100,${h} Z`;
+    fill.setAttribute('d', d);
+  }
 }
 
 async function startRemote(h) {
@@ -509,12 +667,22 @@ const mTerm = document.getElementById('mTerm');
 function hostByID(id) { return lastHosts.find(h => h.agent_id === id); }
 
 function openDetail(agentID) {
+  // Every host starts on Overview, and nothing another host loaded is left on
+  // screen: the panes hold that host's software list, log excerpt and patch
+  // output, all of which would otherwise be read as this one's.
+  loadedPanes = new Set();
+  showPane('overview');
+
   detail.agent = agentID;
   modal.classList.remove('hidden');
   const h = hostByID(agentID);
   mTitle.textContent = h ? (h.hostname || agentID) : agentID;
   mSub.textContent = h ? `${h.platform || h.os} · ${h.arch}` : '';
   renderFacts(h);
+  // Also drawn here, not only from the poll: refreshDetailLive runs every three
+  // seconds, so opening a host left the Processes tab blank until the next one
+  // landed. Harmless when everything was on one scroll; obvious on a tab.
+  renderProcs(h);
   renderPatchPanel(h);
   // Wake replaces nothing — it simply only makes sense for a host that is off
   // and whose MAC was learned while it was on.
@@ -546,8 +714,75 @@ async function loadPrefs(agentID) {
   prefEls.cpu.value = p.cpu || '';
   prefEls.mem.value = p.mem || '';
   prefEls.disk.value = p.disk || '';
+  document.getElementById('prefSvc').value = (p.services || []).join(', ');
   showMuteState(p);
+  refreshFixUI(agentID);
+  // What the hub has actually observed, so the list is not just a wish. Only
+  // services already polled appear; one added a moment ago simply has no state
+  // until the next sweep.
+  const st = document.getElementById('prefSvcState');
+  const h = hostByID(agentID);
+  const svc = (h && h.services) || null;
+  st.textContent = svc && Object.keys(svc).length
+    ? Object.entries(svc).map(([n, up]) => `${n}: ${up ? 'running' : 'stopped'}`).join('  ·  ')
+    : '';
+  st.className = 'muted';
 }
+
+// ---- auto-fix ----
+//
+// A rule paired with a script: when the condition fires the hub runs the script
+// and only alerts if it is still true afterwards.
+let allScripts = [];
+
+async function refreshFixUI(agentID) {
+  const h = hostByID(agentID);
+  const p = allPrefs[agentID] || {};
+  const ruleSel = document.getElementById('fixRule');
+  const scriptSel = document.getElementById('fixScript');
+
+  // Only conditions this host can actually raise are offered — a rule that
+  // cannot fire here is a setting that silently never does anything.
+  const rules = [['cpu', 'CPU threshold'], ['mem', 'memory threshold'], ['disk', 'disk threshold']];
+  for (const name of (p.services || [])) rules.push(['service:' + name, name + ' stopped']);
+  ruleSel.innerHTML = rules.map(([v, l]) => `<option value="${escapeHtml(v)}">${escapeHtml(l)}</option>`).join('');
+
+  try { allScripts = await authJSON('/api/scripts', 'GET') || []; } catch (_) { allScripts = []; }
+  scriptSel.innerHTML = allScripts.length
+    ? allScripts.map(s => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.name)}</option>`).join('')
+    : '<option value="">no scripts saved yet</option>';
+
+  renderFixList(agentID);
+}
+
+function renderFixList(agentID) {
+  const p = allPrefs[agentID] || {};
+  const box = document.getElementById('fixList');
+  const entries = Object.entries(p.remediate || {});
+  if (!entries.length) { box.textContent = 'nothing set — alerts are sent straight out'; return; }
+  const name = id => (allScripts.find(s => s.id === id) || {}).name || id;
+  box.innerHTML = entries.map(([rule, sid]) =>
+    `<span class="fix">${escapeHtml(rule)} → ${escapeHtml(name(sid))} ` +
+    `<a href="#" class="fix-rm" data-rule="${escapeHtml(rule)}">✕</a></span>`).join(' ');
+  box.querySelectorAll('.fix-rm').forEach(a => a.onclick = (e) => {
+    e.preventDefault();
+    const cur = { ...(allPrefs[agentID] || {}).remediate };
+    delete cur[a.dataset.rule];
+    savePrefs({ pref: { remediate: cur } }).then(() => renderFixList(agentID));
+  });
+}
+
+document.getElementById('fixAdd').addEventListener('click', async () => {
+  const h = hostByID(detail.agent);
+  if (!h) return;
+  const rule = document.getElementById('fixRule').value;
+  const script = document.getElementById('fixScript').value;
+  if (!rule || !script) return;
+  const cur = { ...((allPrefs[h.agent_id] || {}).remediate || {}) };
+  cur[rule] = script;
+  await savePrefs({ pref: { remediate: cur } });
+  renderFixList(h.agent_id);
+});
 
 function showMuteState(p) {
   if (p && p.mute) { prefEls.status.textContent = 'muted indefinitely'; return; }
@@ -562,10 +797,16 @@ async function savePrefs(extra) {
   const h = hostByID(detail.agent);
   if (!h) return;
   const num = (el) => { const v = parseFloat(el.value); return isFinite(v) && v > 0 ? v : 0; };
+  // Built on top of what is already stored, because the hub replaces the whole
+  // entry rather than merging: sending only the thresholds silently cleared the
+  // host's mute, and would now drop its watched services too.
+  const current = allPrefs[h.agent_id] || {};
   const body = {
     agent_id: h.agent_id,
     pref: {
+      ...current,
       cpu: num(prefEls.cpu), mem: num(prefEls.mem), disk: num(prefEls.disk),
+      services: splitServices(document.getElementById('prefSvc').value),
       ...(extra && extra.pref),
     },
     ...(extra && extra.mute_hours ? { mute_hours: extra.mute_hours } : {}),
@@ -579,6 +820,7 @@ async function savePrefs(extra) {
 }
 
 document.getElementById('prefSave').addEventListener('click', () => savePrefs(null));
+document.getElementById('prefSvcSave').addEventListener('click', () => savePrefs(null));
 document.getElementById('prefMute1').addEventListener('click', () => savePrefs({ mute_hours: 1 }));
 document.getElementById('prefMute8').addEventListener('click', () => savePrefs({ mute_hours: 8 }));
 document.getElementById('prefUnmute').addEventListener('click', () => savePrefs({ pref: { mute: false, mute_until: null } }));
@@ -1022,6 +1264,37 @@ document.getElementById('patchReboot').addEventListener('click', async () => {
 });
 
 const mFacts = document.getElementById('mFacts');
+// ---- detail modal tabs ----
+//
+// Panes are switched here rather than by each panel knowing about the others,
+// and a pane whose content is fetched on demand loads the first time it is
+// shown — the buttons remain for reloading. Patches is deliberately not
+// auto-loaded: checking asks the host's package manager, which is real work on
+// the far end rather than a read of something the hub already holds.
+const AUTOLOAD = {
+  software: () => document.getElementById('mInvBtn').click(),
+  logs: () => document.getElementById('logsBtn').click(),
+};
+let loadedPanes = new Set();
+
+function showPane(name) {
+  for (const t of document.querySelectorAll('#mTabs .mtab')) {
+    t.classList.toggle('active', t.dataset.pane === name);
+  }
+  for (const p of document.querySelectorAll('.mpane')) {
+    p.classList.toggle('hidden', p.dataset.pane !== name);
+  }
+  if (AUTOLOAD[name] && !loadedPanes.has(name)) {
+    loadedPanes.add(name);
+    try { AUTOLOAD[name](); } catch (_) {}
+  }
+}
+
+document.getElementById('mTabs').addEventListener('click', (e) => {
+  const t = e.target.closest('.mtab');
+  if (t) showPane(t.dataset.pane);
+});
+
 function renderFacts(h) {
   const f = (h && h.facts) || {};
   const items = [];
@@ -1162,14 +1435,258 @@ async function openEnroll() {
   }
 }
 
+// ---- network discovery ----
+const discoverModal = document.getElementById('discoverModal');
+
+document.getElementById('discoverBtn').addEventListener('click', () => {
+  discoverModal.classList.remove('hidden');
+  runDiscovery();
+});
+document.getElementById('discoverClose').addEventListener('click', () => discoverModal.classList.add('hidden'));
+discoverModal.addEventListener('click', e => { if (e.target === discoverModal) discoverModal.classList.add('hidden'); });
+
+async function runDiscovery() {
+  const body = document.getElementById('discoverBody');
+  body.innerHTML = '<div class="muted">sweeping the network — this takes a few seconds…</div>';
+  try {
+    const r = await authJSON('/api/discover');
+    const list = r.devices || [];
+    if (!list.length) { body.innerHTML = '<div class="muted">Nothing found.</div>'; return; }
+    const news = list.filter(d => !d.monitored).length;
+    body.innerHTML =
+      `<div class="muted" style="margin-bottom:10px">${list.length} device(s), ${news} not yet monitored</div>` +
+      '<table class="proc-table"><thead><tr><th>Address</th><th>Name</th><th>MAC</th>' +
+      '<th>Open ports</th><th></th></tr></thead><tbody>' +
+      list.map((d, i) => `<tr class="${d.monitored ? 'disc-known' : ''}">` +
+        `<td>${escapeHtml(d.ip)}</td>` +
+        `<td>${escapeHtml(d.name || '')}</td>` +
+        `<td class="aud-detail">${escapeHtml(d.mac)}</td>` +
+        `<td>${(d.ports || []).join(', ')}</td>` +
+        `<td>${d.monitored
+            ? `<span class="muted">${escapeHtml(d.why || 'already known')}</span>`
+            : `<button class="btn disc-add" data-i="${i}">Monitor</button>`}</td></tr>`).join('') +
+      '</tbody></table>';
+
+    body.querySelectorAll('.disc-add').forEach(b => b.onclick = async () => {
+      const d = list[parseInt(b.dataset.i, 10)];
+      // Added by MAC, not by address: this device was found on DHCP and the
+      // address it holds today is not a fact worth writing down.
+      const name = prompt('Name for ' + d.ip + '?', d.name || d.ip);
+      if (name === null) return;
+      b.disabled = true;
+      try {
+        await authJSON('/api/netchecks', 'POST', { name: name || d.ip, address: d.ip, mac: d.mac });
+        b.replaceWith(Object.assign(document.createElement('span'),
+          { className: 'muted', textContent: 'added' }));
+        loadNetChecks();
+      } catch (e) { b.disabled = false; alert('Could not add: ' + e.message); }
+    });
+  } catch (e) {
+    body.innerHTML = `<div class="muted">Discovery failed: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+// ---- audit trail ----
+const auditModal = document.getElementById('auditModal');
+
+document.getElementById('auditBtn').addEventListener('click', () => {
+  auditModal.classList.remove('hidden');
+  loadAudit();
+});
+document.getElementById('auditClose').addEventListener('click', () => auditModal.classList.add('hidden'));
+auditModal.addEventListener('click', e => { if (e.target === auditModal) auditModal.classList.add('hidden'); });
+document.getElementById('auditFilter').addEventListener('change', loadAudit);
+
+async function loadAudit() {
+  const body = document.getElementById('auditBody');
+  const filter = document.getElementById('auditFilter').value;
+  body.innerHTML = '<div class="muted">loading…</div>';
+  try {
+    const r = await authJSON('/api/audit?limit=200&action=' + encodeURIComponent(filter));
+    if (r.note) { body.innerHTML = `<div class="no-data">${escapeHtml(r.note)}</div>`; return; }
+    const ev = r.events || [];
+    if (!ev.length) { body.innerHTML = '<div class="muted">Nothing recorded yet.</div>'; return; }
+    body.innerHTML = '<table class="proc-table"><thead><tr><th>When</th><th>Who</th>' +
+      '<th>Action</th><th>Target</th><th>From</th><th>Detail</th></tr></thead><tbody>' +
+      ev.map(e => {
+        // A denied outcome is the row somebody is looking for, so it is marked
+        // rather than left to be spotted in a column of identical text.
+        const bad = e.outcome === 'denied' || e.outcome === 'failed';
+        return `<tr class="${bad ? 'run-bad' : ''}">` +
+          `<td>${new Date(e.ts * 1000).toLocaleString()}</td>` +
+          `<td>${escapeHtml(e.actor)}</td>` +
+          `<td>${escapeHtml(e.action)}${bad ? ' · ' + escapeHtml(e.outcome) : ''}</td>` +
+          `<td>${escapeHtml(auditTarget(e.target))}</td>` +
+          `<td>${escapeHtml(e.remote || '')}</td>` +
+          `<td class="aud-detail" title="${escapeHtml(e.detail || '')}">${escapeHtml(e.detail || '')}</td></tr>`;
+      }).join('') + '</tbody></table>';
+  } catch (e) {
+    body.innerHTML = `<div class="muted">Could not load: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+// Targets are agent ids, selectors, or usernames for sign-in events.
+function auditTarget(t) {
+  if (!t) return '';
+  if (t === 'all') return 'all online hosts';
+  if (t.startsWith('tag:')) return 'tagged "' + t.slice(4) + '"';
+  if (t.startsWith('os:')) return 'every ' + t.slice(3) + ' host';
+  const h = hostByID(t);
+  return h ? (h.hostname || t) : t;
+}
+
+// A watch list is typed as free text; the hub rejects anything that is not a
+// plausible service name, so trimming here only keeps the display honest.
+function splitServices(v) {
+  return String(v).split(',').map(x => x.trim()).filter(Boolean);
+}
+
+// ---- fleet actions ----
+const fleetModal = document.getElementById('fleetModal');
+
+document.getElementById('fleetBtn').addEventListener('click', () => {
+  fillFleetTargets();
+  loadPolicies();
+  showPolicyFor(document.getElementById('fleetTarget').value);
+  document.getElementById('fleetOut').classList.add('hidden');
+  document.getElementById('fleetStatus').textContent = '';
+  fleetModal.classList.remove('hidden');
+});
+document.getElementById('fleetClose').addEventListener('click', () => fleetModal.classList.add('hidden'));
+fleetModal.addEventListener('click', e => { if (e.target === fleetModal) fleetModal.classList.add('hidden'); });
+
+// The same selectors the scripts panel offers, resolved by the hub at run time
+// so a host enrolled later is covered without anyone revisiting this list.
+function fillFleetTargets() {
+  const sel = document.getElementById('fleetTarget');
+  const keep = sel.value;
+  const hosts = lastHosts.filter(h => h.online && h.can_exec);
+  sel.innerHTML = '';
+  const add = (value, label) => {
+    const o = document.createElement('option');
+    o.value = value; o.textContent = label;
+    sel.appendChild(o);
+  };
+  add('all', `▸ All online hosts (${hosts.length})`);
+  for (const os of [...new Set(hosts.map(h => h.os).filter(Boolean))].sort()) {
+    add('os:' + os, `▸ Every ${os} host (${hosts.filter(h => h.os === os).length})`);
+  }
+  const tags = new Set();
+  for (const h of hosts) for (const t of hostTags(h)) tags.add(t.toLowerCase());
+  for (const t of [...tags].sort()) {
+    add('tag:' + t, `▸ Tagged "${t}"`);
+  }
+  for (const h of hosts) add(h.agent_id, h.hostname || h.agent_id);
+  if (keep) sel.value = keep;
+}
+
+document.getElementById('fleetRun').addEventListener('click', async () => {
+  const target = document.getElementById('fleetTarget').value;
+  const action = document.getElementById('fleetAction').value;
+  const out = document.getElementById('fleetOut');
+  const status = document.getElementById('fleetStatus');
+  const label = document.getElementById('fleetTarget').selectedOptions[0].textContent;
+  // Rebooting a set of machines is not something to discover you have done.
+  if (action === 'reboot' && !confirm(`Reboot ${label}?\n\nEvery matching host restarts now.`)) return;
+
+  status.textContent = 'running… this can take a while on many hosts';
+  out.classList.add('hidden');
+  try {
+    const r = await authJSON('/api/fleet', 'POST', { target, action });
+    status.textContent = `${r.total - r.failed}/${r.total} succeeded`
+      + (r.failed ? ` — ${r.failed} failed` : '');
+    // Every host named, failures first, because a fleet action that reports one
+    // verdict hides the machines that did not do it.
+    out.textContent = r.results.map(x =>
+      `── ${x.hostname || x.agent_id} — ${x.ok ? 'ok' : 'FAILED'}\n${(x.output || '').trim()}`
+    ).join('\n\n');
+    out.classList.remove('hidden');
+  } catch (e) {
+    status.textContent = 'failed: ' + e.message;
+  }
+});
+
+// ---- alerting policies ----
+//
+// A policy is an entry in the same prefs store keyed by a selector rather than
+// an agent id, so the hub resolves it for every matching host and a machine's
+// own thresholds still win.
+async function loadPolicies() {
+  const list = document.getElementById('polList');
+  try {
+    const all = await authJSON('/api/hostprefs', 'GET');
+    const keys = Object.keys(all || {}).filter(k => /^(all|tag:|os:)/.test(k)).sort();
+    if (!keys.length) { list.innerHTML = '<div class="muted">No policies set.</div>'; return; }
+    list.innerHTML = keys.map(k => {
+      const p = all[k];
+      const bits = [
+        p.cpu ? `CPU ${p.cpu}%` : '', p.mem ? `MEM ${p.mem}%` : '', p.disk ? `DISK ${p.disk}%` : '',
+        (p.services || []).length ? `watching ${p.services.join(', ')}` : '',
+      ].filter(Boolean).join(' · ') || 'nothing set';
+      return `<div class="pol"><span class="pol-k">${escapeHtml(k)}</span>` +
+        `<span class="pol-v">${escapeHtml(bits)}</span></div>`;
+    }).join('');
+  } catch (e) { list.innerHTML = '<div class="muted">Could not load policies: ' + escapeHtml(e.message) + '</div>'; }
+}
+
+// Shows what is already stored for whatever the target picker is pointing at,
+// so saving edits that policy instead of silently starting a second one.
+async function showPolicyFor(key) {
+  const st = document.getElementById('polStatus');
+  st.textContent = '';
+  try {
+    const all = await authJSON('/api/hostprefs', 'GET');
+    const p = (all || {})[key] || {};
+    document.getElementById('polCPU').value = p.cpu || '';
+    document.getElementById('polMem').value = p.mem || '';
+    document.getElementById('polDisk').value = p.disk || '';
+    document.getElementById('polSvc').value = (p.services || []).join(', ');
+  } catch (_) {}
+}
+
+async function savePolicy(clear) {
+  const key = document.getElementById('fleetTarget').value;
+  const st = document.getElementById('polStatus');
+  const num = id => {
+    const v = parseFloat(document.getElementById(id).value);
+    return Number.isFinite(v) && v > 0 ? v : 0;
+  };
+  const pref = clear ? { cpu: 0, mem: 0, disk: 0, services: [] }
+    : {
+        cpu: num('polCPU'), mem: num('polMem'), disk: num('polDisk'),
+        services: splitServices(document.getElementById('polSvc').value),
+      };
+  st.textContent = 'saving…';
+  try {
+    await authJSON('/api/hostprefs', 'POST', { agent_id: key, pref });
+    if (clear) { for (const i of ['polCPU', 'polMem', 'polDisk', 'polSvc']) document.getElementById(i).value = ''; }
+    st.textContent = clear ? `cleared for ${key}` : `saved for ${key}`;
+    loadPolicies();
+  } catch (e) { st.textContent = 'failed: ' + e.message; }
+}
+
+document.getElementById('polSave').addEventListener('click', () => savePolicy(false));
+document.getElementById('polClear').addEventListener('click', () => savePolicy(true));
+document.getElementById('fleetTarget').addEventListener('change', (e) => showPolicyFor(e.target.value));
+
 // Bridge for scripts.js (shares auth + the current host list).
 window.autormm = {
   token,
   execHosts: () => lastHosts.filter(h => h.online && h.can_exec),
   allHosts: () => lastHosts,
+  // Run records carry an agent id; a per-host result list has to name machines.
+  hostName: (id) => {
+    const h = hostByID(id);
+    return h ? (h.hostname || id) : id;
+  },
 };
 
 poll();
+document.getElementById('hostSearch').addEventListener('input', (e) => {
+  hostQuery = e.target.value.trim().toLowerCase();
+  if (lastHosts) render(lastHosts); // re-filter the poll we already have
+});
+
 setInterval(poll, 3000);
 
 // ---- agentless network devices ----
