@@ -344,6 +344,42 @@
         <textarea id="netJSONProbes" class="sc-content" style="height:84px"
                   placeholder="One per line:  Label | path | unit&#10;Tank temp | istat.inputs[name=Tmp].value | °F&#10;pH | istat.inputs[name=pH].value"></textarea>
       </div>
+      <div class="cmd-row">
+        <select id="netJSONAuth" class="inv-filter">
+          <option value="">no sign-in needed</option>
+          <option value="basic">HTTP basic</option>
+          <option value="bearer">Bearer token</option>
+          <option value="login">Sign in and keep the session</option>
+        </select>
+      </div>
+      <div class="json-basic hidden">
+        <div class="cmd-row">
+          <input id="netJSONUser" class="inv-filter" placeholder="username" autocomplete="off" data-1p-ignore>
+          <input id="netJSONPass" class="inv-filter" type="password" placeholder="password" autocomplete="off" data-1p-ignore data-lpignore="true">
+        </div>
+      </div>
+      <div class="json-bearer hidden">
+        <div class="cmd-row">
+          <input id="netJSONToken" class="inv-filter" style="max-width:none" type="password" placeholder="token" autocomplete="off" data-1p-ignore data-lpignore="true">
+        </div>
+      </div>
+      <div class="json-login hidden">
+        <div class="cmd-row">
+          <input id="netJSONLoginURL" class="inv-filter" style="max-width:none"
+                 placeholder="sign-in URL — e.g. https://unifi.lan/api/login">
+        </div>
+        <div class="cmd-row">
+          <input id="netJSONLoginBody" class="inv-filter" style="max-width:none" type="password"
+                 placeholder='sign-in body, as JSON — {"username":"...","password":"..."}'
+                 autocomplete="off" data-1p-ignore data-lpignore="true">
+        </div>
+        <p class="muted" style="font-size:11.5px;margin:2px 0 0">
+          The body is posted as JSON and whatever cookies come back are reused
+          until they stop working. It holds a password, so it is never sent back
+          to this page once saved.
+        </p>
+      </div>
+
       <p class="muted" style="font-size:11.5px;margin:2px 0 0">
         Paths are dotted. <code>a.b.0.c</code> walks objects and arrays;
         <code>list[name=Tmp]</code> picks the array entry whose field matches,

@@ -512,3 +512,28 @@ func TestOnlyPhysicalPortsAreCounted(t *testing.T) {
 		}
 	}
 }
+
+// A sign-in body carries a password verbatim, so it must not come back to a
+// page that is open all day — nor may the token or the password field.
+func TestJSONCredentialsAreRedacted(t *testing.T) {
+	c := NetCheck{
+		ID: "pdu", JSONURL: "https://unifi.lan/api/status",
+		JSONAuth: JSONAuth{
+			Mode: "login", User: "monitor", Pass: "hunter2", Token: "tok",
+			LoginURL: "https://unifi.lan/api/login", LoginBody: `{"password":"hunter2"}`,
+		},
+	}
+	got := redactSecrets(c)
+	for name, v := range map[string]string{
+		"pass": got.JSONAuth.Pass, "token": got.JSONAuth.Token, "body": got.JSONAuth.LoginBody,
+	} {
+		if v != secretPlaceholder {
+			t.Errorf("%s leaked as %q", name, v)
+		}
+	}
+	// The username and the URLs are not secrets and are needed to show what is
+	// configured.
+	if got.JSONAuth.User != "monitor" || got.JSONAuth.LoginURL == "" {
+		t.Errorf("non-secrets were redacted: %+v", got.JSONAuth)
+	}
+}

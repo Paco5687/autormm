@@ -1886,7 +1886,7 @@ function renderMonitorSection(which, list) {
   // SNMP, because a device that reports anything is worth more of the eye than
   // one that only proves it is switched on; then the rest, by name.
   const ordered = [...list].sort((a, b) => {
-    const rank = c => (snmpMetrics(c.snmp).length ? 0 : (c.snmp && !c.snmp.error ? 1 : 2));
+    const rank = c => (hasDetail(c) ? 0 : ((c.snmp && !c.snmp.error) || c.readings_err ? 1 : 2));
     return rank(a) - rank(b) || String(a.name || '').localeCompare(String(b.name || ''));
   });
 
@@ -1954,7 +1954,8 @@ function renderMonitorSection(which, list) {
     // devices have nothing more to say, and giving them all the taller card
     // would be a lot of white space to make a firewall look better.
     const metrics = snmpMetrics(c.snmp).concat(jsonMetrics(c.readings));
-    if (metrics.length) {
+    const plain = jsonPlain(c.readings);
+    if (metrics.length || plain.length) {
       el.classList.add('nc-rich');
       const box = document.createElement('div');
       box.className = 'nc-metrics';
@@ -1962,9 +1963,21 @@ function renderMonitorSection(which, list) {
         `<div class="nc-metric"><label>${escapeHtml(m.label)}</label>` +
         `<span class="bar"><i class="${m.level ? 'hot' : ''}" style="width:${Math.max(0, Math.min(100, m.percent))}%"></i></span>` +
         `<span class="val">${escapeHtml(m.text)}</span></div>`).join('');
-      body.appendChild(box);
+      if (box.innerHTML) body.appendChild(box);
 
-      const facts = [snmpFacts(c.snmp), ...jsonFacts(c.readings)].filter(Boolean).join('  ·  ');
+      // Readings that are not proportions get a labelled row each. A tank's
+      // temperature and pH are the whole point of the card and belong on it,
+      // not truncated into the subtitle behind an ellipsis.
+      if (plain.length) {
+        const rd = document.createElement('div');
+        rd.className = 'nc-readings';
+        rd.innerHTML = plain.map(r =>
+          `<div class="rd"><span class="rd-k">${escapeHtml(r.label)}</span>` +
+          `<span class="rd-v">${escapeHtml(r.text)}</span></div>`).join('');
+        body.appendChild(rd);
+      }
+
+      const facts = snmpFacts(c.snmp);
       if (facts) {
         const f = document.createElement('div');
         f.className = 'nc-facts';
@@ -2139,11 +2152,18 @@ function jsonMetrics(readings) {
     }));
 }
 
-// jsonFacts is the readings that are figures rather than proportions.
-function jsonFacts(readings) {
-  return (readings || [])
-    .filter(r => !(r.numeric && r.max > 0))
-    .map(r => `${r.label} ${r.text}`);
+// jsonPlain is the readings that are not proportions of anything: a
+// temperature, a pH, a status word. They get a labelled row rather than a bar,
+// because a bar needs something to be a fraction of.
+function jsonPlain(readings) {
+  return (readings || []).filter(r => !(r.numeric && r.max > 0));
+}
+
+// hasDetail reports whether a device has enough to say to earn the taller card.
+function hasDetail(c) {
+  return snmpMetrics(c.snmp).length > 0 ||
+    jsonMetrics(c.readings).length > 0 ||
+    jsonPlain(c.readings).length > 0;
 }
 
 // snmpFacts is the line under the bars: the figures that are not percentages.
@@ -2260,14 +2280,15 @@ function monitorSubtitle(c) {
     return `${where} · ${why || 'unreachable'}`;
   }
   const code = (c.kind === 'app' && c.code && (c.code < 200 || c.code >= 400)) ? ` · HTTP ${c.code}` : '';
-  // A device with bars says its readings there, so the subtitle goes back to
-  // identifying the thing — its own name for itself is more use than a latency.
-  if (snmpMetrics(c.snmp).length) {
-    const who = c.snmp.sys_descr || c.snmp.sys_name;
+  // A device with a detail block says its readings there, so the subtitle goes
+  // back to identifying the thing — its own name for itself is more use than a
+  // latency, and repeating a reading twice on one card is worse than either.
+  if (hasDetail(c)) {
+    // Guarded, because a device can now have a detail block from its JSON
+    // readings alone and never have answered SNMP at all.
+    const who = c.snmp && (c.snmp.sys_descr || c.snmp.sys_name);
     return who ? `${where} · ${who}` : where;
   }
-  const readings = jsonFacts(c.readings).slice(0, 2).join(' · ');
-  if (readings) return `${where} · ${readings}`;
   const snmp = snmpSummary(c.snmp);
   if (snmp) return `${where} · ${snmp}`;
   return `${where} · ${Math.round(c.latency_ms)}ms${code}`;
@@ -2282,6 +2303,13 @@ function setSNMPVersionUI(v) {
   document.querySelector('.snmp-v3').classList.toggle('hidden', v !== '3');
 }
 document.getElementById('netSNMPVersion').addEventListener('change', e => setSNMPVersionUI(e.target.value));
+
+function setJSONAuthUI(mode) {
+  document.querySelector('.json-basic').classList.toggle('hidden', mode !== 'basic');
+  document.querySelector('.json-bearer').classList.toggle('hidden', mode !== 'bearer');
+  document.querySelector('.json-login').classList.toggle('hidden', mode !== 'login');
+}
+document.getElementById('netJSONAuth').addEventListener('change', e => setJSONAuthUI(e.target.value));
 
 // Opens the device form on an existing check. Apps have their own, simpler form.
 function openCheckEditor(c) {
@@ -2304,6 +2332,14 @@ function openCheckEditor(c) {
   // The secrets come back as a placeholder, and leaving it is what tells the
   // hub to keep what it has.
   set('netJSONURL', c.json_url);
+  const ja = c.json_auth || {};
+  set('netJSONUser', ja.user);
+  set('netJSONPass', ja.pass);
+  set('netJSONToken', ja.token);
+  set('netJSONLoginURL', ja.login_url);
+  set('netJSONLoginBody', ja.login_body);
+  document.getElementById('netJSONAuth').value = ja.mode || '';
+  setJSONAuthUI(ja.mode || '');
   document.getElementById('netJSONProbes').value = (c.json_probes || [])
     .map(x => [x.label, x.path, x.unit].filter(Boolean).join(' | ')).join('\n');
   set('netSNMP', c.snmp);
@@ -2327,11 +2363,14 @@ function resetCheckEditor() {
   document.getElementById('netSave').textContent = 'Add device';
   for (const id of ['netName', 'netAddr', 'netPort', 'netTags', 'netURL', 'netMAC',
                     'netSNMP', 'netSNMPPort', 'netSNMPUser', 'netSNMPAuthPass', 'netSNMPPrivPass',
-                    'netJSONURL', 'netJSONProbes']) {
+                    'netJSONURL', 'netJSONProbes', 'netJSONUser', 'netJSONPass',
+                    'netJSONToken', 'netJSONLoginURL', 'netJSONLoginBody']) {
     document.getElementById(id).value = '';
   }
   document.getElementById('netSNMPVersion').value = '';
   setSNMPVersionUI('');
+  document.getElementById('netJSONAuth').value = '';
+  setJSONAuthUI('');
   document.getElementById('netStatus').textContent = '';
   showBrowse(null);
 }
@@ -2423,6 +2462,14 @@ document.getElementById('netSave').addEventListener('click', async () => {
       url: document.getElementById('netURL').value.trim(),
       mac,
       json_url: document.getElementById('netJSONURL').value.trim(),
+      json_auth: {
+        mode: document.getElementById('netJSONAuth').value,
+        user: document.getElementById('netJSONUser').value.trim(),
+        pass: document.getElementById('netJSONPass').value,
+        token: document.getElementById('netJSONToken').value,
+        login_url: document.getElementById('netJSONLoginURL').value.trim(),
+        login_body: document.getElementById('netJSONLoginBody').value,
+      },
       json_probes: parseProbes(document.getElementById('netJSONProbes').value),
       snmp: document.getElementById('netSNMP').value.trim(),
       snmp_port: parseInt(document.getElementById('netSNMPPort').value, 10) || 0,

@@ -53,6 +53,7 @@ type NetCheck struct {
 	// hardware that has no SNMP but does publish its state over HTTP.
 	JSONURL    string      `json:"json_url,omitempty"`
 	JSONProbes []JSONProbe `json:"json_probes,omitempty"`
+	JSONAuth   JSONAuth    `json:"json_auth,omitempty"`
 	// SNMPVersion is "1", "2c", "3", or empty for automatic (v2c then v1).
 	SNMPVersion string `json:"snmp_version,omitempty"`
 	// v3 credentials. Authentication and privacy are what make v3 worth
@@ -152,6 +153,9 @@ type netChecks struct {
 	checks map[string]*NetCheck
 	state  map[string]*NetStatus
 	macs   *macIndex
+	// sessions holds a cookie jar per check, so an API that hands out a session
+	// is not asked for a new one every poll.
+	sessions *sessions
 }
 
 // canLearnMAC reports whether any check is watched by address alone, and so
@@ -176,7 +180,10 @@ func hasMACs(list []NetCheck) bool {
 }
 
 func newNetChecks(dir string) *netChecks {
-	n := &netChecks{checks: map[string]*NetCheck{}, state: map[string]*NetStatus{}, macs: newMACIndex()}
+	n := &netChecks{
+		checks: map[string]*NetCheck{}, state: map[string]*NetStatus{},
+		macs: newMACIndex(), sessions: newSessions(),
+	}
 	if dir != "" {
 		n.path = filepath.Join(dir, "netchecks.json")
 		if b, err := os.ReadFile(n.path); err == nil {
@@ -223,6 +230,16 @@ func redactSecrets(c NetCheck) NetCheck {
 	}
 	if c.SNMPPrivPass != "" {
 		c.SNMPPrivPass = secretPlaceholder
+	}
+	if c.JSONAuth.Pass != "" {
+		c.JSONAuth.Pass = secretPlaceholder
+	}
+	if c.JSONAuth.Token != "" {
+		c.JSONAuth.Token = secretPlaceholder
+	}
+	// The login body carries the password verbatim, so it never goes out at all.
+	if c.JSONAuth.LoginBody != "" {
+		c.JSONAuth.LoginBody = secretPlaceholder
 	}
 	return c
 }
@@ -544,8 +561,16 @@ func (n *netChecks) runChecks(ctx context.Context, now time.Time) []NetStatus {
 			// Values from the device's own JSON, for hardware with no SNMP.
 			var readings []Reading
 			var readingsErr string
-			if up && c.JSONURL != "" && len(c.JSONProbes) > 0 {
-				readings, readingsErr = probeJSON(ctx, c.JSONURL, c.JSONProbes)
+			switch {
+			case c.JSONURL != "" && len(c.JSONProbes) == 0:
+				// Half-configured: a URL and nothing to pull out of it does
+				// nothing at all, and doing nothing quietly looks identical to
+				// a device that is not answering.
+				readingsErr = "a status URL is set but no values to read from it"
+			case up && c.JSONURL != "" && len(c.JSONProbes) > 0:
+				readings, readingsErr = probeJSONAuth(ctx, c.ID, c.JSONURL, c.JSONProbes, c.JSONAuth, n.sessions)
+			case c.JSONURL == "" && len(c.JSONProbes) > 0:
+				readingsErr = "values are configured but no status URL to fetch them from"
 			}
 			if c.MAC != "" && found == "" && err == nil {
 				err = errors.New("no device with that MAC found on the hub's networks")
@@ -771,6 +796,12 @@ func (s *Server) handleNetChecks(w http.ResponseWriter, r *http.Request) {
 			c.SNMP = keptSecret(c.SNMP, old.SNMP)
 			c.SNMPAuthPass = keptSecret(c.SNMPAuthPass, old.SNMPAuthPass)
 			c.SNMPPrivPass = keptSecret(c.SNMPPrivPass, old.SNMPPrivPass)
+			c.JSONAuth.Pass = keptSecret(c.JSONAuth.Pass, old.JSONAuth.Pass)
+			c.JSONAuth.Token = keptSecret(c.JSONAuth.Token, old.JSONAuth.Token)
+			c.JSONAuth.LoginBody = keptSecret(c.JSONAuth.LoginBody, old.JSONAuth.LoginBody)
+			// Credentials may have changed, so the held session is no longer
+			// known to be valid.
+			s.netChecks.sessions.drop(c.ID)
 		}
 		s.netChecks.checks[c.ID] = &c
 		delete(s.netChecks.state, c.ID) // an edited check re-probes rather than showing stale state

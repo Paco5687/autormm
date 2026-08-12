@@ -9,6 +9,9 @@
   <style>
     html, body { height: 100%; margin: 0; background: #000; }
     #term { position: fixed; inset: 34px 6px 6px 6px; }
+    /* Room for the key bar when it is up, so it never covers the last line —
+       which is the line you are typing on. */
+    body.keys #term { bottom: 96px; }
     .xterm .xterm-viewport { overflow-y: auto; }
   </style>
   <link rel="manifest" href="/manifest.webmanifest">
@@ -21,10 +24,42 @@
 </head>
 <body class="viewer-body">
   <div class="viewer-bar" id="bar">
+    <button class="btn" id="keysBtn" title="Show the keys a touch keyboard lacks">⌨</button>
     <strong id="title">terminal</strong>
     <span class="pill" id="state">connecting…</span>
+    <span class="grow"></span>
+    <button class="btn ghost" id="closeBtn" title="Close this terminal">✕</button>
   </div>
   <div id="term"></div>
+
+  <!-- The keys a phone keyboard has not got, and the modifiers that only make
+       sense on a touch screen as one-shots: tap Ctrl, then a letter. -->
+  <div id="kbdbar" class="kbdbar hidden">
+    <div class="kbd-keys">
+      <button class="kk" data-key="esc">Esc</button>
+      <button class="kk" data-key="tab">Tab</button>
+      <button class="kk kk-mod" data-mod="ctrl">Ctrl</button>
+      <button class="kk kk-mod" data-mod="alt">Alt</button>
+      <button class="kk" data-key="c-c" title="Interrupt">^C</button>
+      <button class="kk" data-key="c-d" title="End of input">^D</button>
+      <button class="kk" data-key="c-z" title="Suspend">^Z</button>
+      <button class="kk" data-key="c-l" title="Clear">^L</button>
+      <button class="kk" data-key="left">←</button>
+      <button class="kk" data-key="up">↑</button>
+      <button class="kk" data-key="down">↓</button>
+      <button class="kk" data-key="right">→</button>
+      <button class="kk" data-key="home">Home</button>
+      <button class="kk" data-key="end">End</button>
+      <button class="kk" data-key="pgup">PgUp</button>
+      <button class="kk" data-key="pgdn">PgDn</button>
+      <button class="kk" data-key="del">Del</button>
+      <button class="kk" data-key="bksp">Bksp</button>
+      <button class="kk" data-key="pipe">|</button>
+      <button class="kk" data-key="tilde">~</button>
+      <button class="kk" data-key="slash">/</button>
+      <button class="kk" data-key="dash">-</button>
+    </div>
+  </div>
   <script src="/static/vendor/xterm.js"></script>
   <script src="/static/vendor/xterm-addon-fit.js"></script>
   <script src="/static/terminal.js"></script>

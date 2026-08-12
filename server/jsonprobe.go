@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // Reading values out of a device's own JSON.
@@ -18,7 +20,10 @@ import (
 // "it answered" throws away everything interesting about those.
 //
 // So: fetch a URL, pull named values out of the response, and show them on the
-// card like any other reading. Read-only, and it never sends anything but a GET.
+// card like any other reading. Read-only: the status fetch is always a GET, and
+// the one POST this makes is a login, because some of the interesting APIs are
+// behind one — a UniFi controller holds the only copy of a smart PDU's
+// per-outlet power, and will not part with it unauthenticated.
 
 // JSONProbe is one value to pull out of a JSON response.
 type JSONProbe struct {
@@ -42,38 +47,109 @@ type Reading struct {
 	Numeric bool `json:"numeric,omitempty"`
 }
 
+// JSONAuth is how to authenticate to a status API.
+type JSONAuth struct {
+	// Mode is "", "basic", "bearer" or "login".
+	Mode  string `json:"mode,omitempty"`
+	User  string `json:"user,omitempty"`
+	Pass  string `json:"pass,omitempty"`
+	Token string `json:"token,omitempty"`
+	// LoginURL and LoginBody drive the "login" mode: the body is posted as JSON
+	// and whatever cookies come back are used for the status fetch. That covers
+	// the shape almost every appliance controller uses.
+	LoginURL  string `json:"login_url,omitempty"`
+	LoginBody string `json:"login_body,omitempty"`
+}
+
+// sessions holds a cookie jar per check, so a login is not repeated on every
+// poll. A controller that hands out a session and is then asked to issue
+// another one every minute will eventually start refusing.
+type sessions struct {
+	mu  sync.Mutex
+	jar map[string]http.CookieJar
+}
+
+func newSessions() *sessions { return &sessions{jar: map[string]http.CookieJar{}} }
+
+func (s *sessions) get(id string) (http.CookieJar, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	j, ok := s.jar[id]
+	return j, ok
+}
+
+func (s *sessions) set(id string, j http.CookieJar) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.jar[id] = j
+}
+
+func (s *sessions) drop(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.jar, id)
+}
+
+// probeJSONAuth is probeJSON with credentials, retrying once through a fresh
+// login when the API says the session is no longer good.
+func probeJSONAuth(ctx context.Context, id, url string, probes []JSONProbe, auth JSONAuth, sess *sessions) ([]Reading, string) {
+	readings, msg, unauthorised := probeOnce(ctx, id, url, probes, auth, sess)
+	if unauthorised && auth.Mode == "login" {
+		// The session expired, which is ordinary rather than an error: drop it
+		// and log in again before giving up on the poll.
+		sess.drop(id)
+		readings, msg, _ = probeOnce(ctx, id, url, probes, auth, sess)
+	}
+	return readings, msg
+}
+
 // probeJSON fetches a URL and extracts the configured values.
 //
 // Errors are returned as a message rather than as an absence: a probe that
 // stopped matching because the device changed its JSON should say so, not
 // quietly show nothing.
 func probeJSON(ctx context.Context, url string, probes []JSONProbe) ([]Reading, string) {
+	r, msg, _ := probeOnce(ctx, "", url, probes, JSONAuth{}, nil)
+	return r, msg
+}
+
+// probeOnce performs one attempt, reporting separately whether it failed for
+// want of a valid session so the caller can decide to log in again.
+func probeOnce(ctx context.Context, id, url string, probes []JSONProbe, auth JSONAuth, sess *sessions) ([]Reading, string, bool) {
 	if url == "" || len(probes) == 0 {
-		return nil, ""
+		return nil, "", false
+	}
+	client, err := authedClient(ctx, id, auth, sess)
+	if err != nil {
+		return nil, "sign-in failed: " + shortJSONError(err.Error()), false
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, err.Error()
+		return nil, err.Error(), false
 	}
 	req.Header.Set("User-Agent", "autormm-healthcheck")
-	resp, err := appClient.Do(req)
+	applyRequestAuth(req, auth)
+	resp, err := client.Do(req)
 	if err != nil {
-		return nil, shortJSONError(err.Error())
+		return nil, shortJSONError(err.Error()), false
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return nil, fmt.Sprintf("HTTP %d — the API refused the credentials", resp.StatusCode), true
+	}
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Sprintf("HTTP %d from the device", resp.StatusCode)
+		return nil, fmt.Sprintf("HTTP %d from the device", resp.StatusCode), false
 	}
 
 	// Bounded: this is a status document, and a device answering with a
 	// gigabyte of something is not one.
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 	if err != nil {
-		return nil, "could not read the response"
+		return nil, "could not read the response", false
 	}
 	var doc any
 	if err := json.Unmarshal(body, &doc); err != nil {
-		return nil, "the response is not JSON"
+		return nil, "the response is not JSON", false
 	}
 
 	var out []Reading
@@ -87,9 +163,64 @@ func probeJSON(ctx context.Context, url string, probes []JSONProbe) ([]Reading, 
 		out = append(out, readingFrom(p, v))
 	}
 	if len(missing) > 0 {
-		return out, "no value at the path for: " + strings.Join(missing, ", ")
+		return out, "no value at the path for: " + strings.Join(missing, ", "), false
 	}
-	return out, ""
+	return out, "", false
+}
+
+// applyRequestAuth adds whatever goes on the request itself.
+func applyRequestAuth(req *http.Request, auth JSONAuth) {
+	switch auth.Mode {
+	case "basic":
+		req.SetBasicAuth(auth.User, auth.Pass)
+	case "bearer":
+		req.Header.Set("Authorization", "Bearer "+auth.Token)
+	}
+}
+
+// authedClient returns a client carrying a session, logging in first if this
+// API needs one and no usable session is held.
+func authedClient(ctx context.Context, id string, auth JSONAuth, sess *sessions) (*http.Client, error) {
+	if auth.Mode != "login" || sess == nil {
+		return appClient, nil
+	}
+	if jar, ok := sess.get(id); ok {
+		return clientWithJar(jar), nil
+	}
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		return nil, err
+	}
+	client := clientWithJar(jar)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, auth.LoginURL,
+		strings.NewReader(auth.LoginBody))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "autormm-healthcheck")
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	sess.set(id, jar)
+	return client, nil
+}
+
+// clientWithJar mirrors appClient's settings — self-signed certificates are the
+// norm on this gear — but follows redirects, which a login flow depends on.
+func clientWithJar(jar http.CookieJar) *http.Client {
+	return &http.Client{
+		Timeout:   checkTimeout,
+		Jar:       jar,
+		Transport: appClient.Transport,
+	}
 }
 
 // readingFrom renders one extracted value.
@@ -145,6 +276,17 @@ func jsonPath(doc any, path string) (any, bool) {
 		}
 		key, sel, hasSel := cutSelector(seg)
 		if key != "" {
+			// A bare number against an array is an index. Checked before the
+			// map lookup, because "heads.0.extruders" is the documented form
+			// and it is not a key named "0".
+			if arr, isArr := cur.([]any); isArr && !hasSel {
+				i, err := strconv.Atoi(key)
+				if err != nil || i < 0 || i >= len(arr) {
+					return nil, false
+				}
+				cur = arr[i]
+				continue
+			}
 			m, ok := cur.(map[string]any)
 			if !ok {
 				return nil, false
@@ -155,14 +297,6 @@ func jsonPath(doc any, path string) (any, bool) {
 			}
 		}
 		if !hasSel {
-			// A bare number is an array index.
-			if i, err := strconv.Atoi(seg); err == nil && key == "" {
-				arr, ok := cur.([]any)
-				if !ok || i < 0 || i >= len(arr) {
-					return nil, false
-				}
-				cur = arr[i]
-			}
 			continue
 		}
 		next, ok := selectFrom(cur, sel)

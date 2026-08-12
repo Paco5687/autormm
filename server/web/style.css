@@ -147,6 +147,13 @@ a.nc-body:hover .nc-name { text-decoration: underline; }
   width: 38px; text-align: right; font-family: var(--mono); font-size: 10.5px;
   color: var(--muted);
 }
+/* Readings that are not proportions: a label and a value, in two columns so
+   several of them line up down the card. */
+.nc-readings { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; margin-top: 7px; }
+.rd { display: contents; }
+.rd-k { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .3px; }
+.rd-v { font-family: var(--mono); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 .nc-facts {
   margin-top: 6px; font-size: 10.5px; color: var(--muted); font-family: var(--mono);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
