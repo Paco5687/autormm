@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -345,5 +346,151 @@ func TestSparseDeviceReportsNothingRatherThanZero(t *testing.T) {
 	// switch that would otherwise claim to have a processor.
 	if info.Load1 != 0 {
 		t.Error("invented a load average")
+	}
+}
+
+// Zero is a reading. A UPS with nothing plugged into it reports 0% load, and
+// omitting the field made two identical units render differently on a real
+// dashboard — one with a LOAD bar and one without.
+func TestZeroIsAReadingNotAGap(t *testing.T) {
+	u := &UPSInfo{ChargePercent: 100, LoadPercent: 0, MinutesRemaining: 1440}
+	b, err := json.Marshal(u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{`"load_percent":0`, `"minutes_remaining":1440`} {
+		if !strings.Contains(string(b), field) {
+			t.Errorf("%s missing from %s", field, b)
+		}
+	}
+
+	// And a device that reported nothing sends -1, which the dashboard reads as
+	// "no bar" rather than as nought percent.
+	empty := &SNMPInfo{CPUPercent: -1, MemPercent: -1, DiskPercent: -1}
+	eb, _ := json.Marshal(empty)
+	for _, field := range []string{`"cpu_percent":-1`, `"mem_percent":-1`, `"disk_percent":-1`} {
+		if !strings.Contains(string(eb), field) {
+			t.Errorf("%s missing from %s", field, eb)
+		}
+	}
+}
+
+// A device reporting an idle percentage over 100, or a used figure below zero,
+// must not produce a bar wider than its track.
+func TestPercentagesAreClamped(t *testing.T) {
+	for in, want := range map[int]int{-5: 0, 0: 0, 50: 50, 100: 100, 104: 100} {
+		if got := clampPercent(in); got != want {
+			t.Errorf("clampPercent(%d) = %d, want %d", in, got, want)
+		}
+	}
+}
+
+// Location is optional on every device that offers it, so a blank one is the
+// normal case and must not leave an empty field on the card.
+func TestBlankLocationIsOmitted(t *testing.T) {
+	b, _ := json.Marshal(&SNMPInfo{SysName: "sw01"})
+	if strings.Contains(string(b), "sys_location") {
+		t.Errorf("a blank location was sent: %s", b)
+	}
+	b2, _ := json.Marshal(&SNMPInfo{SysName: "sw01", SysLocation: "Rack 1 U12"})
+	if !strings.Contains(string(b2), `"sys_location":"Rack 1 U12"`) {
+		t.Errorf("location missing: %s", b2)
+	}
+	// Devices ship it padded or multi-line; a card gets one tidy line.
+	if got := firstLine("  Rack 1 U12  \nsecond line"); got != "Rack 1 U12" {
+		t.Errorf("got %q", got)
+	}
+}
+
+// Throughput is a rate, so the first poll has nothing to compare against and
+// must report nothing rather than treating a total as a per-second figure.
+func TestThroughputNeedsTwoReadings(t *testing.T) {
+	now := time.Now()
+	first := &SNMPInfo{InOctets: 1_000_000, OutOctets: 500_000, Polled: now}
+	first.rateFrom(nil)
+	if first.RxRate != 0 || first.TxRate != 0 {
+		t.Errorf("invented a rate from one reading: %+v", first)
+	}
+
+	second := &SNMPInfo{InOctets: 1_600_000, OutOctets: 800_000, Polled: now.Add(60 * time.Second)}
+	second.rateFrom(first)
+	if second.RxRate != 10_000 || second.TxRate != 5_000 {
+		t.Errorf("rx=%d tx=%d, want 10000 and 5000 bytes/sec", second.RxRate, second.TxRate)
+	}
+}
+
+// A counter that went backwards means the device restarted or the counter
+// wrapped. A gap in the reading is better than an impossible spike in it.
+func TestCounterGoingBackwardsIsDropped(t *testing.T) {
+	now := time.Now()
+	prev := &SNMPInfo{InOctets: 9_000_000, OutOctets: 9_000_000, Polled: now}
+	after := &SNMPInfo{InOctets: 1_000, OutOctets: 1_000, Polled: now.Add(60 * time.Second)}
+	after.rateFrom(prev)
+	if after.RxRate != 0 || after.TxRate != 0 {
+		t.Errorf("a restarted device produced a rate: %+v", after)
+	}
+
+	// And a gap so long the figure would be meaningless is skipped too.
+	stale := &SNMPInfo{InOctets: 9_100_000, OutOctets: 9_100_000, Polled: now.Add(4 * time.Hour)}
+	stale.rateFrom(prev)
+	if stale.RxRate != 0 {
+		t.Errorf("averaged over four hours: %+v", stale)
+	}
+}
+
+// Counter64 values arrive as several widths, and a negative signed value is not
+// a valid byte count.
+func TestToUint64RejectsNegatives(t *testing.T) {
+	for _, v := range []any{uint64(5), uint(5), uint32(5), int64(5), int(5)} {
+		if n, ok := toUint64(v); !ok || n != 5 {
+			t.Errorf("%T did not convert: %v %v", v, n, ok)
+		}
+	}
+	if _, ok := toUint64(int64(-1)); ok {
+		t.Error("a negative was accepted as a byte count")
+	}
+	if _, ok := toUint64("100"); ok {
+		t.Error("a string was accepted as a byte count")
+	}
+}
+
+// Some printers report supply levels in units of percent, with a maximum of -2
+// meaning "no defined limit". Insisting on a capacity left those devices with
+// no reading at all — the level was there and being thrown away.
+func TestSupplyInPercentUnitsNeedsNoCapacity(t *testing.T) {
+	read := func(unit, max, lvl int) int {
+		s := Supply{Percent: -1}
+		switch {
+		case lvl < 0:
+		case unit == prtUnitPercent:
+			s.Percent = clampPercent(lvl)
+		case max > 0:
+			s.Percent = clampPercent(int(float64(lvl) / float64(max) * 100))
+		}
+		return s.Percent
+	}
+	if got := read(prtUnitPercent, -2, 40); got != 40 {
+		t.Errorf("percent units with no capacity = %d, want 40", got)
+	}
+	if got := read(4, 2000, 500); got != 25 {
+		t.Errorf("counted units = %d, want 25", got)
+	}
+	// The negative sentinels still mean "will not say", whatever the unit.
+	if got := read(prtUnitPercent, -2, -3); got != -1 {
+		t.Errorf("a sentinel became %d", got)
+	}
+}
+
+// hrPrinterDetectedErrorState is a bitmask, and the bits are what a person
+// actually wants to be told.
+func TestPrinterErrorBitsAreNamed(t *testing.T) {
+	if got := printerErrors(0x40); len(got) != 1 || got[0] != "out of paper" {
+		t.Errorf("got %v", got)
+	}
+	if got := printerErrors(0x44); len(got) != 2 {
+		t.Errorf("two bits gave %v", got)
+	}
+	if got := printerErrors(0x00); len(got) != 0 {
+		t.Errorf("a healthy printer reported %v", got)
 	}
 }

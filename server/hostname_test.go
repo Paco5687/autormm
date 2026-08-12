@@ -34,7 +34,9 @@ func TestLocalSuffixesAreTrimmed(t *testing.T) {
 // A locally administered address was made up by a hypervisor, a container
 // runtime or a phone randomising itself; reporting a vendor would invent one.
 func TestLocallyAdministeredMACsHaveNoVendor(t *testing.T) {
-	for _, mac := range []string{"02:42:ac:11:00:02", "fe:29:c1:25:90:ee", "9a:7c:5b:97:cc:12"} {
+	// Addresses no registry and no hypervisor claims — the ones that really are
+	// invented. Docker and QEMU have their own ranges and are named instead.
+	for _, mac := range []string{"fe:29:c1:25:90:ee", "9a:7c:5b:97:cc:12", "ae:11:22:33:44:55"} {
 		if got := macVendor(mac); got != "randomised" {
 			t.Errorf("macVendor(%q) = %q, want randomised", mac, got)
 		}
@@ -46,8 +48,9 @@ func TestLocallyAdministeredMACsHaveNoVendor(t *testing.T) {
 	if got := macVendor("b8:27:eb:00:11:22"); got != "Raspberry Pi" {
 		t.Errorf("got %q, want Raspberry Pi", got)
 	}
-	// An unknown prefix says nothing rather than guessing.
-	if got := macVendor("aa:bb:cc:dd:ee:ff"); got != "randomised" && got != "" {
+	// A globally administered prefix nobody registered says nothing rather than
+	// guessing.
+	if got := macVendor("ff:ff:ff:ff:ff:ff"); got != "randomised" && got != "" {
 		t.Errorf("invented a vendor: %q", got)
 	}
 	if got := macVendor("short"); got != "" {
@@ -77,5 +80,42 @@ func TestNetbiosParserRejectsShortReplies(t *testing.T) {
 	short[56] = 99 // count
 	if got := parseNetbiosNames(short); got != "" {
 		t.Errorf("trusted a lying count: %q", got)
+	}
+}
+
+// A hypervisor invents its addresses rather than buying a registry assignment,
+// so those ranges never appear in the IEEE data. Calling a virtual machine
+// "randomised" throws away something worth knowing.
+func TestVirtualPrefixesBeatTheRandomisedFallback(t *testing.T) {
+	for mac, want := range map[string]string{
+		"52:54:00:12:34:56": "QEMU/KVM",
+		"02:42:ac:11:00:02": "Docker",
+		"00:16:3e:aa:bb:cc": "Xen",
+	} {
+		if got := macVendor(mac); got != want {
+			t.Errorf("macVendor(%q) = %q, want %q", mac, got, want)
+		}
+	}
+	// Anything else locally administered genuinely is made up.
+	if got := macVendor("fe:29:c1:25:90:ee"); got != "randomised" {
+		t.Errorf("got %q, want randomised", got)
+	}
+}
+
+// The generated table is the point of generating it: the hand-written one
+// carried nine Espressif prefixes out of the hundreds that exist, and so failed
+// to name an ESP32 device.
+func TestGeneratedTableCoversRealAssignments(t *testing.T) {
+	for mac, want := range map[string]string{
+		"ec:c9:ff:96:d3:48": "Espressif", // found unnamed on a real network
+		"bc:24:11:6d:d4:de": "Proxmox",
+		"b8:27:eb:00:11:22": "Raspberry Pi",
+	} {
+		if got := macVendor(mac); got != want {
+			t.Errorf("macVendor(%q) = %q, want %q", mac, got, want)
+		}
+	}
+	if len(ouiVendors) < 5000 {
+		t.Errorf("only %d prefixes; the table looks hand-written again", len(ouiVendors))
 	}
 }

@@ -502,20 +502,24 @@ function setText(id, v) { const el = document.getElementById(id); if (el) el.tex
 // number of rows uses the width instead of wasting it: eight become four and
 // four, six become three and three.
 function layoutGrid() {
-  balanceGrid(grid, CARD_MIN, GRID_GAP);
+  balanceGrid(grid, CARD_MIN, GRID_GAP, 5);
   // Apps get the same treatment now they run the full width: nine of them
   // across a wide page would otherwise be eight and a lonely ninth.
   balanceGrid(document.getElementById('appGrid'), 230, 8);
-  balanceGrid(document.getElementById('netGrid'), 300, 8);
+  balanceGrid(document.getElementById('netGrid'), 300, 8, 6);
 }
 
-function balanceGrid(el, cardMin, gap) {
+function balanceGrid(el, cardMin, gap, cap) {
   if (!el) return;
   const n = el.childElementCount;
   if (!n) { el.style.gridTemplateColumns = ''; return; }
   const width = el.clientWidth;
   if (!width) return; // not laid out yet; the resize observer will call back
-  const maxCols = Math.max(1, Math.floor((width + gap) / (cardMin + gap)));
+  let maxCols = Math.max(1, Math.floor((width + gap) / (cardMin + gap)));
+  // A cap, because "as many as fit" stops being right on a very wide screen:
+  // eight hosts across a 4K display became one row of eight cards at their
+  // minimum width, which is a lot of sideways scanning to read one fleet.
+  if (cap) maxCols = Math.min(maxCols, cap);
   const rows = Math.ceil(n / maxCols);
   const cols = Math.min(maxCols, Math.ceil(n / rows));
   el.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
@@ -1748,6 +1752,50 @@ async function savePolicy(clear) {
   } catch (e) { st.textContent = 'failed: ' + e.message; }
 }
 
+// One probe per line: "Label | path | unit". A table of three inputs per row
+// would be tidier to look at and far more tedious to fill in for six sensors.
+function parseProbes(text) {
+  return String(text).split('\n').map(line => {
+    const [label, path, unit] = line.split('|').map(x => x.trim());
+    if (!label || !path) return null;
+    return { label, path, unit: unit || '' };
+  }).filter(Boolean);
+}
+
+// ---- browse SNMP ----
+//
+// Only offered on a device that already exists and has SNMP configured: there
+// is nothing to walk until both are true.
+function showBrowse(c) {
+  const box = document.getElementById('netBrowse');
+  const on = !!(c && c.id && (c.snmp || c.snmp_user));
+  box.classList.toggle('hidden', !on);
+  document.getElementById('browseOut').classList.add('hidden');
+  document.getElementById('browseStatus').textContent = '';
+}
+
+document.getElementById('browseRun').addEventListener('click', async () => {
+  const out = document.getElementById('browseOut');
+  const status = document.getElementById('browseStatus');
+  const oid = document.getElementById('browseOID').value.trim()
+    || document.getElementById('browsePreset').value;
+  if (!editingCheck) { status.textContent = 'save the device first'; return; }
+  status.textContent = 'walking ' + oid + '…';
+  out.classList.add('hidden');
+  try {
+    const r = await authJSON('/api/snmpwalk', 'POST', { id: editingCheck, oid });
+    if (r.error) { status.textContent = r.error; return; }
+    const rows = r.rows || [];
+    status.textContent = rows.length
+      ? `${rows.length} value(s) under ${r.root}`
+      : `nothing under ${r.root} — this device does not implement it`;
+    out.textContent = rows.map(x => `${x.oid}  (${x.type})  ${x.value}`).join('\n');
+    out.classList.toggle('hidden', rows.length === 0);
+  } catch (e) {
+    status.textContent = 'failed: ' + e.message;
+  }
+});
+
 document.getElementById('polSave').addEventListener('click', () => savePolicy(false));
 document.getElementById('polClear').addEventListener('click', () => savePolicy(true));
 document.getElementById('fleetTarget').addEventListener('change', (e) => showPolicyFor(e.target.value));
@@ -1817,8 +1865,12 @@ function renderMonitorSection(which, list) {
   // every card in a row to match the tallest. Grouping them puts cards of the
   // same shape in the same row, so a one-line device is never inflated to the
   // height of a firewall reporting four readings.
+  // Three tiers, not two. Cards with bars first because they are taller and a
+  // grid stretches a row to its tallest card; then everything else that answers
+  // SNMP, because a device that reports anything is worth more of the eye than
+  // one that only proves it is switched on; then the rest, by name.
   const ordered = [...list].sort((a, b) => {
-    const rank = c => (snmpMetrics(c.snmp).length ? 0 : 1);
+    const rank = c => (snmpMetrics(c.snmp).length ? 0 : (c.snmp && !c.snmp.error ? 1 : 2));
     return rank(a) - rank(b) || String(a.name || '').localeCompare(String(b.name || ''));
   });
 
@@ -1871,6 +1923,10 @@ function renderMonitorSection(which, list) {
         'by MAC if its address changes, and still checked at its address if the ' +
         'MAC cannot be found.';
     }
+    if (c.readings_err) {
+      sub.title = (sub.title ? sub.title + '\n' : '') + 'Readings: ' + c.readings_err;
+      name.textContent += ' ⚠';
+    }
     if (c.snmp && c.snmp.error) {
       sub.title = 'SNMP: ' + c.snmp.error;
       name.textContent += ' ⚠';
@@ -1881,7 +1937,7 @@ function renderMonitorSection(which, list) {
     // only answers a TCP check stays a single compact row — most of a homelab's
     // devices have nothing more to say, and giving them all the taller card
     // would be a lot of white space to make a firewall look better.
-    const metrics = snmpMetrics(c.snmp);
+    const metrics = snmpMetrics(c.snmp).concat(jsonMetrics(c.readings));
     if (metrics.length) {
       el.classList.add('nc-rich');
       const box = document.createElement('div');
@@ -1892,7 +1948,7 @@ function renderMonitorSection(which, list) {
         `<span class="val">${escapeHtml(m.text)}</span></div>`).join('');
       body.appendChild(box);
 
-      const facts = snmpFacts(c.snmp);
+      const facts = [snmpFacts(c.snmp), ...jsonFacts(c.readings)].filter(Boolean).join('  ·  ');
       if (facts) {
         const f = document.createElement('div');
         f.className = 'nc-facts';
@@ -1935,7 +1991,7 @@ function renderMonitorSection(which, list) {
   // always change the grid's measured height, and an unbalanced row was the
   // result. Both grids get the even-rows treatment the host grid has.
   balanceGrid(document.getElementById('appGrid'), 230, 8);
-  balanceGrid(document.getElementById('netGrid'), 300, 8);
+  balanceGrid(document.getElementById('netGrid'), 300, 8, 6);
 }
 
 // snmpSummary is the one line a device card has room for: whichever of the
@@ -1952,8 +2008,8 @@ function snmpSummary(s) {
     if (s.ups.charge_percent >= 0) bits.push(`battery ${s.ups.charge_percent}%`);
     // How long it would last and how hard it is working — the two figures that
     // decide whether a power cut is a shrug or a scramble.
-    if (s.ups.minutes_remaining) bits.push(`${s.ups.minutes_remaining}m left`);
-    if (s.ups.load_percent) bits.push(`${s.ups.load_percent}% load`);
+    if (s.ups.minutes_remaining >= 0) bits.push(`${s.ups.minutes_remaining}m left`);
+    if (s.ups.load_percent >= 0) bits.push(`${s.ups.load_percent}% load`);
   }
   // Only supplies that reported a figure; the MIB's "will not say" is not 0%.
   const known = (s.supplies || []).filter(x => x.percent >= 0);
@@ -1966,9 +2022,9 @@ function snmpSummary(s) {
   // Host-style readings come before the port count: a firewall's CPU and memory
   // are what you look at, and its interface total counts loopback and pflog
   // alongside the real ports anyway.
-  if (s.cpu_percent) bits.push(`cpu ${s.cpu_percent}%`);
-  if (s.mem_percent) bits.push(`mem ${s.mem_percent}%`);
-  if (s.disk_percent) bits.push(`disk ${s.disk_percent}%`);
+  if (s.cpu_percent >= 0) bits.push(`cpu ${s.cpu_percent}%`);
+  if (s.mem_percent >= 0) bits.push(`mem ${s.mem_percent}%`);
+  if (s.disk_percent >= 0) bits.push(`disk ${s.disk_percent}%`);
   if (s.pf_states) {
     const text = s.pf_state_limit
       ? `${fmtCount(s.pf_states)}/${fmtCount(s.pf_state_limit)} states`
@@ -1981,8 +2037,15 @@ function snmpSummary(s) {
   }
   // Not on a UPS: its management card reports a loopback and an ethernet port,
   // so "2/2 up" is two words of nothing next to the battery state.
+  // Ahead of the port count: a client count or a wattage says what the device
+  // is doing, where "20/24 up" mostly says it is switched on.
+  for (const e of (s.printer_errors || [])) bits.push(e.toUpperCase());
+  if (s.stations) bits.push(s.stations + (s.stations === 1 ? ' client' : ' clients'));
+  if (s.poe_watts) bits.push(s.poe_watts + 'W PoE');
   if (s.if_total && !s.ups) bits.push(`${s.if_up}/${s.if_total} up`);
+  if (s.rx_rate || s.tx_rate) bits.push(`↓${fmtBytes(s.rx_rate || 0)}/s`);
   if (!bits.length && s.uptime_secs) bits.push('up ' + fmtUptime(s.uptime_secs));
+  if (s.sys_location) bits.push(s.sys_location);
   return bits.slice(0, 3).join(' · ');
 }
 
@@ -2011,18 +2074,26 @@ function snmpMetrics(s) {
         level: s.ups.on_battery || s.ups.battery_low || s.ups.charge_percent < 50,
       });
     }
-    if (s.ups.load_percent) {
+    // Zero is a reading, not a gap: a UPS with nothing plugged into it is at
+    // 0% load, and hiding the bar made two identical units look different.
+    if (s.ups.load_percent >= 0) {
       out.push({ label: 'LOAD', percent: s.ups.load_percent, text: s.ups.load_percent + '%', level: s.ups.load_percent >= 80 });
     }
   }
-  if (s.cpu_percent) out.push({ label: 'CPU', percent: s.cpu_percent, text: s.cpu_percent + '%', level: s.cpu_percent >= 90 });
-  if (s.mem_percent) out.push({ label: 'MEM', percent: s.mem_percent, text: s.mem_percent + '%', level: s.mem_percent >= 95 });
-  if (s.disk_percent) {
+  if (s.cpu_percent >= 0) out.push({ label: 'CPU', percent: s.cpu_percent, text: s.cpu_percent + '%', level: s.cpu_percent >= 90 });
+  if (s.mem_percent >= 0) out.push({ label: 'MEM', percent: s.mem_percent, text: s.mem_percent + '%', level: s.mem_percent >= 95 });
+  if (s.disk_percent >= 0) {
     out.push({ label: 'DISK', percent: s.disk_percent, text: s.disk_percent + '%', level: s.disk_percent >= 90 });
   }
   if (s.pf_states && s.pf_state_limit) {
     const pct = (s.pf_states / s.pf_state_limit) * 100;
     out.push({ label: 'STATE', percent: pct, text: fmtCount(s.pf_states), level: pct >= 80 });
+  }
+  // A PoE switch running out of budget takes cameras and phones down one at a
+  // time, so it gets a bar against its capacity rather than a bare wattage.
+  if (s.poe_watts && s.poe_capacity) {
+    const pct = (s.poe_watts / s.poe_capacity) * 100;
+    out.push({ label: 'POE', percent: pct, text: s.poe_watts + 'W', level: pct >= 85 });
   }
   // Consumables that reported a figure. The MIB's "will not say" is not 0%.
   for (const x of (s.supplies || []).filter(v => v.percent >= 0)) {
@@ -2038,6 +2109,27 @@ function shortSupply(name) {
   return (n.split(/\s+/)[0] || name).slice(0, 6).toUpperCase();
 }
 
+// jsonMetrics turns the numeric readings that declared a maximum into bars.
+// A temperature has no maximum and is not a proportion of anything, so it stays
+// a figure on the facts line.
+function jsonMetrics(readings) {
+  return (readings || [])
+    .filter(r => r.numeric && r.max > 0)
+    .map(r => ({
+      label: r.label.slice(0, 6).toUpperCase(),
+      percent: (r.num / r.max) * 100,
+      text: r.text,
+      level: r.num / r.max >= 0.9,
+    }));
+}
+
+// jsonFacts is the readings that are figures rather than proportions.
+function jsonFacts(readings) {
+  return (readings || [])
+    .filter(r => !(r.numeric && r.max > 0))
+    .map(r => `${r.label} ${r.text}`);
+}
+
 // snmpFacts is the line under the bars: the figures that are not percentages.
 function snmpFacts(s) {
   if (!s) return '';
@@ -2045,11 +2137,23 @@ function snmpFacts(s) {
   if (s.ups && s.ups.on_battery) {
     bits.push('ON BATTERY' + (s.ups.seconds_on_battery ? ` ${s.ups.seconds_on_battery}s` : ''));
   }
-  if (s.ups && s.ups.minutes_remaining) bits.push(`${s.ups.minutes_remaining}m runtime`);
+  if (s.ups && s.ups.minutes_remaining >= 0) bits.push(`${s.ups.minutes_remaining}m runtime`);
+  // Clients on an access point, and traffic on anything that counts octets.
+  // What a printer says is wrong comes first: out of paper is the whole
+  // message, and it belongs ahead of how many pages it has ever printed.
+  for (const e of (s.printer_errors || [])) bits.push(e.toUpperCase());
+  if (s.stations) bits.push(s.stations + (s.stations === 1 ? ' client' : ' clients'));
+  if (s.rx_rate || s.tx_rate) {
+    bits.push(`↓${fmtBytes(s.rx_rate || 0)}/s ↑${fmtBytes(s.tx_rate || 0)}/s`);
+  }
+  if (s.page_count) bits.push(fmtCount(s.page_count) + ' pages');
   if (s.load1) bits.push('load ' + s.load1.toFixed(2));
   if (s.if_total && !s.ups) bits.push(`${s.if_up}/${s.if_total} up`);
   if (s.uptime_secs) bits.push('up ' + fmtUptime(s.uptime_secs));
-  return bits.slice(0, 3).join('  ·  ');
+  // Where the thing physically is, when someone bothered to fill it in. Last,
+  // because it never changes and the readings do.
+  if (s.sys_location) bits.push(s.sys_location);
+  return bits.slice(0, 4).join('  ·  ');
 }
 
 // snmpDetail is everything the device reported, for the tooltip. The subtitle
@@ -2058,13 +2162,21 @@ function snmpDetail(s) {
   if (!s) return '';
   const rows = [];
   if (s.sys_name) rows.push('name: ' + s.sys_name);
+  if (s.sys_location) rows.push('location: ' + s.sys_location);
   if (s.sys_descr) rows.push(s.sys_descr);
   if (s.uptime_secs) rows.push('uptime: ' + fmtUptime(s.uptime_secs));
-  if (s.cpu_percent) rows.push('cpu: ' + s.cpu_percent + '%');
+  if (s.cpu_percent >= 0) rows.push('cpu: ' + s.cpu_percent + '%');
   if (s.load1) rows.push('load: ' + s.load1.toFixed(2));
-  if (s.mem_percent) rows.push('memory: ' + s.mem_percent + '%');
-  if (s.disk_percent) rows.push('disk: ' + s.disk_percent + '%' + (s.disk_name ? ' (' + s.disk_name + ')' : ''));
+  if (s.mem_percent >= 0) rows.push('memory: ' + s.mem_percent + '%');
+  if (s.disk_percent >= 0) rows.push('disk: ' + s.disk_percent + '%' + (s.disk_name ? ' (' + s.disk_name + ')' : ''));
   if (s.pf_states) rows.push('pf states: ' + s.pf_states + (s.pf_state_limit ? ' of ' + s.pf_state_limit : ''));
+  if (s.poe_watts) rows.push('PoE: ' + s.poe_watts + 'W' + (s.poe_capacity ? ' of ' + s.poe_capacity + 'W' : ''));
+  if (s.stations) rows.push('wireless clients: ' + s.stations);
+  if (s.page_count) rows.push('pages printed: ' + s.page_count.toLocaleString());
+  for (const e of (s.printer_errors || [])) rows.push('printer: ' + e);
+  if (s.rx_rate || s.tx_rate) {
+    rows.push('traffic: ' + fmtBytes(s.rx_rate || 0) + '/s in, ' + fmtBytes(s.tx_rate || 0) + '/s out');
+  }
   if (s.if_total) rows.push('interfaces: ' + s.if_up + ' up of ' + s.if_total);
   for (const x of (s.supplies || [])) {
     rows.push(x.name + ': ' + (x.percent >= 0 ? x.percent + '%' : 'not reported'));
@@ -2072,8 +2184,8 @@ function snmpDetail(s) {
   if (s.ups) {
     rows.push('battery: ' + (s.ups.charge_percent >= 0 ? s.ups.charge_percent + '%' : 'unknown') +
       (s.ups.on_battery ? ' — ON BATTERY' : ''));
-    if (s.ups.minutes_remaining) rows.push('runtime: ' + s.ups.minutes_remaining + ' minutes');
-    if (s.ups.load_percent) rows.push('output load: ' + s.ups.load_percent + '%');
+    if (s.ups.minutes_remaining >= 0) rows.push('runtime: ' + s.ups.minutes_remaining + ' minutes');
+    if (s.ups.load_percent >= 0) rows.push('output load: ' + s.ups.load_percent + '%');
   }
   if (s.version) rows.push('(SNMP ' + s.version + ')');
   return rows.join('\n');
@@ -2088,10 +2200,14 @@ function snmpLevel(s) {
   if (known.some(x => x.percent <= 10)) return 'bad';
   if (known.some(x => x.percent <= 25)) return 'warn';
   if (s.if_total && s.if_up === 0) return 'bad';
+  // A printer that is jammed or out of paper is not a healthy printer.
+  if ((s.printer_errors || []).length) return 'warn';
   // A full state table drops connections; a filling one is the warning before.
   const pf = pfStatePressure(s);
   if (pf >= 0.9) return 'bad';
   if (pf >= 0.8) return 'warn';
+  if (s.poe_capacity && s.poe_watts / s.poe_capacity >= 0.9) return 'bad';
+  if (s.poe_capacity && s.poe_watts / s.poe_capacity >= 0.85) return 'warn';
   if (s.disk_percent >= 90 || s.mem_percent >= 95) return 'warn';
   return '';
 }
@@ -2134,6 +2250,8 @@ function monitorSubtitle(c) {
     const who = c.snmp.sys_descr || c.snmp.sys_name;
     return who ? `${where} · ${who}` : where;
   }
+  const readings = jsonFacts(c.readings).slice(0, 2).join(' · ');
+  if (readings) return `${where} · ${readings}`;
   const snmp = snmpSummary(c.snmp);
   if (snmp) return `${where} · ${snmp}`;
   return `${where} · ${Math.round(c.latency_ms)}ms${code}`;
@@ -2169,6 +2287,9 @@ function openCheckEditor(c) {
     : '';
   // The secrets come back as a placeholder, and leaving it is what tells the
   // hub to keep what it has.
+  set('netJSONURL', c.json_url);
+  document.getElementById('netJSONProbes').value = (c.json_probes || [])
+    .map(x => [x.label, x.path, x.unit].filter(Boolean).join(' | ')).join('\n');
   set('netSNMP', c.snmp);
   set('netSNMPPort', c.snmp_port || '');
   set('netSNMPUser', c.snmp_user);
@@ -2180,6 +2301,7 @@ function openCheckEditor(c) {
   document.getElementById('netSNMPVersion').value = v;
   setSNMPVersionUI(v);
   document.getElementById('netStatus').textContent = '';
+  showBrowse(c);
   netModal.classList.remove('hidden');
 }
 
@@ -2188,12 +2310,14 @@ function resetCheckEditor() {
   document.getElementById('netModalTitle').textContent = 'Monitor a network device';
   document.getElementById('netSave').textContent = 'Add device';
   for (const id of ['netName', 'netAddr', 'netPort', 'netTags', 'netURL', 'netMAC',
-                    'netSNMP', 'netSNMPPort', 'netSNMPUser', 'netSNMPAuthPass', 'netSNMPPrivPass']) {
+                    'netSNMP', 'netSNMPPort', 'netSNMPUser', 'netSNMPAuthPass', 'netSNMPPrivPass',
+                    'netJSONURL', 'netJSONProbes']) {
     document.getElementById(id).value = '';
   }
   document.getElementById('netSNMPVersion').value = '';
   setSNMPVersionUI('');
   document.getElementById('netStatus').textContent = '';
+  showBrowse(null);
 }
 
 document.getElementById('netAdd').addEventListener('click', () => {
@@ -2282,6 +2406,8 @@ document.getElementById('netSave').addEventListener('click', async () => {
       tags: document.getElementById('netTags').value.trim(),
       url: document.getElementById('netURL').value.trim(),
       mac,
+      json_url: document.getElementById('netJSONURL').value.trim(),
+      json_probes: parseProbes(document.getElementById('netJSONProbes').value),
       snmp: document.getElementById('netSNMP').value.trim(),
       snmp_port: parseInt(document.getElementById('netSNMPPort').value, 10) || 0,
       // "auto" is the hub's empty string; the select uses a value so the option

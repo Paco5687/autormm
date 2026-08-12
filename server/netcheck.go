@@ -49,6 +49,10 @@ type NetCheck struct {
 	SNMP string `json:"snmp,omitempty"`
 	// SNMPPort overrides the standard 161.
 	SNMPPort int `json:"snmp_port,omitempty"`
+	// JSONURL and JSONProbes read values out of a device's own JSON API, for
+	// hardware that has no SNMP but does publish its state over HTTP.
+	JSONURL    string      `json:"json_url,omitempty"`
+	JSONProbes []JSONProbe `json:"json_probes,omitempty"`
 	// SNMPVersion is "1", "2c", "3", or empty for automatic (v2c then v1).
 	SNMPVersion string `json:"snmp_version,omitempty"`
 	// v3 credentials. Authentication and privacy are what make v3 worth
@@ -120,12 +124,15 @@ type NetStatus struct {
 	IP string `json:"ip,omitempty"`
 	// SNMP is the last successful poll, kept across cycles so a single missed
 	// reply does not blank the card.
-	SNMP      *SNMPInfo `json:"snmp,omitempty"`
-	Up        bool      `json:"up"`
-	LatencyMs float64   `json:"latency_ms,omitempty"`
-	Since     time.Time `json:"since"` // when the current state began
-	Checked   time.Time `json:"checked"`
-	Error     string    `json:"error,omitempty"`
+	SNMP *SNMPInfo `json:"snmp,omitempty"`
+	// Readings are values pulled out of the device's JSON API.
+	Readings    []Reading `json:"readings,omitempty"`
+	ReadingsErr string    `json:"readings_err,omitempty"`
+	Up          bool      `json:"up"`
+	LatencyMs   float64   `json:"latency_ms,omitempty"`
+	Since       time.Time `json:"since"` // when the current state began
+	Checked     time.Time `json:"checked"`
+	Error       string    `json:"error,omitempty"`
 }
 
 const (
@@ -223,6 +230,27 @@ func redactSecrets(c NetCheck) NetCheck {
 // secretPlaceholder marks "something is set here" without saying what. It is
 // also what comes back on save when the operator did not retype it.
 const secretPlaceholder = "••••••"
+
+// byID returns one check as configured, secrets and all — this is server-side
+// use, not something that goes to a browser.
+func (n *netChecks) byID(id string) (NetCheck, bool) {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	if c, ok := n.checks[id]; ok {
+		return *c, true
+	}
+	return NetCheck{}, false
+}
+
+// statusByID returns the last observed state of one check.
+func (n *netChecks) statusByID(id string) (NetStatus, bool) {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	if st, ok := n.state[id]; ok && st != nil {
+		return *st, true
+	}
+	return NetStatus{}, false
+}
 
 func (n *netChecks) list() []NetStatus {
 	n.mu.RLock()
@@ -483,14 +511,16 @@ func (n *netChecks) runChecks(ctx context.Context, now time.Time) []NetStatus {
 	// would otherwise take the better part of a minute in series, and the slow
 	// ones are precisely the ones in trouble.
 	type result struct {
-		c    NetCheck
-		up   bool
-		ms   float64
-		code int
-		used string // the URL that actually answered
-		ip   string // where a MAC-identified device was found
-		snmp *SNMPInfo
-		e    error
+		c           NetCheck
+		up          bool
+		ms          float64
+		code        int
+		used        string // the URL that actually answered
+		ip          string // where a MAC-identified device was found
+		snmp        *SNMPInfo
+		readings    []Reading
+		readingsErr string
+		e           error
 	}
 	results := make(chan result, len(due))
 	var wg sync.WaitGroup
@@ -511,10 +541,16 @@ func (n *netChecks) runChecks(ctx context.Context, now time.Time) []NetStatus {
 			if up && snmpConfigured(c) {
 				snmp = snmpPoll(ctx, c.Address, c.SNMPPort, snmpCreds(c))
 			}
+			// Values from the device's own JSON, for hardware with no SNMP.
+			var readings []Reading
+			var readingsErr string
+			if up && c.JSONURL != "" && len(c.JSONProbes) > 0 {
+				readings, readingsErr = probeJSON(ctx, c.JSONURL, c.JSONProbes)
+			}
 			if c.MAC != "" && found == "" && err == nil {
 				err = errors.New("no device with that MAC found on the hub's networks")
 			}
-			results <- result{c, up, ms, code, used, found, snmp, err}
+			results <- result{c, up, ms, code, used, found, snmp, readings, readingsErr, err}
 		}(c)
 	}
 	wg.Wait()
@@ -538,10 +574,16 @@ func (n *netChecks) runChecks(ctx context.Context, now time.Time) []NetStatus {
 		// it was always checked at still stands.
 		up := r.up && !(r.c.MAC != "" && !r.c.MACLearned && r.ip == "")
 		st := &NetStatus{NetCheck: r.c, Web: web, Up: up, LatencyMs: r.ms, Code: r.code, IP: r.ip, Checked: now}
+		st.Readings, st.ReadingsErr = r.readings, r.readingsErr
 		// A poll that failed keeps the previous reading rather than replacing it
 		// with nothing: one dropped UDP packet should not blank a card.
 		switch {
 		case r.snmp != nil && r.snmp.Error == "":
+			// Throughput is a rate, so it needs the previous reading. Worked
+			// out here because this is where the two polls meet.
+			if prev != nil {
+				r.snmp.rateFrom(prev.SNMP)
+			}
 			st.SNMP = r.snmp
 		case prev != nil && prev.SNMP != nil:
 			st.SNMP = prev.SNMP

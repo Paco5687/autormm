@@ -85,31 +85,33 @@
        beside them. Laid out as one grid rather than three stacked sections
        because full-width strips of small cards waste the width they are given
        and leave the host grid with a ragged last row beside a void. -->
-  <!-- Hosts and network devices share the width evenly; apps run full width
-       underneath. Devices earned the right-hand half once they started
-       reporting readings — a card with four bars needs room a sidebar strip
-       cannot give it. -->
+  <!-- The two lists that grow — hosts and network devices — share the wide
+       column, and apps run down a narrow one beside them. Apps are a fixed set
+       of small, identical cards: they neither need the width nor change much,
+       which is what makes them the right thing to put in the sidebar. -->
   <div class="workspace">
-    <main id="grid" class="grid"></main>
+    <div class="mainstack">
+      <main id="grid" class="grid"></main>
 
-    <section id="netSection" class="netsec panel hidden">
+      <section id="netSection" class="netsec panel hidden">
+        <div class="netsec-head">
+          <b>Network devices</b>
+          <span id="netSummary" class="muted"></span>
+          <span class="grow"></span>
+          <button id="discoverBtn" class="btn ghost" title="Find devices on the hub's networks">Discover</button>
+        </div>
+        <div id="netGrid" class="netgrid"></div>
+      </section>
+    </div>
+
+    <section id="appSection" class="netsec panel appsec hidden">
       <div class="netsec-head">
-        <b>Network devices</b>
-        <span id="netSummary" class="muted"></span>
-        <span class="grow"></span>
-        <button id="discoverBtn" class="btn ghost" title="Find devices on the hub's networks">Discover</button>
+        <b>Apps</b>
+        <span id="appSummary" class="muted"></span>
       </div>
-      <div id="netGrid" class="netgrid"></div>
+      <div id="appGrid" class="netgrid"></div>
     </section>
   </div>
-
-  <section id="appSection" class="netsec panel appsec hidden">
-    <div class="netsec-head">
-      <b>Apps</b>
-      <span id="appSummary" class="muted"></span>
-    </div>
-    <div id="appGrid" class="netgrid"></div>
-  </section>
 
   <div id="empty" class="empty hidden">
     <p id="emptyMsg">No hosts have connected yet.</p>
@@ -326,6 +328,51 @@
         </p>
       </div>
       <div class="cmd-row"><button id="netSave" class="btn">Add device</button><span id="netStatus" class="muted"></span></div>
+
+      <!-- Browsing what the device exposes, for when a card shows nothing and
+           the question is whether it answered at all or answered with something
+           the hub does not read yet. -->
+      <!-- For hardware with no SNMP that publishes its state as JSON. -->
+      <div class="pane-head" style="border-top:1px solid var(--line);padding-top:14px">
+        <b>Read values from JSON</b>
+      </div>
+      <div class="cmd-row">
+        <input id="netJSONURL" class="inv-filter" style="max-width:none"
+               placeholder="status URL — e.g. http://apex.lan/cgi-bin/status.json">
+      </div>
+      <div class="cmd-row">
+        <textarea id="netJSONProbes" class="sc-content" style="height:84px"
+                  placeholder="One per line:  Label | path | unit&#10;Tank temp | istat.inputs[name=Tmp].value | °F&#10;pH | istat.inputs[name=pH].value"></textarea>
+      </div>
+      <p class="muted" style="font-size:11.5px;margin:2px 0 0">
+        Paths are dotted. <code>a.b.0.c</code> walks objects and arrays;
+        <code>list[name=Tmp]</code> picks the array entry whose field matches,
+        which survives a device reordering its sensors.
+      </p>
+
+      <div id="netBrowse" class="hidden">
+        <div class="pane-head" style="border-top:1px solid var(--line);padding-top:14px">
+          <b>Browse SNMP</b>
+        </div>
+        <div class="cmd-row">
+          <select id="browsePreset" class="inv-filter" style="max-width:none">
+            <option value="1.3.6.1.2.1.1">System — name, description, location</option>
+            <option value="1.3.6.1.2.1.43">Printer — supplies, status, counters</option>
+            <option value="1.3.6.1.2.1.25">Host Resources — cpu, memory, storage</option>
+            <option value="1.3.6.1.2.1.105">PoE — power over ethernet</option>
+            <option value="1.3.6.1.2.1.33">UPS</option>
+            <option value="1.3.6.1.4.1.41112">Ubiquiti</option>
+            <option value="1.3.6.1.4.1">All vendor-specific (slow)</option>
+            <option value="1.3.6.1.2.1.2.2">Interfaces</option>
+          </select>
+          <button id="browseRun" class="btn">Browse</button>
+        </div>
+        <div class="cmd-row">
+          <input id="browseOID" class="inv-filter" style="max-width:none" placeholder="or an OID of your own — e.g. 1.3.6.1.4.1.41112.1.6">
+        </div>
+        <div class="cmd-row"><span id="browseStatus" class="muted"></span></div>
+        <pre id="browseOut" class="mpatch-out hidden"></pre>
+      </div>
     </div>
   </div>
 

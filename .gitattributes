@@ -8,3 +8,8 @@ wiki/**             export-ignore
 # codec-lab is a research tool for the video-codec spike (#40), not the product.
 cmd/codec-lab       export-ignore
 cmd/codec-lab/**    export-ignore
+# Maintenance tooling for the dev repo. Kept out of the public tree for the
+# same reason release.sh is: it carries the safety scan's own pattern list,
+# which the scan cannot distinguish from leaked host data.
+tools               export-ignore
+tools/**            export-ignore

@@ -80,27 +80,30 @@ body {
 .fb-row.fb-dir .fb-name { color: var(--accent); }
 .fb-empty { padding: 14px; }
 /* ---- workspace ----
-   Hosts and network devices take half the width each; apps run full width
-   underneath. Devices sit beside the hosts rather than in a strip because a
-   device that reports readings now draws four bars, and bars in a narrow
-   column are decoration. */
+   The two lists that grow — hosts and devices — take the wide column, stacked.
+   Apps run down a narrow one beside them: a fixed set of small identical cards
+   that neither need the width nor change much. */
 .workspace {
-  display: grid; gap: 16px; padding: 16px 20px 0; align-items: start;
+  display: grid; gap: 16px; padding: 16px 20px 20px; align-items: start;
   grid-template-columns: minmax(0, 1fr);
 }
 @media (min-width: 1180px) {
-  .workspace { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .workspace { grid-template-columns: minmax(0, 1fr) minmax(240px, 300px); }
+  /* One app per row, which is all a column this narrow has room for and all a
+     name and a latency need. */
+  .appsec .netgrid { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .appsec .netcard { padding: 8px 10px; }
 }
+.mainstack { display: grid; gap: 16px; min-width: 0; }
 .workspace .grid { padding: 0; }
 
-/* A bordered shelf, so the two lists read as sections rather than as more
-   cards that happen to be smaller. */
+/* A bordered shelf, so the lists read as sections rather than as more cards
+   that happen to be smaller. */
 .panel {
   padding: 12px 13px 13px; background: var(--panel);
   border: 1px solid var(--line); border-radius: 12px; min-width: 0;
 }
 .panel .netsec-head { border-top: 0; margin-top: 0; padding: 0 0 10px; }
-.appsec { margin: 16px 20px 20px; }
 
 .netsec { padding: 0 20px 22px; }
 /* A real section rule, so Apps and Network devices read as separate shelves
@@ -646,8 +649,8 @@ a.nc-body:hover .nc-name { text-decoration: underline; }
   .topbar .grow { display: none; }
   .brand { margin-right: auto; }
   .tools { margin-left: auto; border-left: 0; padding-left: 0; }
-  .workspace { padding: 14px 14px 0; gap: 12px; }
-  .appsec { margin: 12px 14px 16px; }
+  .workspace { padding: 14px; gap: 12px; }
+  .mainstack { gap: 12px; }
   .fleet { padding: 14px 14px 0; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
   .t-val { font-size: 21px; }
   .t-val.t-net { font-size: 13px; }
