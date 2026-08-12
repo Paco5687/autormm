@@ -108,6 +108,7 @@ const (
 	oidSysLocation = "1.3.6.1.2.1.1.6.0"
 
 	oidIfOperStatus = "1.3.6.1.2.1.2.2.1.8" // 1 = up, 2 = down
+	oidIfType       = "1.3.6.1.2.1.2.2.1.3" // 6 = a real ethernet port
 
 	oidSupplyDesc  = "1.3.6.1.2.1.43.11.1.1.6"
 	oidSupplyUnit  = "1.3.6.1.2.1.43.11.1.1.7" // 19 = the level is already a percentage
@@ -279,16 +280,27 @@ func snmpPollVersion(ctx context.Context, host string, port int, creds SNMPCreds
 	return info
 }
 
-// pollInterfaces counts how many interfaces are up. The count is the useful
-// figure — "20 of 24 up" says more about a switch than any single port does.
+// pollInterfaces counts how many physical ports are up.
+//
+// Physical ones only. A 24-port switch reports ninety-one interfaces — the
+// ports, a CPU interface, and a link aggregate for every port whether or not
+// one is configured — and counting them all gives "5 of 53 up" for a switch
+// with four things plugged into it. A firewall does the same with loopback and
+// pflog. ifType 6 is ethernetCsmacd, which is what a port is.
 func pollInterfaces(g *gosnmp.GoSNMP) (total, up int) {
 	rows, err := walk(g, oidIfOperStatus)
 	if err != nil {
 		return 0, 0
 	}
+	types := indexBySuffix(mustWalk(g, oidIfType))
 	for _, v := range rows {
 		n, ok := toInt(v.Value)
 		if !ok {
+			continue
+		}
+		// A device that does not report types at all is counted whole rather
+		// than not at all: fewer devices report ifType than ifOperStatus.
+		if t, known := toInt(types[suffix(v.Name)]); known && !physicalPort(t) {
 			continue
 		}
 		total++
@@ -297,6 +309,15 @@ func pollInterfaces(g *gosnmp.GoSNMP) (total, up int) {
 		}
 	}
 	return total, up
+}
+
+// physicalPort reports whether an ifType is something with a socket on it.
+func physicalPort(t int) bool {
+	switch t {
+	case 6, 117: // ethernetCsmacd, and the deprecated gigabitEthernet
+		return true
+	}
+	return false
 }
 
 // pollSupplies reads printer consumables.

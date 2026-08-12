@@ -361,11 +361,15 @@
             <option value="1.3.6.1.2.1.25">Host Resources — cpu, memory, storage</option>
             <option value="1.3.6.1.2.1.105">PoE — power over ethernet</option>
             <option value="1.3.6.1.2.1.33">UPS</option>
-            <option value="1.3.6.1.4.1.41112">Ubiquiti</option>
+            <option value="1.3.6.1.4.1.41112">Ubiquiti (UniFi)</option>
+            <option value="1.3.6.1.4.1.4413">Broadcom / EdgeSwitch</option>
             <option value="1.3.6.1.4.1">All vendor-specific (slow)</option>
             <option value="1.3.6.1.2.1.2.2">Interfaces</option>
           </select>
           <button id="browseRun" class="btn">Browse</button>
+          <label class="muted" style="font-size:11.5px;white-space:nowrap" title="Walks further and reports columns rather than every value — for large vendor subtrees">
+            <input type="checkbox" id="browseSummary"> map it
+          </label>
         </div>
         <div class="cmd-row">
           <input id="browseOID" class="inv-filter" style="max-width:none" placeholder="or an OID of your own — e.g. 1.3.6.1.4.1.41112.1.6">

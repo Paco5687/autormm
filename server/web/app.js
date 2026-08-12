@@ -1780,14 +1780,30 @@ document.getElementById('browseRun').addEventListener('click', async () => {
   const oid = document.getElementById('browseOID').value.trim()
     || document.getElementById('browsePreset').value;
   if (!editingCheck) { status.textContent = 'save the device first'; return; }
+  const summary = document.getElementById('browseSummary').checked;
   status.textContent = 'walking ' + oid + '…';
   out.classList.add('hidden');
   try {
-    const r = await authJSON('/api/snmpwalk', 'POST', { id: editingCheck, oid });
+    const r = await authJSON('/api/snmpwalk', 'POST', { id: editingCheck, oid, summary });
     if (r.error) { status.textContent = r.error; return; }
+    const more = r.truncated ? ' — stopped at the limit, there is more below this' : '';
+
+    if (summary) {
+      // Columns rather than values: a vendor subtree is mostly tables, and the
+      // shape is what tells you where an undocumented reading lives.
+      const groups = r.groups || [];
+      status.textContent = groups.length
+        ? `${groups.length} column(s), ${r.count} value(s) under ${r.root}` + more
+        : `nothing under ${r.root} — this device does not implement it`;
+      out.textContent = groups.map(g =>
+        `${g.oid}  ×${g.count}  (${g.type})  ${g.samples.join(', ')}`).join('\n');
+      out.classList.toggle('hidden', groups.length === 0);
+      return;
+    }
+
     const rows = r.rows || [];
     status.textContent = rows.length
-      ? `${rows.length} value(s) under ${r.root}`
+      ? `${rows.length} value(s) under ${r.root}` + more
       : `nothing under ${r.root} — this device does not implement it`;
     out.textContent = rows.map(x => `${x.oid}  (${x.type})  ${x.value}`).join('\n');
     out.classList.toggle('hidden', rows.length === 0);

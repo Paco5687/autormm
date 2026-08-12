@@ -494,3 +494,21 @@ func TestPrinterErrorBitsAreNamed(t *testing.T) {
 		t.Errorf("a healthy printer reported %v", got)
 	}
 }
+
+// A 24-port switch reports ninety-one interfaces: the ports, a CPU interface,
+// and a link aggregate for every port whether one is configured or not.
+// Counting them all reported "5 of 53 up" for a switch with four things
+// plugged in.
+func TestOnlyPhysicalPortsAreCounted(t *testing.T) {
+	if !physicalPort(6) {
+		t.Error("ethernetCsmacd was not counted as a port")
+	}
+	if !physicalPort(117) {
+		t.Error("gigabitEthernet was not counted as a port")
+	}
+	for _, t2 := range []int{1, 24, 53, 161} { // other, loopback, propVirtual, lag
+		if physicalPort(t2) {
+			t.Errorf("ifType %d was counted as a physical port", t2)
+		}
+	}
+}
