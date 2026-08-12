@@ -79,6 +79,39 @@ body {
 .fb-row .fb-size { color: var(--muted); flex-shrink: 0; }
 .fb-row.fb-dir .fb-name { color: var(--accent); }
 .fb-empty { padding: 14px; }
+/* ---- workspace ----
+   One grid: hosts in the flexible column, apps and devices in a sidebar. The
+   sidebar is bounded rather than proportional, so on a very wide screen the
+   extra width goes to the host cards, which are the thing worth more room. */
+.workspace {
+  display: grid; gap: 16px; padding: 16px 20px 20px; align-items: start;
+  grid-template-columns: minmax(0, 1fr);
+}
+@media (min-width: 1180px) {
+  .workspace { grid-template-columns: minmax(0, 1fr) minmax(320px, 380px); }
+  /* Two per row, but only while the sidebar really is a sidebar: below this
+     width it spans the page and the ordinary auto-fill grid suits it. Fixed at
+     two rather than auto-filled so the count does not change with the sidebar's
+     own width — a list that reflows between two and three while the window
+     moves is harder to read than one that simply stays. */
+  .side .netgrid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+  .side .netcard { padding: 8px 9px; gap: 6px; }
+  /* At half the sidebar's width the name is what has to survive, so the
+     subtitle drops a size and the remove button stops reserving space it does
+     not need. */
+  .side .netcard .nc-sub { font-size: 10.5px; }
+  .side .netcard .nc-del { font-size: 12px; line-height: 1; padding: 0; }
+}
+/* The grid lives inside the workspace now and no longer owns the page padding. */
+.workspace .grid { padding: 0; }
+.side { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+/* A bordered panel, so the two lists read as shelves rather than as more cards
+   that happen to be smaller. */
+.side .netsec {
+  padding: 12px 13px 13px; background: var(--panel);
+  border: 1px solid var(--line); border-radius: 12px;
+}
+.side .netsec-head { border-top: 0; margin-top: 0; padding: 0 0 10px; }
 .netsec { padding: 0 20px 22px; }
 /* A real section rule, so Apps and Network devices read as separate shelves
    rather than as more cards that happen to be smaller. */
@@ -218,7 +251,9 @@ a.nc-body:hover .nc-name { text-decoration: underline; }
 
 .grid {
   display: grid; gap: 14px; padding: 20px;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  /* A fallback only: layoutGrid() replaces this with a column count that fills
+     its rows evenly, which auto-fill cannot do. */
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
 }
 .card {
   background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
@@ -306,6 +341,17 @@ a.nc-body:hover .nc-name { text-decoration: underline; }
 /* Pushed to the bottom so cards of differing content still line up along their
    lower edge, which is what makes a grid of them look deliberate. */
 .details { font-size: 12px; }
+/* The figures are reference, not glance: a card showing every filesystem all
+   the time is most of a card's height for something read occasionally. */
+.more > summary {
+  cursor: pointer; list-style: none; color: var(--muted); font-size: 11px;
+  padding: 2px 0; user-select: none;
+}
+.more > summary::-webkit-details-marker { display: none; }
+.more > summary::before { content: "▸"; display: inline-block; width: 12px; }
+.more[open] > summary::before { content: "▾"; }
+@media (hover: hover) { .more > summary:hover { color: var(--text); } }
+.more[open] > summary { margin-bottom: 4px; }
 /* Labels and figures in two columns: the old block was one monospace string
    with newlines in it, which read as a log dump rather than a summary. */
 .dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; align-items: baseline; }

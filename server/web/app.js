@@ -247,7 +247,10 @@ tokenBtn.addEventListener('click', () => {
 });
 
 const cards = new Map();
-let hostQuery = ''; // agentID -> element
+let hostQuery = '';
+// Which cards the operator has expanded, by agent id. Kept here rather than in
+// the DOM because the card's contents are re-rendered on every poll.
+const expandedCards = new Set(); // agentID -> element
 let lastHosts = [];
 const detail = { agent: null, range: '6h' };
 
@@ -367,6 +370,7 @@ function render(allHosts) {
   for (const [id, el] of cards) {
     if (!seen.has(id)) { el.remove(); cards.delete(id); }
   }
+  layoutGrid();
   if (detail.agent) refreshDetailLive();
 }
 
@@ -471,6 +475,32 @@ function averageHistories(hosts) {
 
 function setText(id, v) { const el = document.getElementById(id); if (el) el.textContent = v; }
 
+// Chooses a column count that fills its rows evenly.
+//
+// A plain auto-fill grid packs as many cards per row as will fit and leaves
+// whatever is left over on the last one — eight hosts in a five-wide grid gives
+// five and then three beside a void. Spreading the same cards over the same
+// number of rows uses the width instead of wasting it: eight become four and
+// four, six become three and three.
+function layoutGrid() {
+  const n = grid.childElementCount;
+  if (!n) { grid.style.gridTemplateColumns = ''; return; }
+  const width = grid.clientWidth;
+  if (!width) return; // not laid out yet; the resize observer will call back
+  const maxCols = Math.max(1, Math.floor((width + GRID_GAP) / (CARD_MIN + GRID_GAP)));
+  const rows = Math.ceil(n / maxCols);
+  const cols = Math.min(maxCols, Math.ceil(n / rows));
+  grid.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
+}
+
+const CARD_MIN = 300;  // matches the fallback in the stylesheet
+const GRID_GAP = 14;
+
+// Re-balances when the window changes, which a CSS-only grid would do for free
+// and this one has to be told about.
+if (window.ResizeObserver) new ResizeObserver(layoutGrid).observe(grid);
+else window.addEventListener('resize', layoutGrid);
+
 function updateCard(el, h) {
   const status = el.querySelector('.status');
   status.className = 'status ' + (h.online ? 'online' : 'offline');
@@ -531,9 +561,22 @@ function updateCard(el, h) {
         `<span class="dk-bar"><i class="${d.percent >= 85 ? 'hot' : ''}" style="width:${d.percent.toFixed(0)}%"></i></span>` +
         `<span class="dk-v">${d.percent.toFixed(0)}%</span>` +
       `</div>`).join('');
-    det.innerHTML = '<dl class="dl">' + rows.map(([k, v]) =>
-      `<dt>${k}</dt><dd title="${escapeHtml(v)}">${escapeHtml(v)}</dd>`).join('') + '</dl>' +
-      (disks ? `<div class="disks">${disks}</div>` : '');
+    // Rebuilt on every poll, so the open state has to live outside the markup —
+    // otherwise an expanded card would snap shut every three seconds.
+    const open = expandedCards.has(h.agent_id) ? ' open' : '';
+    det.innerHTML = `<details class="more"${open}><summary>Details</summary>` +
+      '<dl class="dl">' + rows.map(([k, v]) =>
+        `<dt>${k}</dt><dd title="${escapeHtml(v)}">${escapeHtml(v)}</dd>`).join('') + '</dl>' +
+      (disks ? `<div class="disks">${disks}</div>` : '') +
+      '</details>';
+    const more = det.querySelector('.more');
+    more.addEventListener('toggle', () => {
+      if (more.open) expandedCards.add(h.agent_id);
+      else expandedCards.delete(h.agent_id);
+    });
+    // Expanding a card is not opening it: without this the disclosure also
+    // launches the host detail panel.
+    more.querySelector('summary').addEventListener('click', e => e.stopPropagation());
   } else {
     det.innerHTML = '<div class="waiting"></div>';
     det.firstChild.textContent = h.online
