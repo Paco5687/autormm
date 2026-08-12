@@ -1534,11 +1534,14 @@ async function runDiscovery() {
     const news = list.filter(d => !d.monitored).length;
     body.innerHTML =
       `<div class="muted" style="margin-bottom:10px">${list.length} device(s), ${news} not yet monitored</div>` +
-      '<table class="proc-table"><thead><tr><th>Address</th><th>Name</th><th>MAC</th>' +
+      '<table class="proc-table"><thead><tr><th>Address</th><th>Name</th><th>Vendor</th><th>MAC</th>' +
       '<th>Open ports</th><th></th></tr></thead><tbody>' +
       list.map((d, i) => `<tr class="${d.monitored ? 'disc-known' : ''}">` +
         `<td>${escapeHtml(d.ip)}</td>` +
         `<td>${escapeHtml(d.name || '')}</td>` +
+        // The vendor is the identification that always works, so it is a column
+        // rather than a footnote: a device that answers nothing still has a MAC.
+        `<td class="${d.vendor === 'randomised' ? 'muted' : ''}">${escapeHtml(d.vendor || '')}</td>` +
         `<td class="aud-detail">${escapeHtml(d.mac)}</td>` +
         `<td>${(d.ports || []).join(', ')}</td>` +
         `<td>${d.monitored
@@ -1550,7 +1553,8 @@ async function runDiscovery() {
       const d = list[parseInt(b.dataset.i, 10)];
       // Added by MAC, not by address: this device was found on DHCP and the
       // address it holds today is not a fact worth writing down.
-      const name = prompt('Name for ' + d.ip + '?', d.name || d.ip);
+      const name = prompt('Name for ' + d.ip + '?',
+        d.name || (d.vendor && d.vendor !== 'randomised' ? d.vendor + ' ' + d.ip.split('.').pop() : d.ip));
       if (name === null) return;
       b.disabled = true;
       try {

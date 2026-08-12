@@ -29,6 +29,9 @@ type Discovered struct {
 	// Name is reverse DNS, when it answers. Most homelab devices have no
 	// record, so empty is the normal case rather than a failure.
 	Name string `json:"name,omitempty"`
+	// Vendor is whoever owns the MAC's prefix — not a name, but the thing that
+	// makes an otherwise anonymous device identifiable.
+	Vendor string `json:"vendor,omitempty"`
 	// Monitored marks a device the hub already watches or has an agent on.
 	Monitored bool   `json:"monitored"`
 	Why       string `json:"why,omitempty"`   // what it is already known as
@@ -65,7 +68,8 @@ func (s *Server) handleDiscover(w http.ResponseWriter, r *http.Request) {
 		wg.Add(1)
 		go func(mac, ip string) {
 			defer wg.Done()
-			d := Discovered{IP: ip, MAC: mac, Name: reverseName(ctx, ip), Ports: openPorts(ctx, ip)}
+			name, vendor := nameOf(ctx, ip, mac)
+			d := Discovered{IP: ip, MAC: mac, Name: name, Vendor: vendor, Ports: openPorts(ctx, ip)}
 			if k := known[ip]; k {
 				d.Monitored, d.Why = true, why[ip]
 			}
