@@ -493,7 +493,10 @@ function layoutGrid() {
   grid.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
 }
 
-const CARD_MIN = 300;  // matches the fallback in the stylesheet
+// Narrower than the cards look, because the host column is now the smaller
+// share of the row: at 300 a 1400px screen dropped to two columns and gave
+// each card width it had no use for.
+const CARD_MIN = 280;  // matches the fallback in the stylesheet
 const GRID_GAP = 14;
 
 // Re-balances when the window changes, which a CSS-only grid would do for free
