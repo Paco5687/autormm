@@ -274,6 +274,13 @@
         <input id="netTags" class="inv-filter" placeholder="tags (optional)">
       </div>
       <div class="cmd-row"><input id="netURL" class="inv-filter" style="max-width:none" placeholder="control panel URL (optional — inferred from the port if blank)"></div>
+      <!-- A community string is a credential, however weak, so nothing is sent
+           anywhere it was not explicitly configured. -->
+      <div class="cmd-row">
+        <input id="netSNMP" class="inv-filter" placeholder="SNMP community (optional — e.g. public)"
+               autocomplete="off" data-1p-ignore data-lpignore="true">
+        <input id="netSNMPPort" class="inv-filter" type="number" min="1" max="65535" placeholder="SNMP port (161)">
+      </div>
       <div class="cmd-row"><button id="netSave" class="btn">Add device</button><span id="netStatus" class="muted"></span></div>
     </div>
   </div>

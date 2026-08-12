@@ -1823,9 +1823,17 @@ function renderMonitorSection(which, list) {
     const sub = document.createElement('div');
     sub.className = 'nc-sub';
     sub.textContent = monitorSubtitle(c);
+    const level = snmpLevel(c.snmp);
+    if (level) sub.classList.add('nc-' + level);
     // The reason a check failed is the whole diagnosis and was being collected
     // and then thrown away. It is long, so it goes in the tooltip.
     if (!c.up && c.error) sub.title = c.error;
+    // An SNMP failure does not make the device unreachable, so it is a tooltip
+    // and a marker rather than a red dot that would misreport the device.
+    if (c.snmp && c.snmp.error) {
+      sub.title = 'SNMP: ' + c.snmp.error;
+      name.textContent += ' ⚠';
+    }
     body.append(name, sub);
 
     const del = document.createElement('button');
@@ -1845,6 +1853,44 @@ function renderMonitorSection(which, list) {
     el.append(dot, body, del);
     grid.appendChild(el);
   }
+}
+
+// snmpSummary is the one line a device card has room for: whichever of the
+// things SNMP reported is worth interrupting someone about, in that order.
+function snmpSummary(s) {
+  if (!s) return '';
+  const bits = [];
+  if (s.ups) {
+    // A UPS running the rack off its battery is the whole reason to poll one.
+    if (s.ups.on_battery) {
+      bits.push('ON BATTERY' + (s.ups.seconds_on_battery ? ` ${s.ups.seconds_on_battery}s` : ''));
+    }
+    if (s.ups.battery_low) bits.push('battery low');
+    if (s.ups.charge_percent >= 0) bits.push(`battery ${s.ups.charge_percent}%`);
+  }
+  // Only supplies that reported a figure; the MIB's "will not say" is not 0%.
+  const known = (s.supplies || []).filter(x => x.percent >= 0);
+  if (known.length) {
+    // Figure first: at half a sidebar's width "Black Toner 8%" truncates to
+    // "Black To…" and loses the only part worth reading.
+    const low = known.reduce((a, b) => (a.percent <= b.percent ? a : b));
+    bits.push(`${low.percent}% ${low.name}`);
+  }
+  if (s.if_total) bits.push(`${s.if_up}/${s.if_total} up`);
+  if (!bits.length && s.uptime_secs) bits.push('up ' + fmtUptime(s.uptime_secs));
+  return bits.slice(0, 2).join(' · ');
+}
+
+// snmpLevel grades a reading, so a UPS running on battery is not the same
+// muted grey as a switch quietly reporting its port count.
+function snmpLevel(s) {
+  if (!s) return '';
+  if (s.ups && (s.ups.on_battery || s.ups.battery_low)) return 'bad';
+  const known = (s.supplies || []).filter(x => x.percent >= 0);
+  if (known.some(x => x.percent <= 10)) return 'bad';
+  if (known.some(x => x.percent <= 25)) return 'warn';
+  if (s.if_total && s.if_up === 0) return 'bad';
+  return '';
 }
 
 // shortProbeError turns a Go dial error into something readable at a glance.
@@ -1879,6 +1925,10 @@ function monitorSubtitle(c) {
     return `${where} · ${why || 'unreachable'}`;
   }
   const code = (c.kind === 'app' && c.code && (c.code < 200 || c.code >= 400)) ? ` · HTTP ${c.code}` : '';
+  // What SNMP reported replaces the latency, which is the least interesting
+  // thing known about a device that will tell you its port count.
+  const snmp = snmpSummary(c.snmp);
+  if (snmp) return `${where} · ${snmp}`;
   return `${where} · ${Math.round(c.latency_ms)}ms${code}`;
 }
 
@@ -1936,8 +1986,10 @@ document.getElementById('netSave').addEventListener('click', async () => {
       tags: document.getElementById('netTags').value.trim(),
       url: document.getElementById('netURL').value.trim(),
       mac,
+      snmp: document.getElementById('netSNMP').value.trim(),
+      snmp_port: parseInt(document.getElementById('netSNMPPort').value, 10) || 0,
     });
-    for (const id of ['netName', 'netAddr', 'netPort', 'netTags', 'netURL', 'netMAC']) document.getElementById(id).value = '';
+    for (const id of ['netName', 'netAddr', 'netPort', 'netTags', 'netURL', 'netMAC', 'netSNMP', 'netSNMPPort']) document.getElementById(id).value = '';
     st.textContent = '';
     netModal.classList.add('hidden');
     loadNetChecks();

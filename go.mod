@@ -7,6 +7,7 @@ require (
 	github.com/UserExistsError/conpty v0.1.4
 	github.com/creack/pty v1.1.24
 	github.com/gorilla/websocket v1.5.3
+	github.com/gosnmp/gosnmp v1.44.0
 	github.com/jezek/xgb v1.3.1
 	github.com/kbinani/screenshot v0.0.0-20250624051815-089614a94018
 	github.com/robfig/cron/v3 v3.0.1

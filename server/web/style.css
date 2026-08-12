@@ -104,7 +104,11 @@ body {
      subtitle drops a size and the remove button stops reserving space it does
      not need. */
   .side .netcard .nc-sub { font-size: 10.5px; }
-  .side .netcard .nc-del { font-size: 12px; line-height: 1; padding: 0; }
+  .side /* A reading worth acting on, in a subtitle that is otherwise muted grey. */
+.netcard .nc-sub.nc-warn { color: var(--warn); }
+.netcard .nc-sub.nc-bad { color: var(--bad); }
+
+.netcard .nc-del { font-size: 12px; line-height: 1; padding: 0; }
 }
 /* The grid lives inside the workspace now and no longer owns the page padding. */
 .workspace .grid { padding: 0; }
@@ -146,6 +150,10 @@ a.nc-body:hover .nc-name { text-decoration: underline; }
 @media (hover: hover) {
   .netcard.nc-link:hover { border-color: var(--accent); }
 }
+/* A reading worth acting on, in a subtitle that is otherwise muted grey. */
+.netcard .nc-sub.nc-warn { color: var(--warn); }
+.netcard .nc-sub.nc-bad { color: var(--bad); }
+
 .netcard .nc-del { opacity: .45; cursor: pointer; background: none; border: 0; color: var(--text); font-size: 14px; }
 .netcard .nc-del:hover { opacity: 1; color: var(--bad); }
 .modal-card.sheet-sm { width: min(460px, 100%); }

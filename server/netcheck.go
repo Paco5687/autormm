@@ -43,6 +43,12 @@ type NetCheck struct {
 	// are checked over HTTP rather than by opening a socket, because "the port
 	// is open" says almost nothing about whether an application is serving.
 	Kind string `json:"kind,omitempty"`
+	// SNMP is the v2c community string. Empty disables polling, which is the
+	// default: a community string is a credential, however weak, and nothing
+	// should be sending one anywhere it was not told to.
+	SNMP string `json:"snmp,omitempty"`
+	// SNMPPort overrides the standard 161.
+	SNMPPort int `json:"snmp_port,omitempty"`
 	// MAC identifies a device that gets its address from DHCP, where writing
 	// down an IP is writing down something that will change. When set, the
 	// address is looked up from the hub's ARP table at check time and Address
@@ -95,7 +101,10 @@ type NetStatus struct {
 	// "serving" from "answering with 502".
 	Code int `json:"code,omitempty"`
 	// IP is where a MAC-identified device was found this time round.
-	IP        string    `json:"ip,omitempty"`
+	IP string `json:"ip,omitempty"`
+	// SNMP is the last successful poll, kept across cycles so a single missed
+	// reply does not blank the card.
+	SNMP      *SNMPInfo `json:"snmp,omitempty"`
 	Up        bool      `json:"up"`
 	LatencyMs float64   `json:"latency_ms,omitempty"`
 	Since     time.Time `json:"since"` // when the current state began
@@ -414,6 +423,7 @@ func (n *netChecks) runChecks(ctx context.Context, now time.Time) []NetStatus {
 		code int
 		used string // the URL that actually answered
 		ip   string // where a MAC-identified device was found
+		snmp *SNMPInfo
 		e    error
 	}
 	results := make(chan result, len(due))
@@ -429,10 +439,16 @@ func (n *netChecks) runChecks(ctx context.Context, now time.Time) []NetStatus {
 				}
 			}
 			up, ms, code, used, err := probeCheck(ctx, c)
+			// Only when the device answered: polling something that is not there
+			// just spends two seconds discovering that again.
+			var snmp *SNMPInfo
+			if up && c.SNMP != "" {
+				snmp = snmpPoll(ctx, c.Address, c.SNMPPort, c.SNMP)
+			}
 			if c.MAC != "" && found == "" && err == nil {
 				err = errors.New("no device with that MAC found on the hub's networks")
 			}
-			results <- result{c, up, ms, code, used, found, err}
+			results <- result{c, up, ms, code, used, found, snmp, err}
 		}(c)
 	}
 	wg.Wait()
@@ -453,6 +469,19 @@ func (n *netChecks) runChecks(ctx context.Context, now time.Time) []NetStatus {
 		// somebody else.
 		up := r.up && !(r.c.MAC != "" && r.ip == "")
 		st := &NetStatus{NetCheck: r.c, Web: web, Up: up, LatencyMs: r.ms, Code: r.code, IP: r.ip, Checked: now}
+		// A poll that failed keeps the previous reading rather than replacing it
+		// with nothing: one dropped UDP packet should not blank a card.
+		switch {
+		case r.snmp != nil && r.snmp.Error == "":
+			st.SNMP = r.snmp
+		case prev != nil && prev.SNMP != nil:
+			st.SNMP = prev.SNMP
+			if r.snmp != nil {
+				st.SNMP.Error = r.snmp.Error
+			}
+		default:
+			st.SNMP = r.snmp
+		}
 		if r.e != nil && !up {
 			st.Error = r.e.Error()
 		}
@@ -573,6 +602,7 @@ func (s *Server) handleNetChecks(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		c.Address, c.Port = normalizeAddress(c.Address, c.Port)
+		c.SNMP = strings.TrimSpace(c.SNMP)
 		if c.MAC != "" {
 			if m := normalizeMAC(c.MAC); m != "" {
 				c.MAC = m
