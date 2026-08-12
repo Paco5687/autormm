@@ -99,11 +99,39 @@ body {
      own width — a list that reflows between two and three while the window
      moves is harder to read than one that simply stays. */
   .side .netgrid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+
   .side .netcard { padding: 8px 9px; gap: 6px; }
   /* At half the sidebar's width the name is what has to survive, so the
      subtitle drops a size and the remove button stops reserving space it does
      not need. */
-  .side .netcard .nc-sub { font-size: 10.5px; }
+  .side /* A device with readings needs a column of its own and a taller card; one that
+   only answers a TCP check stays a compact row. */
+.netcard.nc-rich { align-items: flex-start; padding: 10px 12px; }
+/* A card with readings takes two columns wherever there is more than one: in a
+   quarter of the page its bars are about ninety pixels long, which is a
+   decoration rather than a measurement. Not below this width, where the grid is
+   a single column and spanning two would invent a second one. */
+@media (min-width: 640px) {
+  .netgrid .netcard.nc-rich { grid-column: span 2; }
+}
+.netcard.nc-rich .status { margin-top: 4px; }
+.nc-metrics { display: flex; flex-direction: column; gap: 3px; margin-top: 7px; }
+.nc-metric { display: flex; align-items: center; gap: 7px; }
+.nc-metric label {
+  width: 42px; flex: none; font-size: 9.5px; letter-spacing: .4px;
+  color: var(--muted); text-transform: uppercase;
+}
+.nc-metric .bar { flex: 1; height: 5px; }
+.nc-metric .val {
+  width: 38px; text-align: right; font-family: var(--mono); font-size: 10.5px;
+  color: var(--muted);
+}
+.nc-facts {
+  margin-top: 6px; font-size: 10.5px; color: var(--muted); font-family: var(--mono);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+.netcard .nc-sub { font-size: 10.5px; }
   .side /* A reading worth acting on, in a subtitle that is otherwise muted grey. */
 .netcard .nc-sub.nc-warn { color: var(--warn); }
 .netcard .nc-sub.nc-bad { color: var(--bad); }
@@ -141,6 +169,33 @@ body {
 .netcard .nc-body { min-width: 0; flex: 1; color: inherit; text-decoration: none; }
 a.nc-body:hover .nc-name { text-decoration: underline; }
 .netcard .nc-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* A device with readings needs a column of its own and a taller card; one that
+   only answers a TCP check stays a compact row. */
+.netcard.nc-rich { align-items: flex-start; padding: 10px 12px; }
+/* A card with readings takes two columns wherever there is more than one: in a
+   quarter of the page its bars are about ninety pixels long, which is a
+   decoration rather than a measurement. Not below this width, where the grid is
+   a single column and spanning two would invent a second one. */
+@media (min-width: 640px) {
+  .netgrid .netcard.nc-rich { grid-column: span 2; }
+}
+.netcard.nc-rich .status { margin-top: 4px; }
+.nc-metrics { display: flex; flex-direction: column; gap: 3px; margin-top: 7px; }
+.nc-metric { display: flex; align-items: center; gap: 7px; }
+.nc-metric label {
+  width: 42px; flex: none; font-size: 9.5px; letter-spacing: .4px;
+  color: var(--muted); text-transform: uppercase;
+}
+.nc-metric .bar { flex: 1; height: 5px; }
+.nc-metric .val {
+  width: 38px; text-align: right; font-family: var(--mono); font-size: 10.5px;
+  color: var(--muted);
+}
+.nc-facts {
+  margin-top: 6px; font-size: 10.5px; color: var(--muted); font-family: var(--mono);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
 .netcard .nc-sub {
   font-size: 11px; color: var(--muted); font-family: var(--mono);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;

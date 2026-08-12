@@ -1823,8 +1823,11 @@ function renderMonitorSection(which, list) {
     const sub = document.createElement('div');
     sub.className = 'nc-sub';
     sub.textContent = monitorSubtitle(c);
+    // Only on a compact card, where the subtitle *is* the reading. On a card
+    // with bars the colour is already on the bar, and a red IP address beside
+    // it reads as though the address were the problem.
     const level = snmpLevel(c.snmp);
-    if (level) sub.classList.add('nc-' + level);
+    if (level && !snmpMetrics(c.snmp).length) sub.classList.add('nc-' + level);
     // The reason a check failed is the whole diagnosis and was being collected
     // and then thrown away. It is long, so it goes in the tooltip.
     if (!c.up && c.error) sub.title = c.error;
@@ -1846,6 +1849,30 @@ function renderMonitorSection(which, list) {
       name.textContent += ' ⚠';
     }
     body.append(name, sub);
+
+    // A device that reports readings gets bars and a full-width card. One that
+    // only answers a TCP check stays a single compact row — most of a homelab's
+    // devices have nothing more to say, and giving them all the taller card
+    // would be a lot of white space to make a firewall look better.
+    const metrics = snmpMetrics(c.snmp);
+    if (metrics.length) {
+      el.classList.add('nc-rich');
+      const box = document.createElement('div');
+      box.className = 'nc-metrics';
+      box.innerHTML = metrics.map(m =>
+        `<div class="nc-metric"><label>${escapeHtml(m.label)}</label>` +
+        `<span class="bar"><i class="${m.level ? 'hot' : ''}" style="width:${Math.max(0, Math.min(100, m.percent))}%"></i></span>` +
+        `<span class="val">${escapeHtml(m.text)}</span></div>`).join('');
+      body.appendChild(box);
+
+      const facts = snmpFacts(c.snmp);
+      if (facts) {
+        const f = document.createElement('div');
+        f.className = 'nc-facts';
+        f.textContent = facts;
+        body.appendChild(f);
+      }
+    }
 
     // Editing exists on the hub already — a save with an existing id updates in
     // place — so this is only the affordance. Without it, adding SNMP to a
@@ -1939,6 +1966,60 @@ function fmtCount(n) {
   return String(n);
 }
 
+// snmpMetrics picks the readings worth a bar. Percentages only: a bar for
+// something that is not out of a hundred is a decoration.
+function snmpMetrics(s) {
+  if (!s) return [];
+  const out = [];
+  if (s.ups) {
+    if (s.ups.charge_percent >= 0) {
+      out.push({
+        label: 'BATT', percent: s.ups.charge_percent,
+        text: s.ups.charge_percent + '%',
+        level: s.ups.on_battery || s.ups.battery_low || s.ups.charge_percent < 50,
+      });
+    }
+    if (s.ups.load_percent) {
+      out.push({ label: 'LOAD', percent: s.ups.load_percent, text: s.ups.load_percent + '%', level: s.ups.load_percent >= 80 });
+    }
+  }
+  if (s.cpu_percent) out.push({ label: 'CPU', percent: s.cpu_percent, text: s.cpu_percent + '%', level: s.cpu_percent >= 90 });
+  if (s.mem_percent) out.push({ label: 'MEM', percent: s.mem_percent, text: s.mem_percent + '%', level: s.mem_percent >= 95 });
+  if (s.disk_percent) {
+    out.push({ label: 'DISK', percent: s.disk_percent, text: s.disk_percent + '%', level: s.disk_percent >= 90 });
+  }
+  if (s.pf_states && s.pf_state_limit) {
+    const pct = (s.pf_states / s.pf_state_limit) * 100;
+    out.push({ label: 'STATE', percent: pct, text: fmtCount(s.pf_states), level: pct >= 80 });
+  }
+  // Consumables that reported a figure. The MIB's "will not say" is not 0%.
+  for (const x of (s.supplies || []).filter(v => v.percent >= 0)) {
+    out.push({ label: shortSupply(x.name), percent: x.percent, text: x.percent + '%', level: x.percent <= 10 });
+  }
+  return out.slice(0, 6);
+}
+
+// shortSupply trims a cartridge name to something that fits a label column.
+// "Black Toner Cartridge HP 26X" is a label, not a sentence.
+function shortSupply(name) {
+  const n = String(name).replace(/\b(cartridge|toner|unit|supply)\b/gi, '').trim();
+  return (n.split(/\s+/)[0] || name).slice(0, 6).toUpperCase();
+}
+
+// snmpFacts is the line under the bars: the figures that are not percentages.
+function snmpFacts(s) {
+  if (!s) return '';
+  const bits = [];
+  if (s.ups && s.ups.on_battery) {
+    bits.push('ON BATTERY' + (s.ups.seconds_on_battery ? ` ${s.ups.seconds_on_battery}s` : ''));
+  }
+  if (s.ups && s.ups.minutes_remaining) bits.push(`${s.ups.minutes_remaining}m runtime`);
+  if (s.load1) bits.push('load ' + s.load1.toFixed(2));
+  if (s.if_total && !s.ups) bits.push(`${s.if_up}/${s.if_total} up`);
+  if (s.uptime_secs) bits.push('up ' + fmtUptime(s.uptime_secs));
+  return bits.slice(0, 3).join('  ·  ');
+}
+
 // snmpDetail is everything the device reported, for the tooltip. The subtitle
 // has room for three figures; a firewall reports rather more than three.
 function snmpDetail(s) {
@@ -2015,8 +2096,12 @@ function monitorSubtitle(c) {
     return `${where} · ${why || 'unreachable'}`;
   }
   const code = (c.kind === 'app' && c.code && (c.code < 200 || c.code >= 400)) ? ` · HTTP ${c.code}` : '';
-  // What SNMP reported replaces the latency, which is the least interesting
-  // thing known about a device that will tell you its port count.
+  // A device with bars says its readings there, so the subtitle goes back to
+  // identifying the thing — its own name for itself is more use than a latency.
+  if (snmpMetrics(c.snmp).length) {
+    const who = c.snmp.sys_descr || c.snmp.sys_name;
+    return who ? `${where} · ${who}` : where;
+  }
   const snmp = snmpSummary(c.snmp);
   if (snmp) return `${where} · ${snmp}`;
   return `${where} · ${Math.round(c.latency_ms)}ms${code}`;
