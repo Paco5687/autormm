@@ -131,7 +131,7 @@ func (errTimeout) Error() string { return "request timeout (after 1 retries)" }
 func TestSnmpPollTimesOutQuickly(t *testing.T) {
 	// RFC 5737 documentation address: nothing to answer, nothing to disturb.
 	start := time.Now()
-	info := snmpPoll(context.Background(), "192.0.2.1", 161, "public")
+	info := snmpPoll(context.Background(), "192.0.2.1", 161, SNMPCreds{Community: "public", Version: "2c"})
 	elapsed := time.Since(start)
 
 	if info == nil {
@@ -155,11 +155,105 @@ func TestSnmpPollRespectsCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	start := time.Now()
-	info := snmpPoll(ctx, "192.0.2.1", 161, "public")
+	info := snmpPoll(ctx, "192.0.2.1", 161, SNMPCreds{Community: "public", Version: "2c"})
 	if info.Error == "" {
 		t.Error("a cancelled poll reported success")
 	}
 	if time.Since(start) > 8*time.Second {
 		t.Error("cancellation was ignored")
+	}
+}
+
+// Credentials must not be handed back to the browser. The dashboard fetches
+// this list every few seconds all day long.
+func TestSecretsAreRedactedOnTheWayOut(t *testing.T) {
+	c := NetCheck{
+		ID: "n1", Name: "ups", Address: "192.0.2.61",
+		SNMP: "public", SNMPVersion: "3", SNMPUser: "monitor",
+		SNMPAuthPass: "authsecret", SNMPPrivPass: "privsecret",
+	}
+	got := redactSecrets(c)
+	for name, v := range map[string]string{
+		"community": got.SNMP, "auth": got.SNMPAuthPass, "priv": got.SNMPPrivPass,
+	} {
+		if v == "" || v == secretPlaceholder {
+			continue
+		}
+		t.Errorf("%s leaked as %q", name, v)
+	}
+	// The username is not a secret and is needed to show what is configured.
+	if got.SNMPUser != "monitor" {
+		t.Errorf("username was redacted too: %q", got.SNMPUser)
+	}
+	// A check with no community must not gain a placeholder implying one.
+	if plain := redactSecrets(NetCheck{ID: "n2"}); plain.SNMP != "" {
+		t.Errorf("invented a secret: %q", plain.SNMP)
+	}
+}
+
+// Because secrets are redacted on the way out, an edit that does not retype
+// them must keep what is stored — otherwise saving a name change silently wipes
+// the credentials and the device stops polling.
+func TestEditKeepsUntypedSecrets(t *testing.T) {
+	if got := keptSecret("", "stored"); got != "stored" {
+		t.Errorf("blank cleared the stored secret: %q", got)
+	}
+	if got := keptSecret(secretPlaceholder, "stored"); got != "stored" {
+		t.Errorf("the placeholder overwrote the stored secret: %q", got)
+	}
+	if got := keptSecret("retyped", "stored"); got != "retyped" {
+		t.Errorf("a real new secret was ignored: %q", got)
+	}
+}
+
+// v3 needs only a username to be worth attempting; v1 and v2c need a community.
+func TestSnmpConfiguredPerVersion(t *testing.T) {
+	if snmpConfigured(NetCheck{}) {
+		t.Error("polled a device with nothing configured")
+	}
+	if !snmpConfigured(NetCheck{SNMP: "public"}) {
+		t.Error("a community alone was not enough")
+	}
+	if snmpConfigured(NetCheck{SNMPVersion: "3"}) {
+		t.Error("v3 with no username was attempted")
+	}
+	if !snmpConfigured(NetCheck{SNMPVersion: "3", SNMPUser: "monitor"}) {
+		t.Error("v3 with a username was not attempted")
+	}
+	// A v3 check must not be polled just because a stale community lingers.
+	if snmpConfigured(NetCheck{SNMPVersion: "3", SNMP: "public"}) {
+		t.Error("v3 without a username was attempted on the strength of a community")
+	}
+}
+
+// The security level follows from the passphrases supplied, rather than being a
+// separate setting to get out of step with them.
+func TestV3SecurityLevelFollowsTheCredentials(t *testing.T) {
+	for _, tc := range []struct {
+		auth, priv string
+		want       gosnmp.SnmpV3MsgFlags
+	}{
+		{"", "", gosnmp.NoAuthNoPriv},
+		{"a", "", gosnmp.AuthNoPriv},
+		{"a", "p", gosnmp.AuthPriv},
+	} {
+		g := &gosnmp.GoSNMP{}
+		applyV3(g, SNMPCreds{User: "monitor", AuthPass: tc.auth, PrivPass: tc.priv})
+		if g.MsgFlags != tc.want {
+			t.Errorf("auth=%q priv=%q gave %v, want %v", tc.auth, tc.priv, g.MsgFlags, tc.want)
+		}
+	}
+}
+
+// A blank protocol means "not thought about", so it takes the stronger option.
+func TestProtocolDefaultsAreNotTheWeakest(t *testing.T) {
+	if authProto("") != gosnmp.SHA {
+		t.Error("auth defaulted away from SHA")
+	}
+	if privProto("") != gosnmp.AES {
+		t.Error("privacy defaulted away from AES")
+	}
+	if authProto("md5") != gosnmp.MD5 || privProto("des") != gosnmp.DES {
+		t.Error("an explicit choice was not honoured")
 	}
 }

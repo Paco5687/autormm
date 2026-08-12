@@ -258,7 +258,7 @@
     <div class="modal-card sheet-sm">
       <div class="modal-head">
         <div class="modal-title">
-          <div class="name">Monitor a network device</div>
+          <div class="name" id="netModalTitle">Monitor a network device</div>
           <div class="platform muted">Switches, printers, appliances — anything that cannot run an agent.</div>
         </div>
         <button id="netClose" class="btn ghost">✕</button>
@@ -277,9 +277,50 @@
       <!-- A community string is a credential, however weak, so nothing is sent
            anywhere it was not explicitly configured. -->
       <div class="cmd-row">
-        <input id="netSNMP" class="inv-filter" placeholder="SNMP community (optional — e.g. public)"
+        <select id="netSNMPVersion" class="inv-filter">
+          <option value="">SNMP off</option>
+          <option value="auto">v2c, falling back to v1</option>
+          <option value="1">v1 only</option>
+          <option value="2c">v2c only</option>
+          <option value="3">v3 (authenticated)</option>
+        </select>
+        <input id="netSNMPPort" class="inv-filter" type="number" min="1" max="65535" placeholder="port (161)">
+      </div>
+      <div class="cmd-row snmp-community hidden">
+        <input id="netSNMP" class="inv-filter" style="max-width:none" placeholder="community string — e.g. public"
                autocomplete="off" data-1p-ignore data-lpignore="true">
-        <input id="netSNMPPort" class="inv-filter" type="number" min="1" max="65535" placeholder="SNMP port (161)">
+      </div>
+      <!-- v3 replaces the community with a user and passphrases. The security
+           level follows from which passphrases are filled in, so there is no
+           fourth setting to get out of step with them. -->
+      <div class="snmp-v3 hidden">
+        <div class="cmd-row">
+          <input id="netSNMPUser" class="inv-filter" placeholder="v3 username" autocomplete="off" data-1p-ignore>
+        </div>
+        <div class="cmd-row">
+          <select id="netSNMPAuthProto" class="inv-filter">
+            <option value="SHA">auth SHA</option>
+            <option value="MD5">auth MD5</option>
+            <option value="SHA256">auth SHA-256</option>
+            <option value="SHA512">auth SHA-512</option>
+          </select>
+          <input id="netSNMPAuthPass" class="inv-filter" type="password" placeholder="auth passphrase"
+                 autocomplete="off" data-1p-ignore data-lpignore="true">
+        </div>
+        <div class="cmd-row">
+          <select id="netSNMPPrivProto" class="inv-filter">
+            <option value="AES">privacy AES</option>
+            <option value="DES">privacy DES</option>
+            <option value="AES192">privacy AES-192</option>
+            <option value="AES256">privacy AES-256</option>
+          </select>
+          <input id="netSNMPPrivPass" class="inv-filter" type="password" placeholder="privacy passphrase"
+                 autocomplete="off" data-1p-ignore data-lpignore="true">
+        </div>
+        <p class="muted" style="font-size:11.5px;margin:2px 0 0">
+          Leave both passphrases blank for noAuthNoPriv, fill only the auth one for
+          authNoPriv, fill both for authPriv.
+        </p>
       </div>
       <div class="cmd-row"><button id="netSave" class="btn">Add device</button><span id="netStatus" class="muted"></span></div>
     </div>

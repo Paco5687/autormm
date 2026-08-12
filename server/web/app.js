@@ -1836,6 +1836,19 @@ function renderMonitorSection(which, list) {
     }
     body.append(name, sub);
 
+    // Editing exists on the hub already — a save with an existing id updates in
+    // place — so this is only the affordance. Without it, adding SNMP to a
+    // device you already watch means deleting and re-adding it.
+    const edit = document.createElement('button');
+    edit.className = 'nc-del nc-edit';
+    edit.title = 'Edit';
+    edit.textContent = '✎';
+    edit.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation(); // editing must not also follow the link
+      openCheckEditor(c);
+    };
+
     const del = document.createElement('button');
     del.className = 'nc-del';
     del.title = 'Stop monitoring';
@@ -1850,7 +1863,7 @@ function renderMonitorSection(which, list) {
       } catch (err) { alert('Could not remove: ' + err.message); }
     };
 
-    el.append(dot, body, del);
+    el.append(dot, body, edit, del);
     grid.appendChild(el);
   }
 }
@@ -1932,11 +1945,88 @@ function monitorSubtitle(c) {
   return `${where} · ${Math.round(c.latency_ms)}ms${code}`;
 }
 
-document.getElementById('netAdd').addEventListener('click', () => netModal.classList.remove('hidden'));
+// The id being edited, or "" when adding. The hub decides create-vs-update from
+// whether an id is present.
+let editingCheck = '';
+
+function setSNMPVersionUI(v) {
+  document.querySelector('.snmp-community').classList.toggle('hidden', !(v === 'auto' || v === '1' || v === '2c'));
+  document.querySelector('.snmp-v3').classList.toggle('hidden', v !== '3');
+}
+document.getElementById('netSNMPVersion').addEventListener('change', e => setSNMPVersionUI(e.target.value));
+
+// Opens the device form on an existing check. Apps have their own, simpler form.
+function openCheckEditor(c) {
+  if (c.kind === 'app') { openAppEditor(c); return; }
+  editingCheck = c.id;
+  document.getElementById('netModalTitle').textContent = 'Edit ' + (c.name || 'device');
+  document.getElementById('netSave').textContent = 'Save changes';
+  const set = (id, v) => { document.getElementById(id).value = v == null ? '' : v; };
+  set('netName', c.name);
+  set('netAddr', c.address);
+  set('netPort', c.port || '');
+  set('netTags', c.tags);
+  set('netURL', c.url);
+  set('netMAC', c.mac);
+  // The secrets come back as a placeholder, and leaving it is what tells the
+  // hub to keep what it has.
+  set('netSNMP', c.snmp);
+  set('netSNMPPort', c.snmp_port || '');
+  set('netSNMPUser', c.snmp_user);
+  set('netSNMPAuthPass', c.snmp_auth_pass);
+  set('netSNMPPrivPass', c.snmp_priv_pass);
+  if (c.snmp_auth_proto) set('netSNMPAuthProto', c.snmp_auth_proto);
+  if (c.snmp_priv_proto) set('netSNMPPrivProto', c.snmp_priv_proto);
+  const v = c.snmp_version || (c.snmp ? 'auto' : '');
+  document.getElementById('netSNMPVersion').value = v;
+  setSNMPVersionUI(v);
+  document.getElementById('netStatus').textContent = '';
+  netModal.classList.remove('hidden');
+}
+
+function resetCheckEditor() {
+  editingCheck = '';
+  document.getElementById('netModalTitle').textContent = 'Monitor a network device';
+  document.getElementById('netSave').textContent = 'Add device';
+  for (const id of ['netName', 'netAddr', 'netPort', 'netTags', 'netURL', 'netMAC',
+                    'netSNMP', 'netSNMPPort', 'netSNMPUser', 'netSNMPAuthPass', 'netSNMPPrivPass']) {
+    document.getElementById(id).value = '';
+  }
+  document.getElementById('netSNMPVersion').value = '';
+  setSNMPVersionUI('');
+  document.getElementById('netStatus').textContent = '';
+}
+
+document.getElementById('netAdd').addEventListener('click', () => {
+  resetCheckEditor();
+  netModal.classList.remove('hidden');
+});
 
 // ---- hosted apps ----
 const appModal = document.getElementById('appModal');
-document.getElementById('appAdd').addEventListener('click', () => appModal.classList.remove('hidden'));
+let editingApp = '';
+
+function openAppEditor(c) {
+  editingApp = c.id;
+  document.getElementById('appName').value = c.name || '';
+  document.getElementById('appURL').value = c.url || '';
+  document.getElementById('appTags').value = c.tags || '';
+  document.getElementById('appSave').textContent = 'Save changes';
+  document.getElementById('appStatus').textContent = '';
+  appModal.classList.remove('hidden');
+}
+
+function resetAppEditor() {
+  editingApp = '';
+  for (const id of ['appName', 'appURL', 'appTags']) document.getElementById(id).value = '';
+  document.getElementById('appSave').textContent = 'Add app';
+  document.getElementById('appStatus').textContent = '';
+}
+
+document.getElementById('appAdd').addEventListener('click', () => {
+  resetAppEditor();
+  appModal.classList.remove('hidden');
+});
 document.getElementById('appClose').addEventListener('click', () => appModal.classList.add('hidden'));
 appModal.addEventListener('click', e => { if (e.target === appModal) appModal.classList.add('hidden'); });
 
@@ -1961,9 +2051,9 @@ document.getElementById('appSave').addEventListener('click', async () => {
       address: host,   // so the entry still has a host for display and grouping
       url,
       tags: document.getElementById('appTags').value.trim(),
+      ...(editingApp ? { id: editingApp } : {}),
     });
-    for (const id of ['appName', 'appURL', 'appTags']) document.getElementById(id).value = '';
-    st.textContent = '';
+    resetAppEditor();
     appModal.classList.add('hidden');
     loadNetChecks();
   } catch (e) { st.textContent = 'failed: ' + e.message; }
@@ -1974,6 +2064,13 @@ netModal.addEventListener('click', e => { if (e.target === netModal) netModal.cl
 document.getElementById('netSave').addEventListener('click', async () => {
   const addr = document.getElementById('netAddr').value.trim();
   const mac = document.getElementById('netMAC').value.trim();
+  // Choosing "SNMP off" clears the credentials rather than leaving the hub to
+  // keep them, which the untouched-secret rule would otherwise do.
+  if (!document.getElementById('netSNMPVersion').value) {
+    for (const id of ['netSNMP', 'netSNMPUser', 'netSNMPAuthPass', 'netSNMPPrivPass']) {
+      document.getElementById(id).value = '';
+    }
+  }
   const st = document.getElementById('netStatus');
   if (!addr && !mac) { st.textContent = 'an address or a MAC is required'; return; }
   const portRaw = document.getElementById('netPort').value.trim();
@@ -1988,9 +2085,17 @@ document.getElementById('netSave').addEventListener('click', async () => {
       mac,
       snmp: document.getElementById('netSNMP').value.trim(),
       snmp_port: parseInt(document.getElementById('netSNMPPort').value, 10) || 0,
+      // "auto" is the hub's empty string; the select uses a value so the option
+      // can be distinguished from "SNMP off".
+      snmp_version: (v => (v === 'auto' ? '' : v))(document.getElementById('netSNMPVersion').value),
+      snmp_user: document.getElementById('netSNMPUser').value.trim(),
+      snmp_auth_proto: document.getElementById('netSNMPAuthProto').value,
+      snmp_auth_pass: document.getElementById('netSNMPAuthPass').value,
+      snmp_priv_proto: document.getElementById('netSNMPPrivProto').value,
+      snmp_priv_pass: document.getElementById('netSNMPPrivPass').value,
+      ...(editingCheck ? { id: editingCheck } : {}),
     });
-    for (const id of ['netName', 'netAddr', 'netPort', 'netTags', 'netURL', 'netMAC', 'netSNMP', 'netSNMPPort']) document.getElementById(id).value = '';
-    st.textContent = '';
+    resetCheckEditor();
     netModal.classList.add('hidden');
     loadNetChecks();
   } catch (e) { st.textContent = 'failed: ' + e.message; }

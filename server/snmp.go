@@ -18,9 +18,13 @@ import (
 // the UPS is reachable precisely while it runs the rack off its battery. SNMP
 // is how that gear has always reported what it is actually doing.
 //
-// v2c only, and read-only GETs. v3 brings user/auth/privacy configuration that
-// homelab gear mostly does not have turned on, and writing to a device over a
-// community string is not something this hub should be able to do at all.
+// v1 and v2c, read-only. v3 brings user/auth/privacy configuration that homelab
+// gear mostly does not have turned on, and writing to a device over a community
+// string is not something this hub should be able to do at all.
+//
+// Both versions matter in practice: plenty of gear — APC network management
+// cards among them — offers only v1, and a v2c request to a v1-only agent is
+// not answered at all. It looks exactly like a wrong community string.
 
 // SNMPInfo is what one poll learned. Every field is optional: a switch answers
 // the interface questions and not the printer ones, and that is not a failure.
@@ -33,7 +37,10 @@ type SNMPInfo struct {
 	Supplies   []Supply  `json:"supplies,omitempty"` // printer toner / ink
 	UPS        *UPSInfo  `json:"ups,omitempty"`
 	Polled     time.Time `json:"polled"`
-	Error      string    `json:"error,omitempty"`
+	// Version is which protocol version actually answered, which is worth
+	// showing when the setting was left on automatic.
+	Version string `json:"version,omitempty"`
+	Error   string `json:"error,omitempty"`
 }
 
 // Supply is one printer consumable.
@@ -44,10 +51,10 @@ type Supply struct {
 
 // UPSInfo is the part of the UPS MIB worth waking someone for.
 type UPSInfo struct {
-	ChargePercent   int  `json:"charge_percent"`
-	OnBattery       bool `json:"on_battery"`
-	SecondsOnBattery int `json:"seconds_on_battery,omitempty"`
-	BatteryLow      bool `json:"battery_low"`
+	ChargePercent    int  `json:"charge_percent"`
+	OnBattery        bool `json:"on_battery"`
+	SecondsOnBattery int  `json:"seconds_on_battery,omitempty"`
+	BatteryLow       bool `json:"battery_low"`
 }
 
 // Standard OIDs. Named rather than inlined because a mistyped OID returns
@@ -63,9 +70,9 @@ const (
 	oidSupplyMax   = "1.3.6.1.2.1.43.11.1.1.8"
 	oidSupplyLevel = "1.3.6.1.2.1.43.11.1.1.9"
 
-	oidUPSBatteryStatus  = "1.3.6.1.2.1.33.1.2.1.0" // 2 = normal, 3 = low, 4 = depleted
-	oidUPSSecondsOnBatt  = "1.3.6.1.2.1.33.1.2.2.0"
-	oidUPSChargeRemain   = "1.3.6.1.2.1.33.1.2.4.0"
+	oidUPSBatteryStatus = "1.3.6.1.2.1.33.1.2.1.0" // 2 = normal, 3 = low, 4 = depleted
+	oidUPSSecondsOnBatt = "1.3.6.1.2.1.33.1.2.2.0"
+	oidUPSChargeRemain  = "1.3.6.1.2.1.33.1.2.4.0"
 )
 
 // maxWalkRows bounds a table walk. A switch has tens of ports and a printer a
@@ -73,28 +80,67 @@ const (
 // not what we think it is or not worth the round trips.
 const maxWalkRows = 256
 
-// snmpPoll reads what a device will tell us. A device that answers the system
-// group but nothing else still returns a useful result.
-func snmpPoll(ctx context.Context, host string, port int, community string) *SNMPInfo {
+// snmpPoll reads what a device will tell us.
+//
+// version is "1", "2c", or empty for automatic — which tries v2c and falls back
+// to v1, because the two are indistinguishable from the outside: a v1-only
+// agent simply does not reply to a v2c request, which presents identically to a
+// wrong community string.
+func snmpPoll(ctx context.Context, host string, port int, creds SNMPCreds) *SNMPInfo {
+	switch creds.Version {
+	case "1":
+		return snmpPollVersion(ctx, host, port, creds, gosnmp.Version1)
+	case "2c":
+		return snmpPollVersion(ctx, host, port, creds, gosnmp.Version2c)
+	case "3":
+		return snmpPollVersion(ctx, host, port, creds, gosnmp.Version3)
+	}
+	info := snmpPollVersion(ctx, host, port, creds, gosnmp.Version2c)
+	if info.Error == "" {
+		return info
+	}
+	// Only the fallback's result is kept if it works; otherwise report the
+	// first attempt, since "no response" is the more useful message.
+	if v1 := snmpPollVersion(ctx, host, port, creds, gosnmp.Version1); v1.Error == "" {
+		return v1
+	}
+	return info
+}
+
+// SNMPCreds is everything a poll needs to authenticate.
+type SNMPCreds struct {
+	Community string
+	Version   string
+	User      string
+	AuthProto string
+	AuthPass  string
+	PrivProto string
+	PrivPass  string
+}
+
+func snmpPollVersion(ctx context.Context, host string, port int, creds SNMPCreds, version gosnmp.SnmpVersion) *SNMPInfo {
 	if port <= 0 {
 		port = 161
 	}
 	g := &gosnmp.GoSNMP{
 		Target:    host,
 		Port:      uint16(port),
-		Community: community,
-		Version:   gosnmp.Version2c,
+		Community: creds.Community,
+		Version:   version,
 		Timeout:   2 * time.Second,
 		Retries:   1,
 		MaxOids:   gosnmp.MaxOids,
 		Context:   ctx,
+	}
+	if version == gosnmp.Version3 {
+		applyV3(g, creds)
 	}
 	if err := g.Connect(); err != nil {
 		return &SNMPInfo{Error: err.Error(), Polled: time.Now()}
 	}
 	defer g.Conn.Close()
 
-	info := &SNMPInfo{Polled: time.Now()}
+	info := &SNMPInfo{Polled: time.Now(), Version: versionName(version)}
 
 	// The system group first: if this fails the device is not answering SNMP at
 	// all, and the rest would just be three more timeouts.
@@ -212,9 +258,17 @@ func pollUPS(g *gosnmp.GoSNMP) *UPSInfo {
 }
 
 // walk reads a table, bounded so an unexpected device cannot hold the poll open.
+//
+// GETBULK is a v2c operation and does not exist in v1, where the equivalent is
+// a sequence of GETNEXTs — one round trip per row rather than per batch, which
+// is slower but is what a v1 device understands.
 func walk(g *gosnmp.GoSNMP, root string) ([]gosnmp.SnmpPDU, error) {
+	walker := g.BulkWalk
+	if g.Version == gosnmp.Version1 {
+		walker = g.Walk
+	}
 	var out []gosnmp.SnmpPDU
-	err := g.BulkWalk(root, func(pdu gosnmp.SnmpPDU) error {
+	err := walker(root, func(pdu gosnmp.SnmpPDU) error {
 		if len(out) >= maxWalkRows {
 			return fmt.Errorf("too many rows")
 		}
@@ -285,11 +339,101 @@ func firstLine(s string) string {
 	return strings.TrimSpace(s)
 }
 
+// applyV3 configures the user security model.
+//
+// The security level follows from what was supplied rather than being a fourth
+// thing to set: a passphrase for both means authPriv, auth only means
+// authNoPriv, neither means noAuthNoPriv. Choosing it separately from the
+// passphrases is how people end up with a device configured for authPriv and a
+// poller asking in the clear.
+func applyV3(g *gosnmp.GoSNMP, c SNMPCreds) {
+	g.SecurityModel = gosnmp.UserSecurityModel
+	usm := &gosnmp.UsmSecurityParameters{UserName: c.User}
+
+	switch {
+	case c.AuthPass != "" && c.PrivPass != "":
+		g.MsgFlags = gosnmp.AuthPriv
+	case c.AuthPass != "":
+		g.MsgFlags = gosnmp.AuthNoPriv
+	default:
+		g.MsgFlags = gosnmp.NoAuthNoPriv
+	}
+	if c.AuthPass != "" {
+		usm.AuthenticationProtocol = authProto(c.AuthProto)
+		usm.AuthenticationPassphrase = c.AuthPass
+	}
+	if c.PrivPass != "" {
+		usm.PrivacyProtocol = privProto(c.PrivProto)
+		usm.PrivacyPassphrase = c.PrivPass
+	}
+	g.SecurityParameters = usm
+}
+
+// authProto and privProto default to the stronger of the common choices, since
+// a blank setting more often means "not thought about" than "use the weakest".
+func authProto(name string) gosnmp.SnmpV3AuthProtocol {
+	switch strings.ToUpper(strings.TrimSpace(name)) {
+	case "MD5":
+		return gosnmp.MD5
+	case "SHA256":
+		return gosnmp.SHA256
+	case "SHA512":
+		return gosnmp.SHA512
+	}
+	return gosnmp.SHA
+}
+
+func privProto(name string) gosnmp.SnmpV3PrivProtocol {
+	switch strings.ToUpper(strings.TrimSpace(name)) {
+	case "DES":
+		return gosnmp.DES
+	case "AES192":
+		return gosnmp.AES192
+	case "AES256":
+		return gosnmp.AES256
+	}
+	return gosnmp.AES
+}
+
+func versionName(v gosnmp.SnmpVersion) string {
+	switch v {
+	case gosnmp.Version1:
+		return "v1"
+	case gosnmp.Version3:
+		return "v3"
+	}
+	return "v2c"
+}
+
 // snmpError shortens the library's errors to something a card can show.
 func snmpError(err error) string {
 	msg := err.Error()
 	if strings.Contains(msg, "timeout") || strings.Contains(msg, "deadline") {
-		return "no SNMP response (check the community string and that SNMP is enabled)"
+		return "no SNMP response — check the community string, that SNMP is enabled, and that the hub's address is allowed to query it"
 	}
 	return msg
+}
+
+// snmpConfigured reports whether this check has enough to attempt a poll.
+//
+// v1 and v2c need a community; v3 needs a username and nothing else, since
+// noAuthNoPriv is a legitimate (if unwise) configuration.
+func snmpConfigured(c NetCheck) bool {
+	if c.SNMPVersion == "3" {
+		return c.SNMPUser != ""
+	}
+	return c.SNMP != ""
+}
+
+// snmpCreds gathers everything a poll needs from a check.
+func snmpCreds(c NetCheck) SNMPCreds {
+	return SNMPCreds{
+		Community: c.SNMP,
+		Version:   c.SNMPVersion,
+		User:      c.SNMPUser,
+		AuthProto: c.SNMPAuthProto,
+		AuthPass:  c.SNMPAuthPass,
+		PrivProto: c.SNMPPrivProto,
+		PrivPass:  c.SNMPPrivPass,
+	}
 }

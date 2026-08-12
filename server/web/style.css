@@ -156,6 +156,7 @@ a.nc-body:hover .nc-name { text-decoration: underline; }
 
 .netcard .nc-del { opacity: .45; cursor: pointer; background: none; border: 0; color: var(--text); font-size: 14px; }
 .netcard .nc-del:hover { opacity: 1; color: var(--bad); }
+.netcard .nc-edit:hover { color: var(--accent); }
 .modal-card.sheet-sm { width: min(460px, 100%); }
 .lib {
   display: grid; gap: 6px; margin-bottom: 14px;

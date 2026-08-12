@@ -49,6 +49,15 @@ type NetCheck struct {
 	SNMP string `json:"snmp,omitempty"`
 	// SNMPPort overrides the standard 161.
 	SNMPPort int `json:"snmp_port,omitempty"`
+	// SNMPVersion is "1", "2c", "3", or empty for automatic (v2c then v1).
+	SNMPVersion string `json:"snmp_version,omitempty"`
+	// v3 credentials. Authentication and privacy are what make v3 worth
+	// choosing over a community string that crosses the network in the clear.
+	SNMPUser      string `json:"snmp_user,omitempty"`
+	SNMPAuthProto string `json:"snmp_auth_proto,omitempty"` // MD5 | SHA | SHA256 | SHA512
+	SNMPAuthPass  string `json:"snmp_auth_pass,omitempty"`
+	SNMPPrivProto string `json:"snmp_priv_proto,omitempty"` // DES | AES | AES192 | AES256
+	SNMPPrivPass  string `json:"snmp_priv_pass,omitempty"`
 	// MAC identifies a device that gets its address from DHCP, where writing
 	// down an IP is writing down something that will change. When set, the
 	// address is looked up from the hub's ARP table at check time and Address
@@ -174,6 +183,29 @@ func (n *netChecks) save() error {
 	return os.WriteFile(path, b, 0o600)
 }
 
+// redactSecrets blanks the credentials before a check goes to the dashboard.
+//
+// The list is fetched every few seconds by a page that is open all day; there
+// is no reason for a v3 passphrase or a community string to be in each of those
+// responses. Saving an edit with these left blank keeps whatever is stored, so
+// nothing is lost by not sending them.
+func redactSecrets(c NetCheck) NetCheck {
+	if c.SNMP != "" {
+		c.SNMP = secretPlaceholder
+	}
+	if c.SNMPAuthPass != "" {
+		c.SNMPAuthPass = secretPlaceholder
+	}
+	if c.SNMPPrivPass != "" {
+		c.SNMPPrivPass = secretPlaceholder
+	}
+	return c
+}
+
+// secretPlaceholder marks "something is set here" without saying what. It is
+// also what comes back on save when the operator did not retype it.
+const secretPlaceholder = "••••••"
+
 func (n *netChecks) list() []NetStatus {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
@@ -182,13 +214,25 @@ func (n *netChecks) list() []NetStatus {
 		if st := n.state[id]; st != nil {
 			s := *st
 			s.Web = s.NetCheck.WebURL()
+			s.NetCheck = redactSecrets(s.NetCheck)
 			out = append(out, s)
 			continue
 		}
-		out = append(out, NetStatus{NetCheck: *c, Web: c.WebURL()}) // not yet probed
+		out = append(out, NetStatus{NetCheck: redactSecrets(*c), Web: c.WebURL()}) // not yet probed
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
+}
+
+// keptSecret resolves what to store: the placeholder or an empty value means
+// "unchanged", anything else is a new secret. The consequence is that a secret
+// cannot be cleared by emptying the box — removing the check is how you do that,
+// and that is the safer way round to be wrong.
+func keptSecret(incoming, stored string) string {
+	if incoming == "" || incoming == secretPlaceholder {
+		return stored
+	}
+	return incoming
 }
 
 // probe attempts a connection and reports whether the device answered.
@@ -442,8 +486,8 @@ func (n *netChecks) runChecks(ctx context.Context, now time.Time) []NetStatus {
 			// Only when the device answered: polling something that is not there
 			// just spends two seconds discovering that again.
 			var snmp *SNMPInfo
-			if up && c.SNMP != "" {
-				snmp = snmpPoll(ctx, c.Address, c.SNMPPort, c.SNMP)
+			if up && snmpConfigured(c) {
+				snmp = snmpPoll(ctx, c.Address, c.SNMPPort, snmpCreds(c))
 			}
 			if c.MAC != "" && found == "" && err == nil {
 				err = errors.New("no device with that MAC found on the hub's networks")
@@ -603,6 +647,11 @@ func (s *Server) handleNetChecks(w http.ResponseWriter, r *http.Request) {
 		}
 		c.Address, c.Port = normalizeAddress(c.Address, c.Port)
 		c.SNMP = strings.TrimSpace(c.SNMP)
+		if v := strings.TrimSpace(c.SNMPVersion); v == "1" || v == "2c" || v == "3" {
+			c.SNMPVersion = v
+		} else {
+			c.SNMPVersion = "" // automatic
+		}
 		if c.MAC != "" {
 			if m := normalizeMAC(c.MAC); m != "" {
 				c.MAC = m
@@ -624,7 +673,14 @@ func (s *Server) handleNetChecks(w http.ResponseWriter, r *http.Request) {
 		if c.ID == "" {
 			c.ID = auth.RandomID(10)
 		}
+		// An edit that did not retype the secrets keeps the stored ones, which
+		// is what makes redacting them on the way out safe.
 		s.netChecks.mu.Lock()
+		if old := s.netChecks.checks[c.ID]; old != nil {
+			c.SNMP = keptSecret(c.SNMP, old.SNMP)
+			c.SNMPAuthPass = keptSecret(c.SNMPAuthPass, old.SNMPAuthPass)
+			c.SNMPPrivPass = keptSecret(c.SNMPPrivPass, old.SNMPPrivPass)
+		}
 		s.netChecks.checks[c.ID] = &c
 		delete(s.netChecks.state, c.ID) // an edited check re-probes rather than showing stale state
 		s.netChecks.mu.Unlock()
