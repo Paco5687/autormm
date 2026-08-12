@@ -80,74 +80,28 @@ body {
 .fb-row.fb-dir .fb-name { color: var(--accent); }
 .fb-empty { padding: 14px; }
 /* ---- workspace ----
-   One grid: hosts in the flexible column, apps and devices in a sidebar. The
-   sidebar is bounded rather than proportional, so on a very wide screen the
-   extra width goes to the host cards, which are the thing worth more room. */
+   Hosts and network devices take half the width each; apps run full width
+   underneath. Devices sit beside the hosts rather than in a strip because a
+   device that reports readings now draws four bars, and bars in a narrow
+   column are decoration. */
 .workspace {
-  display: grid; gap: 16px; padding: 16px 20px 20px; align-items: start;
+  display: grid; gap: 16px; padding: 16px 20px 0; align-items: start;
   grid-template-columns: minmax(0, 1fr);
 }
 @media (min-width: 1180px) {
-  /* Proportional rather than a fixed strip: pinned near its minimum the
-     sidebar read as an afterthought squeezed against the edge, with cards half
-     the width of the ones beside them. A third of the row gives its two columns
-     roughly a host card's width, so the whole page reads as one grid. */
-  .workspace { grid-template-columns: 2fr minmax(320px, 1fr); }
-  /* Two per row, but only while the sidebar really is a sidebar: below this
-     width it spans the page and the ordinary auto-fill grid suits it. Fixed at
-     two rather than auto-filled so the count does not change with the sidebar's
-     own width — a list that reflows between two and three while the window
-     moves is harder to read than one that simply stays. */
-  .side .netgrid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
-
-  .side .netcard { padding: 8px 9px; gap: 6px; }
-  /* At half the sidebar's width the name is what has to survive, so the
-     subtitle drops a size and the remove button stops reserving space it does
-     not need. */
-  .side /* A device with readings needs a column of its own and a taller card; one that
-   only answers a TCP check stays a compact row. */
-.netcard.nc-rich { align-items: flex-start; padding: 10px 12px; }
-/* A card with readings takes two columns wherever there is more than one: in a
-   quarter of the page its bars are about ninety pixels long, which is a
-   decoration rather than a measurement. Not below this width, where the grid is
-   a single column and spanning two would invent a second one. */
-@media (min-width: 640px) {
-  .netgrid .netcard.nc-rich { grid-column: span 2; }
+  .workspace { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 }
-.netcard.nc-rich .status { margin-top: 4px; }
-.nc-metrics { display: flex; flex-direction: column; gap: 3px; margin-top: 7px; }
-.nc-metric { display: flex; align-items: center; gap: 7px; }
-.nc-metric label {
-  width: 42px; flex: none; font-size: 9.5px; letter-spacing: .4px;
-  color: var(--muted); text-transform: uppercase;
-}
-.nc-metric .bar { flex: 1; height: 5px; }
-.nc-metric .val {
-  width: 38px; text-align: right; font-family: var(--mono); font-size: 10.5px;
-  color: var(--muted);
-}
-.nc-facts {
-  margin-top: 6px; font-size: 10.5px; color: var(--muted); font-family: var(--mono);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-
-.netcard .nc-sub { font-size: 10.5px; }
-  .side /* A reading worth acting on, in a subtitle that is otherwise muted grey. */
-.netcard .nc-sub.nc-warn { color: var(--warn); }
-.netcard .nc-sub.nc-bad { color: var(--bad); }
-
-.netcard .nc-del { font-size: 12px; line-height: 1; padding: 0; }
-}
-/* The grid lives inside the workspace now and no longer owns the page padding. */
 .workspace .grid { padding: 0; }
-.side { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
-/* A bordered panel, so the two lists read as shelves rather than as more cards
-   that happen to be smaller. */
-.side .netsec {
+
+/* A bordered shelf, so the two lists read as sections rather than as more
+   cards that happen to be smaller. */
+.panel {
   padding: 12px 13px 13px; background: var(--panel);
-  border: 1px solid var(--line); border-radius: 12px;
+  border: 1px solid var(--line); border-radius: 12px; min-width: 0;
 }
-.side .netsec-head { border-top: 0; margin-top: 0; padding: 0 0 10px; }
+.panel .netsec-head { border-top: 0; margin-top: 0; padding: 0 0 10px; }
+.appsec { margin: 16px 20px 20px; }
+
 .netsec { padding: 0 20px 22px; }
 /* A real section rule, so Apps and Network devices read as separate shelves
    rather than as more cards that happen to be smaller. */
@@ -160,7 +114,10 @@ body {
   font-weight: 600;
 }
 .netsec-head .muted { font-size: 12px; }
-.netgrid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); }
+/* One column width for every device, wide enough that a card with bars does not
+   need to span two. Spanning was what broke the rhythm: the column edges stopped
+   lining up down the page and the grid read as scattered. */
+.netgrid { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
 .netcard {
   display: flex; align-items: center; gap: 8px; padding: 10px 12px;
   background: var(--panel); border: 1px solid var(--line); border-radius: 10px; font-size: 13px;
@@ -171,14 +128,10 @@ a.nc-body:hover .nc-name { text-decoration: underline; }
 .netcard .nc-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* A device with readings needs a column of its own and a taller card; one that
    only answers a TCP check stays a compact row. */
-.netcard.nc-rich { align-items: flex-start; padding: 10px 12px; }
-/* A card with readings takes two columns wherever there is more than one: in a
-   quarter of the page its bars are about ninety pixels long, which is a
-   decoration rather than a measurement. Not below this width, where the grid is
-   a single column and spanning two would invent a second one. */
-@media (min-width: 640px) {
-  .netgrid .netcard.nc-rich { grid-column: span 2; }
-}
+/* A card with readings lays its contents out from the top; one without stays a
+   centred single row. Both are the same width, and the grid stretches every
+   card in a row to the same height, so the rows read as rows. */
+.netcard.nc-rich { align-items: flex-start; }
 .netcard.nc-rich .status { margin-top: 4px; }
 .nc-metrics { display: flex; flex-direction: column; gap: 3px; margin-top: 7px; }
 .nc-metric { display: flex; align-items: center; gap: 7px; }
@@ -321,7 +274,7 @@ a.nc-body:hover .nc-name { text-decoration: underline; }
   display: grid; gap: 14px; padding: 20px;
   /* A fallback only: layoutGrid() replaces this with a column count that fills
      its rows evenly, which auto-fill cannot do. */
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
 }
 .card {
   background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
@@ -693,11 +646,12 @@ a.nc-body:hover .nc-name { text-decoration: underline; }
   .topbar .grow { display: none; }
   .brand { margin-right: auto; }
   .tools { margin-left: auto; border-left: 0; padding-left: 0; }
-  .grid { padding: 14px; gap: 12px; }
+  .workspace { padding: 14px 14px 0; gap: 12px; }
+  .appsec { margin: 12px 14px 16px; }
   .fleet { padding: 14px 14px 0; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
   .t-val { font-size: 21px; }
   .t-val.t-net { font-size: 13px; }
   .tile { min-height: 84px; padding: 10px 12px; }
   .hostsearch { width: 100%; order: 9; }
-  .netsec { padding: 0 14px 18px; }
+
 }

@@ -502,26 +502,40 @@ function setText(id, v) { const el = document.getElementById(id); if (el) el.tex
 // number of rows uses the width instead of wasting it: eight become four and
 // four, six become three and three.
 function layoutGrid() {
-  const n = grid.childElementCount;
-  if (!n) { grid.style.gridTemplateColumns = ''; return; }
-  const width = grid.clientWidth;
-  if (!width) return; // not laid out yet; the resize observer will call back
-  const maxCols = Math.max(1, Math.floor((width + GRID_GAP) / (CARD_MIN + GRID_GAP)));
-  const rows = Math.ceil(n / maxCols);
-  const cols = Math.min(maxCols, Math.ceil(n / rows));
-  grid.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
+  balanceGrid(grid, CARD_MIN, GRID_GAP);
+  // Apps get the same treatment now they run the full width: nine of them
+  // across a wide page would otherwise be eight and a lonely ninth.
+  balanceGrid(document.getElementById('appGrid'), 230, 8);
+  balanceGrid(document.getElementById('netGrid'), 300, 8);
 }
 
-// Narrower than the cards look, because the host column is now the smaller
-// share of the row: at 300 a 1400px screen dropped to two columns and gave
-// each card width it had no use for.
-const CARD_MIN = 280;  // matches the fallback in the stylesheet
+function balanceGrid(el, cardMin, gap) {
+  if (!el) return;
+  const n = el.childElementCount;
+  if (!n) { el.style.gridTemplateColumns = ''; return; }
+  const width = el.clientWidth;
+  if (!width) return; // not laid out yet; the resize observer will call back
+  const maxCols = Math.max(1, Math.floor((width + gap) / (cardMin + gap)));
+  const rows = Math.ceil(n / maxCols);
+  const cols = Math.min(maxCols, Math.ceil(n / rows));
+  el.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
+}
+
+// Narrow, because hosts now get half the page rather than most of it: at 280 a
+// 1200px window fell to a single column and gave one card the lot.
+const CARD_MIN = 260;  // matches the fallback in the stylesheet
 const GRID_GAP = 14;
 
 // Re-balances when the window changes, which a CSS-only grid would do for free
 // and this one has to be told about.
-if (window.ResizeObserver) new ResizeObserver(layoutGrid).observe(grid);
-else window.addEventListener('resize', layoutGrid);
+if (window.ResizeObserver) {
+  const ro = new ResizeObserver(layoutGrid);
+  ro.observe(grid);
+  ro.observe(document.getElementById('appGrid'));
+  ro.observe(document.getElementById('netGrid'));
+} else {
+  window.addEventListener('resize', layoutGrid);
+}
 
 function updateCard(el, h) {
   const status = el.querySelector('.status');
@@ -1795,8 +1809,17 @@ function renderMonitorSection(which, list) {
   section.classList.toggle('hidden', list.length === 0);
   summary.textContent = list.length ? `${list.filter(c => c.up).length}/${list.length} reachable` : '';
 
+  // Cards that draw bars are taller than ones that do not, and a grid stretches
+  // every card in a row to match the tallest. Grouping them puts cards of the
+  // same shape in the same row, so a one-line device is never inflated to the
+  // height of a firewall reporting four readings.
+  const ordered = [...list].sort((a, b) => {
+    const rank = c => (snmpMetrics(c.snmp).length ? 0 : 1);
+    return rank(a) - rank(b) || String(a.name || '').localeCompare(String(b.name || ''));
+  });
+
   grid.innerHTML = '';
-  for (const c of list) {
+  for (const c of ordered) {
     const el = document.createElement('div');
     el.className = 'netcard';
 
@@ -1904,6 +1927,11 @@ function renderMonitorSection(which, list) {
     el.append(dot, body, edit, del);
     grid.appendChild(el);
   }
+  // Balanced here as well as from the resize observer: adding cards does not
+  // always change the grid's measured height, and an unbalanced row was the
+  // result. Both grids get the even-rows treatment the host grid has.
+  balanceGrid(document.getElementById('appGrid'), 230, 8);
+  balanceGrid(document.getElementById('netGrid'), 300, 8);
 }
 
 // snmpSummary is the one line a device card has room for: whichever of the

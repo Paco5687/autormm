@@ -85,29 +85,31 @@
        beside them. Laid out as one grid rather than three stacked sections
        because full-width strips of small cards waste the width they are given
        and leave the host grid with a ragged last row beside a void. -->
+  <!-- Hosts and network devices share the width evenly; apps run full width
+       underneath. Devices earned the right-hand half once they started
+       reporting readings — a card with four bars needs room a sidebar strip
+       cannot give it. -->
   <div class="workspace">
     <main id="grid" class="grid"></main>
 
-    <div class="side">
-      <section id="appSection" class="netsec hidden">
-        <div class="netsec-head">
-          <b>Apps</b>
-          <span id="appSummary" class="muted"></span>
-        </div>
-        <div id="appGrid" class="netgrid"></div>
-      </section>
-
-      <section id="netSection" class="netsec hidden">
-        <div class="netsec-head">
-          <b>Network devices</b>
-          <span id="netSummary" class="muted"></span>
-          <span class="grow"></span>
-          <button id="discoverBtn" class="btn ghost" title="Find devices on the hub's networks">Discover</button>
-        </div>
-        <div id="netGrid" class="netgrid"></div>
-      </section>
-    </div>
+    <section id="netSection" class="netsec panel hidden">
+      <div class="netsec-head">
+        <b>Network devices</b>
+        <span id="netSummary" class="muted"></span>
+        <span class="grow"></span>
+        <button id="discoverBtn" class="btn ghost" title="Find devices on the hub's networks">Discover</button>
+      </div>
+      <div id="netGrid" class="netgrid"></div>
+    </section>
   </div>
+
+  <section id="appSection" class="netsec panel appsec hidden">
+    <div class="netsec-head">
+      <b>Apps</b>
+      <span id="appSummary" class="muted"></span>
+    </div>
+    <div id="appGrid" class="netgrid"></div>
+  </section>
 
   <div id="empty" class="empty hidden">
     <p id="emptyMsg">No hosts have connected yet.</p>
