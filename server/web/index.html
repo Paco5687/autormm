@@ -25,7 +25,13 @@
   <header class="topbar">
     <div class="brand">autormm<span class="dot">●</span></div>
     <div class="grow"></div>
-    <input id="hostSearch" class="hostsearch" type="search" placeholder="Search hosts…" autocomplete="off" spellcheck="false">
+    <!-- autocomplete="off" alone is advisory and Chrome ignores it for fields
+         it believes are a username; the vendor opt-outs are what actually stop
+         1Password and LastPass offering to fill it. No name attribute, since
+         that is another thing the heuristics read. -->
+    <input id="hostSearch" class="hostsearch" type="search" placeholder="Search hosts…"
+           aria-label="Search hosts" autocomplete="off" spellcheck="false"
+           data-1p-ignore data-lpignore="true" data-form-type="other">
     <div id="summary" class="summary"></div>
     <select id="tagFilter" class="inv-filter hidden" title="Show only hosts with this tag"></select>
     <span id="alertBadge" class="alert-badge hidden"></span>
@@ -104,8 +110,9 @@
   </div>
 
   <div id="empty" class="empty hidden">
-    <p>No hosts have connected yet.</p>
-    <p class="muted">Install the agent on a host and point it at this server.</p>
+    <p id="emptyMsg">No hosts have connected yet.</p>
+    <p class="muted" id="emptyHint">Install the agent on a host and point it at this server.</p>
+    <button id="emptyClear" class="btn hidden">Clear filters</button>
   </div>
 
   <div id="modal" class="modal hidden">
@@ -528,18 +535,23 @@
     <div class="modal-card login-card">
       <div class="modal-title"><div class="name" id="loginTitle">Sign in to autormm</div></div>
 
-      <div id="loginSetup" class="login-fields hidden">
+      <!-- Real <form> elements, and not for submission — nothing here posts.
+           Without one the browser treats the whole document as a single form,
+           looks for the username belonging to this password field, and settles
+           on the first text input on the page, which is the host search box in
+           the header. Scoping the pair to a form is what stops that. -->
+      <form id="loginSetup" class="login-fields hidden">
         <p class="muted">Welcome — create your admin account to get started.</p>
-        <input id="setupUser" class="inv-filter" placeholder="choose a username" autocomplete="username">
-        <input id="setupPass" class="inv-filter" type="password" placeholder="password (min 8 chars)" autocomplete="new-password">
-        <button id="setupBtn" class="btn">Create account</button>
-      </div>
+        <input id="setupUser" name="username" class="inv-filter" placeholder="choose a username" autocomplete="username">
+        <input id="setupPass" name="password" class="inv-filter" type="password" placeholder="password (min 8 chars)" autocomplete="new-password">
+        <button id="setupBtn" class="btn" type="submit">Create account</button>
+      </form>
 
-      <div id="loginPw" class="login-fields">
-        <input id="loginUser" class="inv-filter" placeholder="username" autocomplete="username">
-        <input id="loginPass" class="inv-filter" type="password" placeholder="password" autocomplete="current-password">
-        <button id="loginBtn" class="btn">Sign in</button>
-      </div>
+      <form id="loginPw" class="login-fields">
+        <input id="loginUser" name="username" class="inv-filter" placeholder="username" autocomplete="username">
+        <input id="loginPass" name="password" class="inv-filter" type="password" placeholder="password" autocomplete="current-password">
+        <button id="loginBtn" class="btn" type="submit">Sign in</button>
+      </form>
       <div id="loginErr" class="login-err"></div>
       <p class="muted" id="loginLinks">
         <a href="#" id="loginTokenToggle">Use an access token</a> ·

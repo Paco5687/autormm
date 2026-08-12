@@ -63,6 +63,13 @@ async function doSetup() {
     hideLogin(); poll();
   } catch (e) { err.textContent = 'Setup error: ' + e; }
 }
+// The login fields live in real forms so the browser does not go looking
+// elsewhere on the page for a username to pair with the password. Nothing is
+// actually posted — submission is handled by fetch — so the default is stopped.
+for (const id of ['loginSetup', 'loginPw']) {
+  document.getElementById(id).addEventListener('submit', e => e.preventDefault());
+}
+
 document.getElementById('setupBtn').addEventListener('click', doSetup);
 document.getElementById('setupPass').addEventListener('keydown', e => { if (e.key === 'Enter') doSetup(); });
 document.getElementById('loginForgot').addEventListener('click', e => { e.preventDefault(); document.getElementById('loginForgotBox').classList.toggle('hidden'); });
@@ -343,7 +350,19 @@ function render(allHosts) {
   // Totals describe the whole fleet, not the current filter — otherwise the
   // strip would quietly stop counting an offline host the moment you searched.
   renderFleet(allHosts);
+  // "No hosts have connected yet" is wrong and alarming when the real answer is
+  // "your filter matches nothing" — which is exactly what a stray autofill in
+  // the search box produces.
+  const filtered = !!(hostQuery || tagFilter);
   emptyEl.classList.toggle('hidden', hosts.length > 0);
+  document.getElementById('emptyMsg').textContent = filtered
+    ? 'No hosts match this filter.'
+    : 'No hosts have connected yet.';
+  document.getElementById('emptyHint').textContent = filtered
+    ? [hostQuery && `search "${hostQuery}"`, tagFilter && `tag "${tagFilter}"`]
+        .filter(Boolean).join(' · ')
+    : 'Install the agent on a host and point it at this server.';
+  document.getElementById('emptyClear').classList.toggle('hidden', !filtered);
   const online = hosts.filter(h => h.online).length;
   summaryEl.textContent = `${online}/${hosts.length} online`
     + (tagFilter ? ` · ${tagFilter}` : '') + (hostQuery ? ` · "${hostQuery}"` : '');
@@ -1728,6 +1747,17 @@ window.autormm = {
 };
 
 poll();
+document.getElementById('emptyClear').addEventListener('click', () => {
+  hostQuery = '';
+  document.getElementById('hostSearch').value = '';
+  // Cleared from storage too, or the tag filter comes back on the next reload
+  // and the dashboard looks empty all over again.
+  tagFilter = '';
+  localStorage.removeItem('autormm_tagfilter');
+  tagFilterEl.value = '';
+  if (lastHosts) render(lastHosts);
+});
+
 document.getElementById('hostSearch').addEventListener('input', (e) => {
   hostQuery = e.target.value.trim().toLowerCase();
   if (lastHosts) render(lastHosts); // re-filter the poll we already have
