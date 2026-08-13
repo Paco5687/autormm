@@ -43,7 +43,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("/", s.handleIndex(sub))
 	mux.HandleFunc("/viewer", s.handlePage(sub, "viewer.html"))
 	mux.HandleFunc("/terminal", s.handlePage(sub, "terminal.html"))
-	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(sub))))
+	mux.Handle("/static/", noStore(http.StripPrefix("/static/", http.FileServer(http.FS(sub)))))
 	// PWA. Both must be served from the root: a service worker's scope is capped
 	// by the path it is served from, so /static/sw.js could only control
 	// /static/ and the app would not be installable.
@@ -112,6 +112,24 @@ func (s *Server) handleIndex(sub fs.FS) http.HandlerFunc {
 		}
 		page(w, r)
 	}
+}
+
+// noStore makes the browser check before reusing a script or a stylesheet.
+//
+// The hub updates itself in place and serves the dashboard out of its own
+// binary, so the code a browser holds can be older than the hub it is talking
+// to — and the failure that produces is the worst kind to diagnose: the feature
+// is present on the server, absent in the page, and everything anyone can
+// inspect says it should work. It has cost real time twice.
+//
+// no-cache asks for revalidation rather than forbidding storage, so the usual
+// answer is a 304 with no body. The saving from caching these was never the
+// point; being certain the page matches the hub is.
+func noStore(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache")
+		h.ServeHTTP(w, r)
+	})
 }
 
 // handleAsset serves one embedded file with an explicit content type, for the

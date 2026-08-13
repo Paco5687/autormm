@@ -2032,13 +2032,15 @@ function renderMonitorSection(which, list) {
     // An SNMP failure does not make the device unreachable, so it is a marker
     // and a reason rather than a red dot that would misreport the device.
     if (c.snmp && c.snmp.error) warns.push('SNMP: ' + c.snmp.error);
-    else {
-      const detail = snmpDetail(c.snmp);
-      if (detail) warns.push(detail);
-    }
     if (c.readings_err) warns.push('Readings: ' + c.readings_err);
 
     const notes = [];
+    // What the device says about itself — name, uptime, battery, interfaces up.
+    // A description, not a complaint: collecting it as a reason put a warning
+    // mark on every healthy device that answers SNMP at all, and filled the
+    // popup with facts that explained nothing about why the mark was there.
+    const detail = snmpDetail(c.snmp);
+    if (detail) notes.push(detail);
     // A learned MAC is worth showing: it is the difference between a device
     // that survives a DHCP change and one that does not, and it happened
     // without anyone asking for it. It is not a problem, so it is not a ⚠.
