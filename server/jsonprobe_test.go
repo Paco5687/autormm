@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -269,5 +270,149 @@ func TestRequestAuthModes(t *testing.T) {
 	probeJSONAuth(context.Background(), "b", srv.URL, probes, JSONAuth{Mode: "basic", User: "u", Pass: "p"}, newSessions())
 	if !strings.HasPrefix(gotAuth, "Basic ") {
 		t.Errorf("basic header = %q", gotAuth)
+	}
+}
+
+// A controller answers for every device it manages in one document, so the
+// paths a preset writes have to pick one out by MAC and then reach into a
+// nested table. This is the real shape of that answer, trimmed.
+func TestControllerPathsSelectOneDeviceOfMany(t *testing.T) {
+	const doc = `{"meta":{"rc":"ok"},"data":[
+	  {"mac":"ac:8b:a9:58:f7:b2","model":"USL16LP","state":0,
+	   "num_sta":0},
+	  {"mac":"d8:b3:70:83:96:77","model":"US24P250","state":1,
+	   "total_used_power":7.85,"general_temperature":45,
+	   "system-stats":{"cpu":"59.6","mem":"47.7"},
+	   "port_table":[{"port_idx":2,"name":"Uplink","poe_power":"7.85"}]},
+	  {"mac":"58:d6:1f:1a:5b:99","model":"USPPDUP","state":1,
+	   "outlet_ac_power_consumption":"225.843",
+	   "system-stats":{"cpu":"1.6","mem":"85.7"},
+	   "outlet_table":[
+	     {"index":5,"name":"Rack","outlet_power":"33.873"},
+	     {"index":8,"name":"Spare","outlet_power":"0.000"}]}]}`
+
+	var v any
+	if err := json.Unmarshal([]byte(doc), &v); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		path string
+		want string
+	}{
+		// The switch's PoE draw, which is the reading its own SNMP agent does
+		// not offer: it does not implement the PoE MIB.
+		{"data[mac=d8:b3:70:83:96:77].total_used_power", "7.85"},
+		{"data[mac=d8:b3:70:83:96:77].general_temperature", "45"},
+		// A hyphen is an ordinary character in a key; only dots divide segments.
+		{"data[mac=d8:b3:70:83:96:77].system-stats.cpu", "59.6"},
+		{"data[mac=58:d6:1f:1a:5b:99].outlet_ac_power_consumption", "225.843"},
+		// Two selectors in one path: the device, then the outlet on it.
+		{"data[mac=58:d6:1f:1a:5b:99].outlet_table[name=Rack].outlet_power", "33.873"},
+		{"data[mac=d8:b3:70:83:96:77].port_table[port_idx=2].poe_power", "7.85"},
+	} {
+		got, ok := jsonPath(v, c.path)
+		if !ok {
+			t.Errorf("%s: no value", c.path)
+			continue
+		}
+		if s := fmt.Sprintf("%v", got); s != c.want {
+			t.Errorf("%s = %s, want %s", c.path, s, c.want)
+		}
+	}
+
+	// A MAC that is not there must fail rather than fall through to whichever
+	// device happens to be first, which would report another device's power as
+	// this one's.
+	if _, ok := jsonPath(v, "data[mac=00:00:00:00:00:00].total_used_power"); ok {
+		t.Error("an absent MAC matched something")
+	}
+
+	// The readings a preset asks for on a device the controller has adopted but
+	// cannot currently reach are simply absent, and must be reported as such.
+	if _, ok := jsonPath(v, "data[mac=ac:8b:a9:58:f7:b2].total_used_power"); ok {
+		t.Error("a disconnected device reported PoE draw")
+	}
+}
+
+// A percentage becomes a bar and a temperature stays a figure; that difference
+// is carried entirely by the maximum, so a probe that declares one has to reach
+// the reading.
+func TestMaximumReachesTheReading(t *testing.T) {
+	r := readingFrom(JSONProbe{Label: "CPU", Path: "x", Unit: "%", Max: 100}, "59.6")
+	if !r.Numeric || r.Max != 100 || r.Num != 59.6 {
+		t.Fatalf("got %+v", r)
+	}
+	if r.Text != "59.6%" {
+		t.Errorf("text = %q", r.Text)
+	}
+	if plain := readingFrom(JSONProbe{Label: "Temp", Path: "x"}, 45.0); plain.Max != 0 {
+		t.Errorf("a probe with no maximum got one: %+v", plain)
+	}
+}
+
+// The whole chain a preset sets up: sign in, keep the session, fetch the
+// controller's answer for every device, and come back with this device's
+// readings — the percentages as bars and the watts as a figure.
+func TestControllerReadingsEndToEnd(t *testing.T) {
+	const mac = "58:d6:1f:1a:5b:99"
+	var logins int
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/login", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("signed in with %s, want POST", r.Method)
+		}
+		logins++
+		http.SetCookie(w, &http.Cookie{Name: "unifises", Value: "s"})
+		w.Write([]byte(`{"meta":{"rc":"ok"}}`))
+	})
+	mux.HandleFunc("/api/s/default/stat/device", func(w http.ResponseWriter, r *http.Request) {
+		if _, err := r.Cookie("unifises"); err != nil {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Write([]byte(`{"data":[{"mac":"aa:bb:cc:dd:ee:ff","outlet_ac_power_consumption":"1.0"},
+			{"mac":"` + mac + `","outlet_ac_power_consumption":"225.843",
+			 "system-stats":{"cpu":"1.6","mem":"85.7"}}]}`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	probes := []JSONProbe{
+		{Label: "Load", Path: "data[mac=" + mac + "].outlet_ac_power_consumption", Unit: "W"},
+		{Label: "CPU", Path: "data[mac=" + mac + "].system-stats.cpu", Unit: "%", Max: 100},
+		{Label: "Memory", Path: "data[mac=" + mac + "].system-stats.mem", Unit: "%", Max: 100},
+	}
+	auth := JSONAuth{Mode: "login", LoginURL: srv.URL + "/api/login",
+		LoginBody: `{"username":"ro","password":"x"}`}
+	sess := newSessions()
+
+	readings, msg := probeJSONAuth(context.Background(), "pdu",
+		srv.URL+"/api/s/default/stat/device", probes, auth, sess)
+	if msg != "" {
+		t.Fatalf("message: %s", msg)
+	}
+	if len(readings) != 3 {
+		t.Fatalf("got %d readings: %+v", len(readings), readings)
+	}
+	// The device's own load, not the first device in the list. Shown to two
+	// decimals, which is as much precision as a wattage deserves.
+	if readings[0].Text != "225.84W" || readings[0].Num != 225.843 {
+		t.Errorf("load = %+v", readings[0])
+	}
+	// A declared full scale is what makes this a bar rather than a figure.
+	if readings[1].Max != 100 || !readings[1].Numeric {
+		t.Errorf("cpu = %+v", readings[1])
+	}
+	if readings[2].Text != "85.7%" {
+		t.Errorf("memory = %+v", readings[2])
+	}
+	// A second poll must reuse the session rather than sign in again: a
+	// controller asked for a new one every minute eventually stops issuing them.
+	if _, msg := probeJSONAuth(context.Background(), "pdu",
+		srv.URL+"/api/s/default/stat/device", probes, auth, sess); msg != "" {
+		t.Fatalf("second poll: %s", msg)
+	}
+	if logins != 1 {
+		t.Errorf("signed in %d times, want 1", logins)
 	}
 }

@@ -1756,10 +1756,68 @@ async function savePolicy(clear) {
 // would be tidier to look at and far more tedious to fill in for six sensors.
 function parseProbes(text) {
   return String(text).split('\n').map(line => {
-    const [label, path, unit] = line.split('|').map(x => x.trim());
+    const [label, path, unit, max] = line.split('|').map(x => x.trim());
     if (!label || !path) return null;
-    return { label, path, unit: unit || '' };
+    // A fourth field is what the reading is a fraction of, which is what turns
+    // it from a figure into a bar. Optional, because most readings are not a
+    // fraction of anything: a temperature has no ceiling.
+    return { label, path, unit: unit || '', max: parseFloat(max) || 0 };
   }).filter(Boolean);
+}
+
+// formatProbes writes the probes back out in the form they were typed.
+//
+// The fields are positional, so an empty unit followed by a maximum has to keep
+// its separator; only trailing empties can be dropped.
+function formatProbes(probes) {
+  return (probes || []).map(x => {
+    const f = [x.label, x.path, x.unit || '', x.max ? String(x.max) : ''];
+    while (f.length > 2 && !f[f.length - 1]) f.pop();
+    return f.join(' | ');
+  }).join('\n');
+}
+
+// ---- presets for JSON readings ----
+//
+// A controller API is worth reading and tedious to configure: the paths are
+// long, they repeat the device's MAC, and getting one character wrong shows up
+// as a silent absence a poll later. These write the whole set from the address
+// the device is already identified by.
+//
+// UniFi earns a preset because it is the only copy of some readings — a smart
+// PDU's per-outlet power exists nowhere else, and its switches report PoE draw
+// here rather than through the standard PoE MIB, which they do not implement.
+const JSON_PRESETS = {
+  'unifi-pdu': mac => [
+    `Load | data[mac=${mac}].outlet_ac_power_consumption | W`,
+    `CPU | data[mac=${mac}].system-stats.cpu | % | 100`,
+    `Memory | data[mac=${mac}].system-stats.mem | % | 100`,
+  ],
+  'unifi-switch': mac => [
+    `PoE | data[mac=${mac}].total_used_power | W`,
+    `Temp | data[mac=${mac}].general_temperature | °C`,
+    `CPU | data[mac=${mac}].system-stats.cpu | % | 100`,
+    `Memory | data[mac=${mac}].system-stats.mem | % | 100`,
+  ],
+  'unifi-ap': mac => [
+    `Clients | data[mac=${mac}].num_sta`,
+    `CPU | data[mac=${mac}].system-stats.cpu | % | 100`,
+    `Memory | data[mac=${mac}].system-stats.mem | % | 100`,
+  ],
+};
+
+// unifiLoginURL derives the sign-in endpoint from the status URL.
+//
+// Guessing between the two shapes is the one thing that reliably wastes an
+// afternoon, and it does not need guessing: a controller behind UniFi OS serves
+// its API under /proxy/network and signs in at /api/auth/login, and a
+// self-hosted one does neither.
+function unifiLoginURL(statusURL) {
+  try {
+    const u = new URL(statusURL);
+    return u.origin + (u.pathname.includes('/proxy/network/')
+      ? '/api/auth/login' : '/api/login');
+  } catch { return ''; }
 }
 
 // ---- browse SNMP ----
@@ -2311,6 +2369,39 @@ function setJSONAuthUI(mode) {
 }
 document.getElementById('netJSONAuth').addEventListener('change', e => setJSONAuthUI(e.target.value));
 
+// Filling the JSON fields from a preset.
+//
+// The status URL has to come from the operator rather than a guess: which of
+// the two UniFi API shapes a site serves depends on what the controller runs
+// on, and the one that is known to work is the one already pasted into a
+// browser. Everything else follows from it and from the MAC.
+document.getElementById('netJSONPreset').addEventListener('change', e => {
+  const build = JSON_PRESETS[e.target.value];
+  e.target.value = '';
+  if (!build) return;
+  const st = document.getElementById('netStatus');
+  const url = document.getElementById('netJSONURL').value.trim();
+  if (!url) {
+    st.textContent = 'put the controller status URL in first — the sign-in URL is worked out from it';
+    return;
+  }
+  // The controller answers for every device it adopted at once, so the MAC is
+  // not a nicety here: it is the only thing that picks one device out.
+  const mac = (document.getElementById('netMAC').value.trim() ||
+    prompt('MAC address of this device, as the controller reports it') || '').trim().toLowerCase();
+  if (!mac) {
+    st.textContent = 'a MAC is needed: the controller answers for every device at once';
+    return;
+  }
+  document.getElementById('netMAC').value = mac;
+  document.getElementById('netJSONProbes').value = build(mac).join('\n');
+  document.getElementById('netJSONAuth').value = 'login';
+  setJSONAuthUI('login');
+  const login = document.getElementById('netJSONLoginURL');
+  if (!login.value.trim()) login.value = unifiLoginURL(url);
+  st.textContent = 'filled in — add the controller sign-in below, ideally a read-only account';
+});
+
 // Opens the device form on an existing check. Apps have their own, simpler form.
 function openCheckEditor(c) {
   if (c.kind === 'app') { openAppEditor(c); return; }
@@ -2340,8 +2431,8 @@ function openCheckEditor(c) {
   set('netJSONLoginBody', ja.login_body);
   document.getElementById('netJSONAuth').value = ja.mode || '';
   setJSONAuthUI(ja.mode || '');
-  document.getElementById('netJSONProbes').value = (c.json_probes || [])
-    .map(x => [x.label, x.path, x.unit].filter(Boolean).join(' | ')).join('\n');
+  document.getElementById('netJSONProbes').value = formatProbes(c.json_probes);
+  document.getElementById('netJSONPreset').value = '';
   set('netSNMP', c.snmp);
   set('netSNMPPort', c.snmp_port || '');
   set('netSNMPUser', c.snmp_user);

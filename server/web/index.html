@@ -342,8 +342,22 @@
       </div>
       <div class="cmd-row">
         <textarea id="netJSONProbes" class="sc-content" style="height:84px"
-                  placeholder="One per line:  Label | path | unit&#10;Tank temp | istat.inputs[name=Tmp].value | °F&#10;pH | istat.inputs[name=pH].value"></textarea>
+                  placeholder="One per line:  Label | path | unit | full scale&#10;Tank temp | istat.inputs[name=Tmp].value | °F&#10;pH | istat.inputs[name=pH].value&#10;Ink | supplies[0].level | % | 100"></textarea>
       </div>
+      <div class="cmd-row">
+        <select id="netJSONPreset" class="inv-filter">
+          <option value="">fill these in from a preset…</option>
+          <option value="unifi-pdu">UniFi controller — smart PDU</option>
+          <option value="unifi-switch">UniFi controller — switch</option>
+          <option value="unifi-ap">UniFi controller — access point</option>
+        </select>
+      </div>
+      <p class="muted" style="font-size:11.5px;margin:2px 0 0">
+        A fourth field is what the reading is a fraction of, which draws it as a
+        bar rather than a figure — 100 for a percentage. Leave it off for
+        anything with no ceiling, such as a temperature. A path segment can pick
+        an item out of a list by one of its fields: <code>outlet_table[name=Rack].outlet_power</code>.
+      </p>
       <div class="cmd-row">
         <select id="netJSONAuth" class="inv-filter">
           <option value="">no sign-in needed</option>
