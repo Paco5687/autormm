@@ -356,7 +356,10 @@
         A fourth field is what the reading is a fraction of, which draws it as a
         bar rather than a figure — 100 for a percentage. Leave it off for
         anything with no ceiling, such as a temperature. A path segment can pick
-        an item out of a list by one of its fields: <code>outlet_table[name=Rack].outlet_power</code>.
+        an item out of a list by one of its fields: <code>outlet_table[name=Rack].outlet_power</code>
+        — or read the whole list at once with <code>[*name]</code>, which gives
+        one reading per entry, labelled by that field, drawn together and
+        compactly.
       </p>
       <div class="cmd-row">
         <select id="netJSONAuth" class="inv-filter">

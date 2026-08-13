@@ -45,6 +45,10 @@ type Reading struct {
 	// Numeric distinguishes a value that can be drawn as a bar from one that is
 	// only ever text, such as a status word.
 	Numeric bool `json:"numeric,omitempty"`
+	// Group names the set a reading belongs to, when one probe expanded into
+	// many. The card draws those together and densely, because twenty outlets
+	// listed the way two sensors are listed is a card nobody can read.
+	Group string `json:"group,omitempty"`
 }
 
 // JSONAuth is how to authenticate to a status API.
@@ -155,6 +159,15 @@ func probeOnce(ctx context.Context, id, url string, probes []JSONProbe, auth JSO
 	var out []Reading
 	var missing []string
 	for _, p := range probes {
+		// A path carrying a wildcard reads a whole table rather than one cell.
+		if rs, isWild := expandProbe(doc, p); isWild {
+			if len(rs) == 0 {
+				missing = append(missing, p.Label)
+				continue
+			}
+			out = append(out, rs...)
+			continue
+		}
 		v, ok := jsonPath(doc, p.Path)
 		if !ok {
 			missing = append(missing, p.Label)
@@ -306,6 +319,71 @@ func jsonPath(doc any, path string) (any, bool) {
 		cur = next
 	}
 	return cur, true
+}
+
+// expandProbe reads a whole table through one probe.
+//
+// A selector of the form [*name] means "every entry, labelled by its name
+// field" rather than "the one entry whose name is this". It exists because the
+// alternative does not scale: a PDU has twenty outlets, and writing twenty
+// near-identical lines to read them is both tedious and a standing invitation
+// to get one of them subtly wrong.
+//
+// The second return says whether the path had a wildcard at all, which is what
+// separates "this reads a table and the table was empty" from "this reads one
+// value and should be looked up the ordinary way".
+func expandProbe(doc any, p JSONProbe) ([]Reading, bool) {
+	segs := strings.Split(p.Path, ".")
+	at, field := -1, ""
+	for i, seg := range segs {
+		key, sel, hasSel := cutSelector(strings.TrimSpace(seg))
+		if hasSel && strings.HasPrefix(sel, "*") {
+			at, field = i, strings.TrimSpace(sel[1:])
+			segs[i] = key
+			break
+		}
+	}
+	if at < 0 {
+		return nil, false
+	}
+	// Everything up to and including the wildcard segment locates the table;
+	// everything after it locates the value within one row.
+	table, ok := jsonPath(doc, strings.Join(segs[:at+1], "."))
+	if !ok {
+		return nil, true
+	}
+	rows, ok := table.([]any)
+	if !ok {
+		return nil, true
+	}
+	rest := strings.Join(segs[at+1:], ".")
+
+	out := make([]Reading, 0, len(rows))
+	for i, row := range rows {
+		v := row
+		if rest != "" {
+			var found bool
+			if v, found = jsonPath(row, rest); !found {
+				// A row that does not carry this value is skipped rather than
+				// shown as blank: a PDU's USB outlets report no wattage at all,
+				// and listing them empty says less than not listing them.
+				continue
+			}
+		}
+		label := ""
+		if m, isMap := row.(map[string]any); isMap && field != "" {
+			if lv, has := m[field]; has {
+				label = strings.TrimSpace(fmt.Sprintf("%v", lv))
+			}
+		}
+		if label == "" {
+			label = strconv.Itoa(i + 1)
+		}
+		r := readingFrom(p, v)
+		r.Label, r.Group = label, p.Label
+		out = append(out, r)
+	}
+	return out, true
 }
 
 // cutSelector splits "inputs[name=Tmp]" into its key and its selector.

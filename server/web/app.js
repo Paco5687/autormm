@@ -1790,6 +1790,10 @@ function formatProbes(probes) {
 const JSON_PRESETS = {
   'unifi-pdu': mac => [
     `Load | data[mac=${mac}].outlet_ac_power_consumption | W`,
+    // One line for every outlet: the wildcard reads the whole table and labels
+    // each entry by its name, which is the only form that survives a PDU with
+    // twenty of them.
+    `Outlets | data[mac=${mac}].outlet_table[*name].outlet_power | W`,
     `CPU | data[mac=${mac}].system-stats.cpu | % | 100`,
     `Memory | data[mac=${mac}].system-stats.mem | % | 100`,
   ],
@@ -2013,7 +2017,8 @@ function renderMonitorSection(which, list) {
     // would be a lot of white space to make a firewall look better.
     const metrics = snmpMetrics(c.snmp).concat(jsonMetrics(c.readings));
     const plain = jsonPlain(c.readings);
-    if (metrics.length || plain.length) {
+    const groups = jsonGroups(c.readings);
+    if (metrics.length || plain.length || groups.length) {
       el.classList.add('nc-rich');
       const box = document.createElement('div');
       box.className = 'nc-metrics';
@@ -2033,6 +2038,27 @@ function renderMonitorSection(which, list) {
           `<div class="rd"><span class="rd-k">${escapeHtml(r.label)}</span>` +
           `<span class="rd-v">${escapeHtml(r.text)}</span></div>`).join('');
         body.appendChild(rd);
+      }
+
+      // A whole table read through one probe: a PDU's outlets, a printer's
+      // supplies. Two dense columns, busiest first, and the idle ones named on
+      // one line rather than given a row each — the names are kept because an
+      // outlet that has dropped to zero is the interesting one.
+      for (const g of groups) {
+        const sec = document.createElement('div');
+        sec.className = 'nc-group';
+        const head = `<div class="ncg-head">${escapeHtml(g.name)}` +
+          (g.idle.length ? `<span>${g.live.length} of ${g.live.length + g.idle.length} drawing</span>` : '') +
+          `</div>`;
+        const cells = g.live.map(r =>
+          `<div class="ncg-cell" title="${escapeHtml(r.label)}">` +
+          `<span class="ncg-k">${escapeHtml(r.label)}</span>` +
+          `<span class="ncg-v">${escapeHtml(r.text)}</span></div>`).join('');
+        const idle = g.idle.length
+          ? `<div class="ncg-idle">idle · ${g.idle.map(r => escapeHtml(r.label)).join(' · ')}</div>`
+          : '';
+        sec.innerHTML = head + `<div class="ncg-grid">${cells}</div>` + idle;
+        body.appendChild(sec);
       }
 
       const facts = snmpFacts(c.snmp);
@@ -2213,15 +2239,40 @@ function jsonMetrics(readings) {
 // jsonPlain is the readings that are not proportions of anything: a
 // temperature, a pH, a status word. They get a labelled row rather than a bar,
 // because a bar needs something to be a fraction of.
+//
+// Grouped readings are left out: they are drawn together and densely further
+// down, since twenty outlets rendered the way two sensors are rendered is a
+// card nobody can read.
 function jsonPlain(readings) {
-  return (readings || []).filter(r => !(r.numeric && r.max > 0));
+  return (readings || []).filter(r => !r.group && !(r.numeric && r.max > 0));
+}
+
+// jsonGroups collects the readings that one probe expanded into many.
+//
+// Sorted by what they are drawing, because on a rack of twenty outlets the
+// question is almost always which few are drawing the most. The idle ones are
+// kept but set aside: an outlet at zero is a fact worth having — a pump that
+// stopped looks exactly like this — but it does not deserve a line each.
+function jsonGroups(readings) {
+  const by = new Map();
+  for (const r of readings || []) {
+    if (!r.group) continue;
+    if (!by.has(r.group)) by.set(r.group, []);
+    by.get(r.group).push(r);
+  }
+  return [...by].map(([name, rs]) => {
+    const live = rs.filter(r => !(r.numeric && r.num === 0));
+    live.sort((a, b) => (b.numeric ? b.num : 0) - (a.numeric ? a.num : 0));
+    return { name, live, idle: rs.filter(r => r.numeric && r.num === 0) };
+  });
 }
 
 // hasDetail reports whether a device has enough to say to earn the taller card.
 function hasDetail(c) {
   return snmpMetrics(c.snmp).length > 0 ||
     jsonMetrics(c.readings).length > 0 ||
-    jsonPlain(c.readings).length > 0;
+    jsonPlain(c.readings).length > 0 ||
+    jsonGroups(c.readings).length > 0;
 }
 
 // snmpFacts is the line under the bars: the figures that are not percentages.

@@ -416,3 +416,74 @@ func TestControllerReadingsEndToEnd(t *testing.T) {
 		t.Errorf("signed in %d times, want 1", logins)
 	}
 }
+
+// One probe reading a whole table. A PDU has twenty outlets and writing twenty
+// lines to read them is both tedious and a standing invitation to get one
+// subtly wrong.
+func TestWildcardReadsAWholeTable(t *testing.T) {
+	const doc = `{"data":[{"mac":"aa:bb","outlet_table":[
+	  {"index":1,"name":"USB 1"},
+	  {"index":5,"name":"Rack","outlet_power":"33.873"},
+	  {"index":7,"name":"Tank","outlet_power":"55.414"},
+	  {"index":8,"name":"Spare","outlet_power":"0.000"}]}]}`
+	var v any
+	if err := json.Unmarshal([]byte(doc), &v); err != nil {
+		t.Fatal(err)
+	}
+	p := JSONProbe{Label: "Outlets", Unit: "W",
+		Path: "data[mac=aa:bb].outlet_table[*name].outlet_power"}
+	got, wild := expandProbe(v, p)
+	if !wild {
+		t.Fatal("the wildcard was not recognised")
+	}
+	// The USB outlet reports no wattage at all and is left out rather than
+	// shown blank; the idle one reports zero and is a fact worth keeping.
+	if len(got) != 3 {
+		t.Fatalf("got %d readings: %+v", len(got), got)
+	}
+	for i, want := range []struct{ label, text string }{
+		{"Rack", "33.87W"}, {"Tank", "55.41W"}, {"Spare", "0W"},
+	} {
+		if got[i].Label != want.label || got[i].Text != want.text {
+			t.Errorf("reading %d = %+v, want %s %s", i, got[i], want.label, want.text)
+		}
+		// Every reading carries the group, which is what lets the card draw
+		// them together instead of as twenty unrelated rows.
+		if got[i].Group != "Outlets" {
+			t.Errorf("reading %d has group %q", i, got[i].Group)
+		}
+		if !got[i].Numeric {
+			t.Errorf("reading %d was not read as a number", i)
+		}
+	}
+
+	// A path with no wildcard must be left to the ordinary lookup.
+	if _, wild := expandProbe(v, JSONProbe{Path: "data[mac=aa:bb].outlet_table[name=Rack].outlet_power"}); wild {
+		t.Error("an ordinary selector was treated as a wildcard")
+	}
+	// A wildcard over something that is not a table — here a string — is a miss,
+	// not a panic.
+	if rs, wild := expandProbe(v, JSONProbe{Path: "data[mac=aa:bb].mac[*name].x"}); !wild || len(rs) != 0 {
+		t.Errorf("wildcard over a non-table = %v %v", rs, wild)
+	}
+	// And one over a path that does not resolve at all.
+	if rs, wild := expandProbe(v, JSONProbe{Path: "nowhere[*name].x"}); !wild || len(rs) != 0 {
+		t.Errorf("wildcard over an absent path = %v %v", rs, wild)
+	}
+	// And a table with no such value anywhere reports nothing rather than rows
+	// of blanks, so the poll can say the path stopped matching.
+	if rs, _ := expandProbe(v, JSONProbe{Path: "data[mac=aa:bb].outlet_table[*name].nope"}); len(rs) != 0 {
+		t.Errorf("a path matching nothing produced %d readings", len(rs))
+	}
+}
+
+// Rows with no usable label fall back to their position, so a table without a
+// name field still reads rather than collapsing into blanks.
+func TestWildcardFallsBackToPosition(t *testing.T) {
+	var v any
+	json.Unmarshal([]byte(`{"cells":[{"v":1.5},{"v":2.5}]}`), &v)
+	got, _ := expandProbe(v, JSONProbe{Label: "Cells", Path: "cells[*name].v"})
+	if len(got) != 2 || got[0].Label != "1" || got[1].Label != "2" {
+		t.Fatalf("got %+v", got)
+	}
+}
