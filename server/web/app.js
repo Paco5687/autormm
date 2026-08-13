@@ -1915,6 +1915,10 @@ setInterval(poll, 3000);
 // directly and shows them beside the hosts they sit alongside.
 const netSection = document.getElementById('netSection');
 const netGrid = document.getElementById('netGrid');
+// Which devices have had their warnings opened. Cards are rebuilt from scratch
+// every poll, so this is the only place an opened one can survive.
+const openWarns = new Set();
+
 const netModal = document.getElementById('netModal');
 
 // One store serves both: an entry is an app when it says so, and the only
@@ -1985,31 +1989,65 @@ function renderMonitorSection(which, list) {
     // it reads as though the address were the problem.
     const level = snmpLevel(c.snmp);
     if (level && !snmpMetrics(c.snmp).length) sub.classList.add('nc-' + level);
-    // The reason a check failed is the whole diagnosis and was being collected
-    // and then thrown away. It is long, so it goes in the tooltip.
-    if (!c.up && c.error) sub.title = c.error;
-    // An SNMP failure does not make the device unreachable, so it is a tooltip
-    // and a marker rather than a red dot that would misreport the device.
+    // Everything wrong with a device, kept rather than overwritten.
+    //
+    // These used to assign to the tooltip in turn, so a device with both an
+    // SNMP failure and a broken reading showed two warning marks and the
+    // explanation for only one of them — the last assignment won and the rest
+    // were lost. They are collected now, and each one is a reason in its own
+    // right.
+    const warns = [];
+    if (!c.up && c.error) warns.push(c.error);
+    // An SNMP failure does not make the device unreachable, so it is a marker
+    // and a reason rather than a red dot that would misreport the device.
+    if (c.snmp && c.snmp.error) warns.push('SNMP: ' + c.snmp.error);
+    else {
+      const detail = snmpDetail(c.snmp);
+      if (detail) warns.push(detail);
+    }
+    if (c.readings_err) warns.push('Readings: ' + c.readings_err);
+
+    const notes = [];
     // A learned MAC is worth showing: it is the difference between a device
     // that survives a DHCP change and one that does not, and it happened
-    // without anyone asking for it.
-    const detail = snmpDetail(c.snmp);
-    if (detail) sub.title = detail;
+    // without anyone asking for it. It is not a problem, so it is not a ⚠.
     if (c.mac && c.mac_learned) {
-      sub.title = (sub.title ? sub.title + '\n' : '') +
-        'MAC learned automatically (' + c.mac + ') — this device is now found ' +
+      notes.push('MAC learned automatically (' + c.mac + ') — this device is now found ' +
         'by MAC if its address changes, and still checked at its address if the ' +
-        'MAC cannot be found.';
+        'MAC cannot be found.');
     }
-    if (c.readings_err) {
-      sub.title = (sub.title ? sub.title + '\n' : '') + 'Readings: ' + c.readings_err;
-      name.textContent += ' ⚠';
-    }
-    if (c.snmp && c.snmp.error) {
-      sub.title = 'SNMP: ' + c.snmp.error;
-      name.textContent += ' ⚠';
-    }
+    sub.title = warns.concat(notes).join('\n');
     body.append(name, sub);
+
+    // One mark, however many reasons, and it opens them.
+    //
+    // A tooltip is unreachable on a touch screen, which is where this dashboard
+    // is read most — a warning you cannot ask about is just an unexplained
+    // symbol. Tapping it puts the reasons on the card.
+    if (warns.length) {
+      const warn = document.createElement('button');
+      warn.className = 'nc-warn';
+      warn.type = 'button';
+      warn.textContent = '⚠';
+      warn.title = warns.join('\n');
+      warn.setAttribute('aria-label', `${warns.length} problem${warns.length > 1 ? 's' : ''} — show`);
+      const box = document.createElement('div');
+      // Whether this was opened has to outlive the card. Every card is rebuilt
+      // from scratch on each poll, three seconds apart, so an open state living
+      // only in the element would shut before it could be read.
+      const open = openWarns.has(c.id);
+      box.className = 'nc-warnbox' + (open ? '' : ' hidden');
+      box.innerHTML = warns.map(w => `<div>${escapeHtml(w)}</div>`).join('');
+      warn.addEventListener('click', e => {
+        // The card itself opens the device; a question about it must not.
+        e.stopPropagation();
+        e.preventDefault();
+        const nowOpen = box.classList.toggle('hidden') === false;
+        if (nowOpen) openWarns.add(c.id); else openWarns.delete(c.id);
+      });
+      name.appendChild(warn);
+      body.appendChild(box);
+    }
 
     // A device that reports readings gets bars and a full-width card. One that
     // only answers a TCP check stays a single compact row — most of a homelab's
