@@ -114,6 +114,39 @@ func (s *Server) handleIndex(sub fs.FS) http.HandlerFunc {
 	}
 }
 
+// inputChannel names the second socket of a screen session on both ends.
+const inputChannel = "input"
+
+// relayInput joins the viewer's input socket to the agent's.
+//
+// The whole point is that a keystroke never waits behind a frame: they share a
+// TCP connection otherwise, and TCP will not let the click overtake the video
+// queued ahead of it, so input lag tracks how busy the screen is rather than
+// how far away the host is.
+//
+// If the agent never attaches — it predates this, or opening the socket failed
+// — the viewer is told nothing and goes on sending input over the media socket,
+// which is exactly what it did before and still works.
+func (s *Server) relayInput(w http.ResponseWriter, r *http.Request, sess *session) {
+	clientWS, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+	defer clientWS.Close()
+
+	select {
+	case agentWS := <-sess.inputCh:
+		// Said before becoming a pipe, because after this the hub is not in a
+		// position to say anything: relay copies bytes and nothing else.
+		clientWS.SetWriteDeadline(time.Now().Add(10 * time.Second))
+		if err := clientWS.WriteJSON(protocol.InputReadyMsg{T: "inputready"}); err != nil {
+			return
+		}
+		relay(clientWS, agentWS)
+	case <-time.After(12 * time.Second):
+	}
+}
+
 // noStore makes the browser check before reusing a script or a stylesheet.
 //
 // The hub updates itself in place and serves the dashboard out of its own
@@ -518,7 +551,11 @@ func (s *Server) handleAgentSession(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	if !sess.deliverAgent(ws) {
+	delivered := sess.deliverAgent
+	if r.URL.Query().Get("ch") == inputChannel {
+		delivered = sess.deliverInput
+	}
+	if !delivered(ws) {
 		ws.Close() // viewer gone or agent already attached
 	}
 	// Connection is handed to the viewer's relay; do not close it here.
@@ -533,6 +570,13 @@ func (s *Server) handleClientSession(w http.ResponseWriter, r *http.Request) {
 	sess := s.sessions.get(tkt.Session)
 	if sess == nil || sess.agentID != tkt.AgentID {
 		http.Error(w, "no such session", http.StatusNotFound)
+		return
+	}
+	// The viewer's second connection for this session, carrying input only.
+	// It does not own the session's lifetime — the media socket does — so it
+	// neither starts the session nor removes it on the way out.
+	if r.URL.Query().Get("ch") == inputChannel {
+		s.relayInput(w, r, sess)
 		return
 	}
 	defer s.sessions.remove(sess.id)
@@ -566,16 +610,18 @@ func (s *Server) handleClientSession(w http.ResponseWriter, r *http.Request) {
 		codec = pickCodec(clientCaps, s.store.encoderCaps(sess.agentID))
 	}
 
-	// Ask the agent to open its media socket for this session.
+	// Ask the agent to open its media socket for this session, and an input
+	// socket alongside it if the viewer said it would use one.
 	mediaTicket := auth.SignTicket(s.secret, sess.id, sess.agentID, 30*time.Second)
 	agentControl.sendJSON(protocol.StartSession{
-		Type:    protocol.TypeStartSession,
-		Session: sess.id,
-		Token:   mediaTicket,
-		Kind:    sess.kind,
-		Codec:   codec,
-		FPS:     sess.fps,
-		Quality: sess.quality,
+		Type:         protocol.TypeStartSession,
+		Session:      sess.id,
+		Token:        mediaTicket,
+		Kind:         sess.kind,
+		Codec:        codec,
+		FPS:          sess.fps,
+		Quality:      sess.quality,
+		InputChannel: r.URL.Query().Get("input") == "1",
 	})
 
 	select {

@@ -72,6 +72,11 @@ type session struct {
 	created time.Time
 
 	agentCh chan *websocket.Conn // agent media socket delivered here
+	// inputCh carries the agent's input socket, when one was asked for. Input
+	// and video share a TCP connection otherwise, and TCP will not let a click
+	// overtake the frame queued ahead of it — so a burst of video delays every
+	// keystroke behind it, and the lag tracks what is happening on screen.
+	inputCh chan *websocket.Conn
 	once    sync.Once
 }
 
@@ -93,6 +98,7 @@ func (r *sessionRegistry) create(id, agentID, kind string, fps, quality int) *se
 		quality: quality,
 		created: time.Now(),
 		agentCh: make(chan *websocket.Conn, 1),
+		inputCh: make(chan *websocket.Conn, 1),
 	}
 	r.mu.Lock()
 	r.m[id] = s
@@ -116,6 +122,16 @@ func (r *sessionRegistry) remove(id string) {
 func (s *session) deliverAgent(ws *websocket.Conn) bool {
 	select {
 	case s.agentCh <- ws:
+		return true
+	default:
+		return false
+	}
+}
+
+// deliverInput hands over the agent's input socket.
+func (s *session) deliverInput(ws *websocket.Conn) bool {
+	select {
+	case s.inputCh <- ws:
 		return true
 	default:
 		return false

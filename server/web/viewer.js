@@ -46,8 +46,13 @@ function connect() {
   // session on it whenever the host has ffmpeg. JPEG-tile stays the fallback,
   // both in negotiation and if a decode ever fails mid-stream.
   const caps = ('VideoDecoder' in window) ? 'jpeg-tile,webcodecs-h264' : 'jpeg-tile';
-  ws = new WebSocket(`${proto}://${location.host}/client/session?token=${encodeURIComponent(tokenParam)}&caps=${caps}`);
+  const base = `${proto}://${location.host}/client/session?token=${encodeURIComponent(tokenParam)}`;
+  // input=1 tells the hub this viewer will open a second socket for input, so
+  // it can ask the agent for one. An agent that predates it simply never
+  // attaches, and input keeps going over this socket.
+  ws = new WebSocket(`${base}&caps=${caps}&input=1`);
   ws.binaryType = 'arraybuffer';
+  connectInput(base);
 
   ws.onopen = () => {
     reconnectAttempts = 0;
@@ -58,7 +63,7 @@ function connect() {
     // host, so start every session from a known-clean keyboard state.
     heldKeys.clear();
     if (altTabTimer !== null) { clearTimeout(altTabTimer); altTabTimer = null; }
-    for (const code of MODIFIER_CODES) send({ t: 'kup', code });
+    for (const code of MODIFIER_CODES) sendInput({ t: 'kup', code });
   };
   ws.onclose = () => scheduleReconnect();
   ws.onerror = () => {}; // onclose always follows; reconnect is handled there
@@ -496,6 +501,44 @@ function drawFrame(dv) {
 // ---- input ----
 function send(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); }
 
+// ---- input channel ----
+//
+// Input and video share one TCP connection, and TCP will not let a click
+// overtake the frames queued ahead of it. So a burst of video delays every
+// keystroke behind it, and the lag tracks what is happening on screen rather
+// than how far away the host is. A second socket carries input past it.
+let inputWS = null, inputReady = false;
+
+function connectInput(base) {
+  if (inputWS) { try { inputWS.close(); } catch (e) {} }
+  inputReady = false;
+  const sock = new WebSocket(base + '&ch=input');
+  inputWS = sock;
+  // Not used until the hub says the agent attached to the other end. A socket
+  // connected to the hub looks the same whether or not anything is listening
+  // beyond it, and the difference is whether keystrokes arrive or vanish.
+  sock.onmessage = (ev) => {
+    try {
+      if (JSON.parse(ev.data).t === 'inputready' && inputWS === sock) inputReady = true;
+    } catch (e) {}
+  };
+  sock.onclose = () => { if (inputWS === sock) { inputReady = false; inputWS = null; } };
+  sock.onerror = () => {};
+}
+
+// sendInput carries the messages worth hurrying: pointer, keys, scroll, typed
+// text. Everything else stays on the media socket, in order with the video —
+// a codec or resolution change arriving out of step with the frames it applies
+// to would be a strange way to save a millisecond on something nobody is
+// waiting for.
+function sendInput(obj) {
+  if (inputReady && inputWS && inputWS.readyState === 1) {
+    inputWS.send(JSON.stringify(obj));
+    return;
+  }
+  send(obj);
+}
+
 // The canvas has the host's pixel dimensions, which may be smaller OR larger
 // than the viewport. Size the *element* to the largest box with the same aspect
 // ratio that fits the wrapper, so a lower host resolution is scaled up to fill
@@ -690,7 +733,7 @@ function flushRel() {
   relCarryY = fy - dy;
   relDX = relDY = 0;
   if (!dx && !dy) return;
-  send({ t: 'mmrel', dx, dy });
+  sendInput({ t: 'mmrel', dx, dy });
 }
 
 let lastMove = 0;
@@ -709,7 +752,7 @@ window.addEventListener('mousemove', e => {
   lastMove = now;
   const p = toRemote(e);
   predictCursor(p); // draw immediately; don't wait for the host to echo back
-  send({ t: 'mmove', x: p.x, y: p.y });
+  sendInput({ t: 'mmove', x: p.x, y: p.y });
 });
 canvas.addEventListener('mousedown', e => {
   e.preventDefault();
@@ -717,21 +760,21 @@ canvas.addEventListener('mousedown', e => {
   if (captured()) {
     // No coordinates: there is no local pointer position while captured, and
     // sending a stale one would warp the host cursor mid-aim.
-    send({ t: 'mdown', button: e.button, rel: true });
+    sendInput({ t: 'mdown', button: e.button, rel: true });
     return;
   }
   const p = toRemote(e);
   predictCursor(p);
-  send({ t: 'mdown', x: p.x, y: p.y, button: e.button });
+  sendInput({ t: 'mdown', x: p.x, y: p.y, button: e.button });
 });
 window.addEventListener('mouseup', e => {
   if (!heldButtons.delete(e.button)) return; // not a press that started in the view
   if (captured()) {
-    send({ t: 'mup', button: e.button, rel: true });
+    sendInput({ t: 'mup', button: e.button, rel: true });
     return;
   }
   const p = toRemote(e);
-  send({ t: 'mup', x: p.x, y: p.y, button: e.button });
+  sendInput({ t: 'mup', x: p.x, y: p.y, button: e.button });
 });
 // A drag that ends while the tab is hidden/unfocused never delivers 'mouseup'
 // (e.g. alt-tab, or the release lands on another window), so release manually.
@@ -791,14 +834,14 @@ function touchMid(t) {
 function moveTo(t) {
   const p = toRemote(t);
   predictCursor(p);
-  send({ t: 'mmove', x: p.x, y: p.y });
+  sendInput({ t: 'mmove', x: p.x, y: p.y });
   return p;
 }
 
 function cancelTouch() {
   if (touch) {
     clearTimeout(touch.timer);
-    if (touch.dragging) send({ t: 'mup', x: lastPos.x, y: lastPos.y, button: 0 });
+    if (touch.dragging) sendInput({ t: 'mup', x: lastPos.x, y: lastPos.y, button: 0 });
     touch = null;
   }
 }
@@ -827,7 +870,7 @@ canvas.addEventListener('touchstart', e => {
       // drags whatever is under the pointer.
       if (!touch || touch.moved) return;
       touch.dragging = true;
-      send({ t: 'mdown', x: lastPos.x, y: lastPos.y, button: 0 });
+      sendInput({ t: 'mdown', x: lastPos.x, y: lastPos.y, button: 0 });
       if (navigator.vibrate) navigator.vibrate(15); // confirm the grab
     }, LONG_PRESS_MS),
   };
@@ -849,7 +892,7 @@ canvas.addEventListener('touchmove', e => {
     const notches = Math.trunc(scrollAccum);
     if (notches !== 0) {
       scrollAccum -= notches;
-      send({ t: 'scroll', dx: 0, dy: notches });
+      sendInput({ t: 'scroll', dx: 0, dy: notches });
     }
     return;
   }
@@ -874,8 +917,8 @@ canvas.addEventListener('touchend', e => {
       // Put the pointer where the fingers were before clicking, exactly as a
       // mouse would arrive there — a context menu belongs under the tap.
       const p = moveTo({ clientX: twoFinger.x, clientY: twoFinger.y });
-      send({ t: 'mdown', x: p.x, y: p.y, button: 2 });
-      send({ t: 'mup', x: p.x, y: p.y, button: 2 });
+      sendInput({ t: 'mdown', x: p.x, y: p.y, button: 2 });
+      sendInput({ t: 'mup', x: p.x, y: p.y, button: 2 });
       if (navigator.vibrate) navigator.vibrate(12);
     } else {
       twoFinger.tap = false; // held too long to be a tap
@@ -889,7 +932,7 @@ canvas.addEventListener('touchend', e => {
   touch = null;
 
   if (g.dragging) {                       // release whatever was grabbed
-    send({ t: 'mup', x: lastPos.x, y: lastPos.y, button: 0 });
+    sendInput({ t: 'mup', x: lastPos.x, y: lastPos.y, button: 0 });
     return;
   }
   if (g.moved) return;                    // that was a pointer move, not a click
@@ -898,8 +941,8 @@ canvas.addEventListener('touchend', e => {
   // succession therefore reach the host as two ordinary clicks close together,
   // which is precisely what a double click is — the host decides, using its own
   // double-click interval, and touch gets a real double click for free.
-  send({ t: 'mdown', x: lastPos.x, y: lastPos.y, button: 0 });
-  send({ t: 'mup', x: lastPos.x, y: lastPos.y, button: 0 });
+  sendInput({ t: 'mdown', x: lastPos.x, y: lastPos.y, button: 0 });
+  sendInput({ t: 'mup', x: lastPos.x, y: lastPos.y, button: 0 });
 }, { passive: false });
 
 canvas.addEventListener('touchcancel', () => {
@@ -910,7 +953,7 @@ canvas.addEventListener('touchcancel', () => {
 canvas.addEventListener('wheel', e => {
   e.preventDefault();
   const scale = e.deltaMode === 0 ? 1 / 100 : 1;
-  send({ t: 'scroll', dx: Math.round(e.deltaX * scale), dy: Math.round(e.deltaY * scale) });
+  sendInput({ t: 'scroll', dx: Math.round(e.deltaX * scale), dy: Math.round(e.deltaY * scale) });
 }, { passive: false });
 
 // ---- on-screen keyboard (touch devices) ----
@@ -936,7 +979,7 @@ function primeKbd() {
   lastKbdVal = KBD_GUARD;
   try { softkbd.setSelectionRange(KBD_GUARD.length, KBD_GUARD.length); } catch (_) {}
 }
-function keyTap(code) { send({ t: 'kdown', code }); send({ t: 'kup', code }); }
+function keyTap(code) { sendInput({ t: 'kdown', code }); sendInput({ t: 'kup', code }); }
 
 // ---- sticky modifiers and the special-keys strip ----
 // A phone keyboard cannot hold Ctrl/Alt/Win and press another key, so those
@@ -954,10 +997,10 @@ function clearMods() {
 // them — the latch is one-shot, matching how a combo is a single action.
 function emitKey(code) {
   const mods = [...stickyMods];
-  for (const m of mods) send({ t: 'kdown', code: m });
-  send({ t: 'kdown', code });
-  send({ t: 'kup', code });
-  for (const m of mods.reverse()) send({ t: 'kup', code: m });
+  for (const m of mods) sendInput({ t: 'kdown', code: m });
+  sendInput({ t: 'kdown', code });
+  sendInput({ t: 'kup', code });
+  for (const m of mods.reverse()) sendInput({ t: 'kup', code: m });
   if (mods.length) clearMods();
 }
 
@@ -1063,7 +1106,7 @@ softkbd.addEventListener('input', () => {
   for (const ch of added) {
     const code = stickyMods.size ? codeForChar(ch) : null;
     if (code) { emitKey(code); chorded = true; } // latched Ctrl + typed "c" -> Ctrl+C
-    else { if (stickyMods.size) clearMods(); send({ t: 'type', text: ch }); }
+    else { if (stickyMods.size) clearMods(); sendInput({ t: 'type', text: ch }); }
   }
   lastKbdVal = v;
   // A chorded character went to the host as a key combo, not as the literal it
@@ -1096,7 +1139,7 @@ window.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && e.code === 'KeyV') return;
   e.preventDefault();
   heldKeys.add(e.code);
-  send({ t: 'kdown', code: e.code });
+  sendInput({ t: 'kdown', code: e.code });
 });
 window.addEventListener('keyup', e => {
   // Always release a key we pressed, even if focus moved into the soft-keyboard
@@ -1106,7 +1149,7 @@ window.addEventListener('keyup', e => {
   const wasHeld = heldKeys.delete(e.code);
   if (!wasHeld && document.activeElement === softkbd) return;
   e.preventDefault();
-  send({ t: 'kup', code: e.code });
+  sendInput({ t: 'kup', code: e.code });
 });
 
 // Tapping the remote screen dismisses the on-screen keyboard. Without this the
@@ -1118,7 +1161,7 @@ canvas.addEventListener('pointerdown', () => {
 }, { passive: true });
 
 function releaseHeldKeys() {
-  for (const code of heldKeys) send({ t: 'kup', code });
+  for (const code of heldKeys) sendInput({ t: 'kup', code });
   heldKeys.clear();
 }
 
@@ -1274,8 +1317,8 @@ window.addEventListener('paste', e => {
   if (data != null) {
     lastClip = data;
     send({ t: 'clip', clip: data });
-    send({ t: 'kdown', code: 'KeyV' }); // Ctrl/Cmd is physically held
-    send({ t: 'kup', code: 'KeyV' });
+    sendInput({ t: 'kdown', code: 'KeyV' }); // Ctrl/Cmd is physically held
+    sendInput({ t: 'kup', code: 'KeyV' });
   }
 });
 
@@ -1303,10 +1346,10 @@ window.addEventListener('paste', e => {
 const copyBtn = document.getElementById('copyBtn');
 
 function sendHostCopy() {
-  send({ t: 'kdown', code: 'ControlLeft' });
-  send({ t: 'kdown', code: 'KeyC' });
-  send({ t: 'kup', code: 'KeyC' });
-  send({ t: 'kup', code: 'ControlLeft' });
+  sendInput({ t: 'kdown', code: 'ControlLeft' });
+  sendInput({ t: 'kdown', code: 'KeyC' });
+  sendInput({ t: 'kup', code: 'KeyC' });
+  sendInput({ t: 'kup', code: 'ControlLeft' });
 }
 
 // legacyCopy places text using the pre-permissions mechanism: select it in a
@@ -1471,10 +1514,10 @@ document.getElementById('pasteBtn').addEventListener('click', async () => {
   // Same ordered socket, processed sequentially by the agent: the clipboard is
   // set before the keystroke lands, so no delay is needed between them.
   send({ t: 'clip', clip: text });
-  send({ t: 'kdown', code: 'ControlLeft' });
-  send({ t: 'kdown', code: 'KeyV' });
-  send({ t: 'kup', code: 'KeyV' });
-  send({ t: 'kup', code: 'ControlLeft' });
+  sendInput({ t: 'kdown', code: 'ControlLeft' });
+  sendInput({ t: 'kdown', code: 'KeyV' });
+  sendInput({ t: 'kup', code: 'KeyV' });
+  sendInput({ t: 'kup', code: 'ControlLeft' });
   flashState('pasted');
 });
 
@@ -1492,25 +1535,25 @@ qualityEl.addEventListener('change', () => send({ t: 'params', quality: parseInt
 let altTabTimer = null;
 document.getElementById('altTab').addEventListener('click', (e) => {
   if (altTabTimer === null) {
-    send({ t: 'kdown', code: 'AltLeft' }); // begin: hold Alt across taps
+    sendInput({ t: 'kdown', code: 'AltLeft' }); // begin: hold Alt across taps
   } else {
     clearTimeout(altTabTimer);
   }
-  send({ t: 'kdown', code: 'Tab' });
-  send({ t: 'kup', code: 'Tab' });
+  sendInput({ t: 'kdown', code: 'Tab' });
+  sendInput({ t: 'kup', code: 'Tab' });
   altTabTimer = setTimeout(() => {
-    send({ t: 'kup', code: 'AltLeft' }); // commit the selection
+    sendInput({ t: 'kup', code: 'AltLeft' }); // commit the selection
     altTabTimer = null;
   }, 1200);
   e.currentTarget.blur();
 });
 
 document.getElementById('taskMgr').addEventListener('click', (e) => {
-  for (const c of ['ControlLeft', 'ShiftLeft', 'Escape']) send({ t: 'kdown', code: c });
-  for (const c of ['Escape', 'ShiftLeft', 'ControlLeft']) send({ t: 'kup', code: c });
+  for (const c of ['ControlLeft', 'ShiftLeft', 'Escape']) sendInput({ t: 'kdown', code: c });
+  for (const c of ['Escape', 'ShiftLeft', 'ControlLeft']) sendInput({ t: 'kup', code: c });
   // Belt-and-suspenders: make sure no modifier is left stuck on the host if it
   // dropped a key-up while Task Manager stole focus.
-  for (const c of ['ControlLeft', 'ControlRight', 'ShiftLeft', 'ShiftRight', 'AltLeft', 'AltRight']) send({ t: 'kup', code: c });
+  for (const c of ['ControlLeft', 'ControlRight', 'ShiftLeft', 'ShiftRight', 'AltLeft', 'AltRight']) sendInput({ t: 'kup', code: c });
   e.currentTarget.blur(); // return focus to the page so canvas input keeps flowing
 });
 
@@ -1568,6 +1611,12 @@ setInterval(() => {
 setInterval(() => {
   if (ws && ws.readyState === WebSocket.OPEN) send({ t: 'rx', bytes: rxTotal });
 }, 1000);
-setInterval(() => send({ t: 'ping' }), 20000);
+setInterval(() => {
+  send({ t: 'ping' });
+  // The input socket carries nothing while nobody is touching anything, and
+  // both the hub and the agent drop a relayed socket after 90s of silence. The
+  // media socket has video keeping it warm; this one has only this.
+  if (inputReady && inputWS && inputWS.readyState === 1) inputWS.send(JSON.stringify({ t: 'ping' }));
+}, 20000);
 
 connect();

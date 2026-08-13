@@ -242,6 +242,31 @@ func (a *Agent) startSession(parent context.Context, ss protocol.StartSession) {
 	go a.frameLoop(ctx, writeMsg, cptr, encoders, fps, stats)
 	go a.cursorLoop(ctx, writeMsg, cursor, cptr)
 	go a.clipboardLoop(ctx, writeMsg)
+	// A second socket for input, when the hub asked for one.
+	//
+	// Input and video share a TCP connection otherwise, and TCP will not let a
+	// click overtake the frames queued ahead of it — so input lag tracks how
+	// busy the screen is rather than how far away the host is. Best effort: if
+	// it cannot be opened the viewer never hears that it is ready and goes on
+	// sending input over the media socket, which is what it did before.
+	if ss.InputChannel {
+		if iws, err := a.dialInput(ctx, ss); err != nil {
+			log.Printf("session %s: input socket: %v", ss.Session, err)
+		} else {
+			defer iws.Close()
+			// Unblock the reader when the session ends, the same way the media
+			// socket is closed for the loop below.
+			go func() {
+				select {
+				case <-ctx.Done():
+				case <-closed:
+				}
+				iws.Close()
+			}()
+			go a.inputLoop(iws, injector, encoders, cptr, switchCodec, sendDisplays, rememberMode, link)
+		}
+	}
+
 	a.inputLoop(ws, injector, encoders, cptr, switchCodec, sendDisplays, rememberMode, link) // blocks until socket closes
 	log.Printf("session %s: ended", ss.Session)
 }
@@ -565,4 +590,21 @@ func cursorShapePayload(cur capture.Cursor, id uint64) ([]byte, error) {
 		W: b.Dx(), H: b.Dy(), HotX: hx, HotY: hy,
 		PNG: base64.StdEncoding.EncodeToString(buf.Bytes()),
 	})
+}
+
+// dialInput opens the session's second socket, the one carrying input.
+//
+// The same ticket as the media socket: it is the same session, and the channel
+// is named in the query rather than in a second credential — one grant, two
+// connections.
+func (a *Agent) dialInput(ctx context.Context, ss protocol.StartSession) (*websocket.Conn, error) {
+	u, err := a.wsURL("/agent/session", url.Values{"token": {ss.Token}, "ch": {"input"}})
+	if err != nil {
+		return nil, err
+	}
+	ws, _, err := a.dialer.DialContext(ctx, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	return ws, nil
 }

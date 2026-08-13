@@ -161,6 +161,10 @@ type StartSession struct {
 	Type    string `json:"type"` // TypeStartSession
 	Session string `json:"session"`
 	Token   string `json:"token"`
+	// InputChannel asks the agent to open a second socket for this session,
+	// carrying input only. An agent that predates it ignores the field and the
+	// viewer keeps sending input on the media socket, which still works.
+	InputChannel bool `json:"input_channel,omitempty"`
 	Kind    string `json:"kind,omitempty"`  // SessionScreen | SessionTerminal
 	Codec   string `json:"codec,omitempty"` // negotiated video codec (CapJPEGTile | CapH264)
 	FPS     int    `json:"fps"`
@@ -463,6 +467,16 @@ const (
 	InputType         = "type"    // viewer -> host: type a string (Unicode, e.g. from a soft keyboard)
 	InputRxRate       = "rx"      // viewer -> host: bitrate the viewer is actually receiving
 )
+
+// InputReadyMsg is the hub's one word on the input socket, sent when the agent
+// has attached to the other end of it.
+//
+// It has to be said. The viewer cannot otherwise tell a channel the agent
+// joined from one it never did — a socket connected to the hub looks the same
+// either way — and the difference is whether keystrokes arrive or vanish.
+type InputReadyMsg struct {
+	T string `json:"t"` // always "inputready"
+}
 
 // ClipMsg carries clipboard text from the host to the viewer (text frame on the
 // media socket) when the host clipboard changes, so copy/paste works both ways.
