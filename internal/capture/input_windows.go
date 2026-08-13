@@ -245,3 +245,23 @@ func (in *winInjector) TypeText(text string) error {
 }
 
 func (in *winInjector) Close() error { return nil }
+
+// MouseMoveRel injects motion rather than a position.
+//
+// MOUSEEVENTF_MOVE without MOUSEEVENTF_ABSOLUTE is what the raw-input path a
+// game reads is built on, so this reaches DirectInput and mouse-look the way a
+// physical mouse does. No SetCursorPos here: placing the pointer is precisely
+// what must not happen when the application is steering it.
+func (in *winInjector) MouseMoveRel(dx, dy int) error {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	if dx == 0 && dy == 0 {
+		return nil
+	}
+	onInputDesktop(func() {
+		e := &mouseInputEvent{dx: int32(dx), dy: int32(dy), dwFlags: mouseeventfMove}
+		e.typ = inputMouse
+		procSendInput.Call(1, uintptr(unsafe.Pointer(e)), unsafe.Sizeof(*e))
+	})
+	return nil
+}

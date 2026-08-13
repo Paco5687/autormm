@@ -654,6 +654,10 @@ a.nc-body:hover .nc-name { text-decoration: underline; }
 .kk { flex-shrink: 0; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; font-size: 13px; font-family: var(--mono); cursor: pointer; }
 .kk:active { background: var(--panel); }
 /* A latched sticky modifier, held for the next key. */
+/* A toolbar button that is currently doing something — mouse capture. Matches
+   the on-state the modifier keys already use, so "held" reads the same way
+   everywhere in the viewer. */
+.btn.on { color: var(--text); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 22%, transparent); }
 .kk-mod.active { color: var(--text); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 22%, transparent); }
 .pill { padding: 2px 8px; border-radius: 999px; background: var(--panel-2); font-family: var(--mono); font-size: 12px; }
 .pill.live { color: var(--ok); }

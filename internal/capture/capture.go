@@ -33,6 +33,15 @@ type Capturer interface {
 // added), so callers must offset region-relative coordinates before calling.
 type Injector interface {
 	MouseMove(x, y int) error
+	// MouseMoveRel moves by a delta rather than to a point.
+	//
+	// A game that captures the pointer for mouse-look reads motion, not
+	// position, and warps the cursor back to the centre after every frame. Sent
+	// absolute positions, the warp turns the next move into a jump from the
+	// centre to wherever the viewer's pointer was, and the camera spins. This
+	// carries the movement itself, which is what such an application is
+	// actually asking for.
+	MouseMoveRel(dx, dy int) error
 	MouseButton(button int, down bool) error // 0=left 1=middle 2=right
 	Scroll(dx, dy int) error
 	Key(code string, down bool) error // code is a JS KeyboardEvent.code

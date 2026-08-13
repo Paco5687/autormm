@@ -231,3 +231,16 @@ func clampSteps(n int) int {
 	}
 	return n
 }
+
+// MouseMoveRel injects motion rather than a position. XTest takes a relative
+// motion when told the coordinates are not absolute, which is the detail byte
+// here: 1 means relative to the current pointer position.
+func (in *x11Injector) MouseMoveRel(dx, dy int) error {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	if dx == 0 && dy == 0 {
+		return nil
+	}
+	return xtest.FakeInputChecked(in.conn, evMotion, 1, xproto.TimeCurrentTime,
+		xproto.Window(0), int16(dx), int16(dy), 0).Check()
+}

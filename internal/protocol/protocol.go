@@ -426,6 +426,9 @@ type SessionResponse struct {
 
 const (
 	InputMouseMove = "mmove"
+	// InputMouseMoveRel carries movement rather than a position, for an
+	// application that has captured the pointer and is steering it itself.
+	InputMouseMoveRel = "mmrel"
 	InputMouseDown = "mdown"
 	InputMouseUp   = "mup"
 	InputScroll    = "scroll"
@@ -448,7 +451,8 @@ type ClipMsg struct {
 }
 
 // InputEvent is sent from the viewer to the agent. Coordinates are absolute
-// pixels in the remote screen's resolution.
+// pixels in the remote screen's resolution, except for InputMouseMoveRel, which
+// carries a delta in DX/DY instead.
 type InputEvent struct {
 	T       string `json:"t"`
 	X       int    `json:"x,omitempty"`
@@ -466,4 +470,8 @@ type InputEvent struct {
 	H       int    `json:"h,omitempty"`       // for InputSetRes: target height
 	Text    string `json:"text,omitempty"`    // for InputType: Unicode text to type
 	Bytes   int64  `json:"bytes,omitempty"`   // for InputRxRate: total bytes received this session
+	// Rel marks a button press or release that must not move the pointer first.
+	// While an application has captured the mouse there is no meaningful place
+	// to move it to, and moving it is exactly what breaks mouse-look.
+	Rel bool `json:"rel,omitempty"`
 }

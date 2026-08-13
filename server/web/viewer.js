@@ -571,8 +571,64 @@ function overCanvas(e) {
 // tracking also keeps a drag alive while the pointer is briefly outside.
 const heldButtons = new Set();
 
+// ---- mouse capture ----
+//
+// An application that steers the pointer itself — a game's mouse-look, a CAD
+// orbit — reads motion, not position, and warps the cursor back to the centre
+// after every frame. Sent absolute positions, that warp turns the next move
+// into a jump from the centre to wherever the local pointer happens to be, and
+// the view spins away. Captured, the browser stops moving the pointer at all
+// and reports movement instead, which is the thing being asked for.
+const grabBtn = document.getElementById('grabBtn');
+function captured() { return document.pointerLockElement === canvas; }
+
+function setGrab(on) {
+  if (on) {
+    // Chrome returns a promise here and rejects it if the gesture was not one
+    // it accepts; an unhandled rejection would surface in the console as an
+    // error the user can do nothing about.
+    Promise.resolve(canvas.requestPointerLock({ unadjustedMovement: true }))
+      .catch(() => Promise.resolve(canvas.requestPointerLock()).catch(() => {}));
+  } else if (captured()) {
+    document.exitPointerLock();
+  }
+}
+grabBtn.addEventListener('click', () => setGrab(!captured()));
+document.addEventListener('pointerlockchange', () => {
+  const on = captured();
+  grabBtn.setAttribute('aria-pressed', String(on));
+  grabBtn.classList.toggle('on', on);
+  // Esc is how the browser gives the pointer back, and it does so without
+  // telling the host — which would leave any held button down forever.
+  if (!on) releaseHeldButtons(true);
+  flashState(on ? 'mouse captured — Esc releases' : 'mouse released');
+});
+
+// Movement is accumulated briefly and sent as a sum rather than per event. A
+// gaming mouse reports several times faster than the host can act on, and the
+// sum of the deltas is exactly as truthful as each one separately — unlike
+// absolute positions, where dropping the last one loses everything.
+//
+// On a timer rather than an animation frame: aligning to the display refresh
+// buys nothing for something being sent to another machine, and would tie the
+// pointer to whether this page is being painted.
+const REL_MS = 8; // ~125 Hz, well past what the host can use
+let relDX = 0, relDY = 0, relTimer = null;
+function flushRel() {
+  relTimer = null;
+  if (!relDX && !relDY) return;
+  send({ t: 'mmrel', dx: relDX, dy: relDY });
+  relDX = relDY = 0;
+}
+
 let lastMove = 0;
 window.addEventListener('mousemove', e => {
+  if (captured()) {
+    relDX += e.movementX;
+    relDY += e.movementY;
+    if (!relTimer) relTimer = setTimeout(flushRel, REL_MS);
+    return;
+  }
   // Off-canvas moves only matter mid-drag; otherwise reaching for the top bar
   // would slide the host cursor to a clamped edge.
   if (!heldButtons.size && !overCanvas(e)) return;
@@ -586,19 +642,35 @@ window.addEventListener('mousemove', e => {
 canvas.addEventListener('mousedown', e => {
   e.preventDefault();
   heldButtons.add(e.button);
+  if (captured()) {
+    // No coordinates: there is no local pointer position while captured, and
+    // sending a stale one would warp the host cursor mid-aim.
+    send({ t: 'mdown', button: e.button, rel: true });
+    return;
+  }
   const p = toRemote(e);
   predictCursor(p);
   send({ t: 'mdown', x: p.x, y: p.y, button: e.button });
 });
 window.addEventListener('mouseup', e => {
   if (!heldButtons.delete(e.button)) return; // not a press that started in the view
+  if (captured()) {
+    send({ t: 'mup', button: e.button, rel: true });
+    return;
+  }
   const p = toRemote(e);
   send({ t: 'mup', x: p.x, y: p.y, button: e.button });
 });
 // A drag that ends while the tab is hidden/unfocused never delivers 'mouseup'
 // (e.g. alt-tab, or the release lands on another window), so release manually.
-function releaseHeldButtons() {
-  for (const b of heldButtons) send({ t: 'mup', x: lastPos.x, y: lastPos.y, button: b });
+// rel releases without a position, for buttons that were held while the mouse
+// was captured. lastPos is wherever the pointer was before capture, so sending
+// it would jerk the host cursor across the screen on the way out — which is
+// exactly what pressing Esc mid-drag would do.
+function releaseHeldButtons(rel) {
+  for (const b of heldButtons) {
+    send(rel ? { t: 'mup', button: b, rel: true } : { t: 'mup', x: lastPos.x, y: lastPos.y, button: b });
+  }
   heldButtons.clear();
 }
 window.addEventListener('blur', () => {

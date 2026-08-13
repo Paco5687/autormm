@@ -487,11 +487,20 @@ func applyInput(ev protocol.InputEvent, in capture.Injector, cptr capture.Captur
 	switch ev.T {
 	case protocol.InputMouseMove:
 		in.MouseMove(ax, ay)
+	case protocol.InputMouseMoveRel:
+		// Deliberately not offset by the capture origin: a delta is not a place.
+		in.MouseMoveRel(ev.DX, ev.DY)
 	case protocol.InputMouseDown:
-		in.MouseMove(ax, ay)
+		// While the pointer is captured there is no place to move it to, and
+		// moving it is what breaks the application's own aim.
+		if !ev.Rel {
+			in.MouseMove(ax, ay)
+		}
 		in.MouseButton(ev.Button, true)
 	case protocol.InputMouseUp:
-		in.MouseMove(ax, ay)
+		if !ev.Rel {
+			in.MouseMove(ax, ay)
+		}
 		in.MouseButton(ev.Button, false)
 	case protocol.InputScroll:
 		in.Scroll(ev.DX, ev.DY)
