@@ -2859,46 +2859,81 @@ function renderTopology(t) {
     adj.get(e.from)?.push(e.to);
     adj.get(e.to)?.push(e.from);
   }
+  // Laid out one connected piece at a time, and stacked.
+  //
+  // A single sweep from one root only reaches what that root can see, and
+  // everything else lands together on one row — which is what a map with a
+  // missing link looked like: a flat line of boxes with no shape at all. A
+  // network is allowed to be in pieces, and each piece is still a tree.
   const depth = new Map();
-  const root = t.root && adj.has(t.root) ? t.root : (nodes[0] && nodes[0].mac);
-  const q = root ? [root] : [];
-  if (root) depth.set(root, 0);
-  while (q.length) {
-    const cur = q.shift();
-    for (const nb of adj.get(cur) || []) {
-      if (!depth.has(nb)) { depth.set(nb, depth.get(cur) + 1); q.push(nb); }
+  const groups = [];
+  const start = t.root && adj.has(t.root) ? [t.root] : [];
+  for (const s0 of start.concat(nodes.map(n => n.mac))) {
+    if (!s0 || depth.has(s0)) continue;
+    const group = [];
+    depth.set(s0, 0);
+    const q = [s0];
+    while (q.length) {
+      const cur = q.shift();
+      group.push(cur);
+      for (const nb of adj.get(cur) || []) {
+        if (!depth.has(nb)) { depth.set(nb, depth.get(cur) + 1); q.push(nb); }
+      }
+    }
+    groups.push(group);
+  }
+  // The piece with the most in it first — that is the rack, and the strays
+  // below it are the strays.
+  groups.sort((a, b) => b.length - a.length);
+  // Devices nothing links to are not each a network of one. Given a row apiece
+  // they push the rack off the top of the screen and imply a structure that is
+  // not there; together they are what they are, a set of things not currently
+  // attached to anything.
+  const lone = groups.filter(g => g.length === 1).flat();
+  const rest = groups.filter(g => g.length > 1);
+  groups.length = 0;
+  groups.push(...rest);
+  if (lone.length) {
+    for (const mac of lone) depth.set(mac, 0);
+    groups.push(lone);
+  }
+
+  const byMAC = new Map(nodes.map(n => [n.mac, n]));
+  const rows = new Map();   // key: "group:depth"
+  const depths = [];
+  for (const [gi, group] of groups.entries()) {
+    const seenDepths = new Set();
+    for (const mac of group) seenDepths.add(depth.get(mac));
+    for (const d of [...seenDepths].sort((a, b) => a - b)) {
+      const key = gi + ':' + d;
+      rows.set(key, group.filter(m => depth.get(m) === d).map(m => byMAC.get(m)).filter(Boolean));
+      depths.push(key);
     }
   }
-  // Anything the links never reached still belongs on the map — an adopted
-  // device the controller cannot see is exactly what you want to notice.
-  let orphan = Math.max(0, ...[...depth.values()]) + 1;
-  for (const n of nodes) if (!depth.has(n.mac)) depth.set(n.mac, orphan);
 
-  const rows = new Map();
-  for (const n of nodes) {
-    const d = depth.get(n.mac);
-    if (!rows.has(d)) rows.set(d, []);
-    rows.get(d).push(n);
-  }
-  const depths = [...rows.keys()].sort((a, b) => a - b);
-
-  const W = 190, H = 52, GAPX = 26, GAPY = 74;
+  const W = 190, H = 52, GAPX = 26, GAPY = 74, GAPGROUP = 30;
   const pos = new Map();
-  let maxW = 0;
-  for (const d of depths) {
-    const row = rows.get(d).sort((a, b) => a.name.localeCompare(b.name));
+  let maxW = 0, y = 0, lastGroup = '0';
+  for (const key of depths) {
+    const row = rows.get(key).sort((a, b) => a.name.localeCompare(b.name));
     const rowW = row.length * W + (row.length - 1) * GAPX;
     maxW = Math.max(maxW, rowW);
-    row.forEach((n, i) => pos.set(n.mac, { x: i * (W + GAPX), y: depths.indexOf(d) * GAPY, n }));
+    // A gap between pieces, so a stray does not read as hanging off the row
+    // above it.
+    const gi = key.split(':')[0];
+    if (gi !== lastGroup) { y += GAPGROUP; lastGroup = gi; }
+    row.forEach((n, i) => pos.set(n.mac, { x: i * (W + GAPX), y, n }));
+    y += GAPY;
   }
-  // Centre each row against the widest one, so the tree hangs straight.
-  for (const d of depths) {
-    const row = rows.get(d);
+  const svgHeight = y + H;
+  // Centre each row against the widest one, so each tree hangs straight.
+  for (const key of depths) {
+    const row = rows.get(key);
     const rowW = row.length * W + (row.length - 1) * GAPX;
     for (const n of row) pos.get(n.mac).x += (maxW - rowW) / 2;
   }
 
-  const svgW = maxW + 40, svgH = depths.length * GAPY + H + 20;
+  const svgW = maxW + 40, svgH = svgHeight + 20;
   const parts = [];
   for (const e of edges) {
     const a = pos.get(e.from), b = pos.get(e.to);

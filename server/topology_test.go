@@ -121,10 +121,11 @@ func TestLeavesAreCountedNotDrawn(t *testing.T) {
 	for _, n := range top.Nodes {
 		byMAC[n.MAC] = n
 	}
-	// The core switch has three port entries, one of which is the access
-	// switch — already a node, and drawn as a line rather than counted twice.
-	if got := byMAC["8c:30:66:d0:6e:43"].Leaves; got != 3 {
-		t.Errorf("core leaves = %d", got)
+	// The core switch has three port entries, one of which is the access switch.
+	// That one is a link and is drawn as a line; counting it as well would
+	// report the rack as containing two devices it does not have.
+	if got := byMAC["8c:30:66:d0:6e:43"].Leaves; got != 2 {
+		t.Errorf("core leaves = %d, want 2 — the third is the access switch", got)
 	}
 	// None of those addresses became nodes.
 	for _, n := range top.Nodes {
@@ -134,17 +135,106 @@ func TestLeavesAreCountedNotDrawn(t *testing.T) {
 	}
 }
 
-// A neighbour reported by LLDP that is not itself on the map is not a line: it
-// would be an edge to nowhere, drawn with the same weight as a real one.
-func TestNeighboursOffTheMapAreNotDrawn(t *testing.T) {
+// A neighbour the controller does not manage is still a real neighbour.
+//
+// This rule used to be the other way round — an LLDP entry pointing at anything
+// not in the controller's list was discarded — and that is what flattened a real
+// map. The router below is exactly the case: the switch reports the link, the
+// controller does not manage the router, so dropping the far end deleted the
+// link and left the rack with nothing above it.
+func TestNeighboursTheControllerDoesNotManageAreStillDrawn(t *testing.T) {
 	var v any
-	json.Unmarshal([]byte(`{"data":[{"mac":"aa:aa:aa:aa:aa:aa","name":"lone","type":"usw","state":1,
+	json.Unmarshal([]byte(`{"data":[{"mac":"aa:aa:aa:aa:aa:aa","name":"core","type":"usw","state":1,
 	  "lldp_table":[{"chassis_id":"ff:ff:ff:ff:ff:ff","local_port_idx":1}]}]}`), &v)
 	top := unifiTopology(v)
-	if len(top.Edges) != 0 {
-		t.Errorf("drew an edge to a device that is not on the map: %+v", top.Edges)
+	if len(top.Edges) != 1 {
+		t.Fatalf("the reported link was dropped: %+v", top.Edges)
 	}
-	if len(top.Nodes) != 1 {
-		t.Errorf("nodes = %+v", top.Nodes)
+	if len(top.Nodes) != 2 {
+		t.Fatalf("nodes = %+v", top.Nodes)
+	}
+	// Named as well as it can be, which for an address and nothing else is who
+	// made it.
+	for _, n := range top.Nodes {
+		if n.MAC == "ff:ff:ff:ff:ff:ff" && n.Name == "" {
+			t.Error("the unmanaged neighbour got no name at all")
+		}
+	}
+}
+
+// A router appears under two addresses: the one its neighbours see over LLDP and
+// the one every device names as its way out are different interfaces of the same
+// box. Only the address something actually links to is evidence, so the other
+// must not be left floating as a second router.
+func TestAnInventedNodeNothingLinksToIsDropped(t *testing.T) {
+	var v any
+	json.Unmarshal([]byte(`{"data":[
+	 {"mac":"aa:aa:aa:aa:aa:aa","name":"core","type":"usw","state":1,"gateway_mac":"64:62:66:23:c2:28",
+	  "lldp_table":[{"chassis_id":"64:62:66:23:c2:25","local_port_idx":27}]},
+	 {"mac":"bb:bb:bb:bb:bb:bb","name":"access","type":"usw","state":1,"gateway_mac":"64:62:66:23:c2:28",
+	  "uplink":{"uplink_mac":"aa:aa:aa:aa:aa:aa","uplink_remote_port":1,"port_idx":9}}]}`), &v)
+	top := unifiTopology(v)
+	for _, n := range top.Nodes {
+		if n.MAC == "64:62:66:23:c2:28" {
+			t.Errorf("a second router was left floating: %+v", n)
+		}
+	}
+	// The one that is actually linked to survives, or the rack has nothing above it.
+	found := false
+	for _, n := range top.Nodes {
+		if n.MAC == "64:62:66:23:c2:25" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("the router the switch actually reports was dropped")
+	}
+	if len(top.Edges) != 2 {
+		t.Errorf("edges = %+v", top.Edges)
+	}
+	// Which end is "up" is genuinely underdetermined here — there is no uplink
+	// record and LLDP says nothing about direction — so the root is not asserted.
+	// What matters is that one router is on the map and the other is not.
+}
+
+// The shape that flattened the map: a core switch whose uplink record predates
+// the field naming the far end, so the only evidence of the router is LLDP.
+// Every device below it must still land under it rather than beside it.
+func TestALegacyUplinkStillProducesATree(t *testing.T) {
+	var v any
+	json.Unmarshal([]byte(`{"data":[
+	 {"mac":"8c:30:66:d0:6e:43","name":"core","type":"usw","state":1,"gateway_mac":"64:62:66:23:c2:28",
+	  "uplink":{"mac":"8c:30:66:d0:6e:43","port_idx":24,"speed":2500,"uplink_source":"legacy"},
+	  "lldp_table":[{"chassis_id":"64:62:66:23:c2:25","local_port_idx":27}]},
+	 {"mac":"d8:b3:70:83:96:77","name":"access","type":"usw","state":1,"gateway_mac":"64:62:66:23:c2:28",
+	  "uplink":{"uplink_mac":"8c:30:66:d0:6e:43","uplink_remote_port":28,"port_idx":25,"speed":1000}},
+	 {"mac":"8c:30:66:80:95:7c","name":"ap","type":"uap","state":1,"gateway_mac":"64:62:66:23:c2:28",
+	  "uplink":{"uplink_mac":"d8:b3:70:83:96:77","uplink_remote_port":2,"port_idx":1}}]}`), &v)
+	top := unifiTopology(v)
+	// router — core — access — ap: three links, and every device reachable from
+	// the root. A break anywhere here is what puts everything on one row.
+	if len(top.Edges) != 3 {
+		t.Fatalf("edges = %+v", top.Edges)
+	}
+	adj := map[string][]string{}
+	for _, e := range top.Edges {
+		adj[e.From] = append(adj[e.From], e.To)
+		adj[e.To] = append(adj[e.To], e.From)
+	}
+	seen := map[string]bool{top.Root: true}
+	queue := []string{top.Root}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		for _, nb := range adj[cur] {
+			if !seen[nb] {
+				seen[nb] = true
+				queue = append(queue, nb)
+			}
+		}
+	}
+	if len(seen) != len(top.Nodes) {
+		t.Errorf("%d of %d devices are reachable from the root — the rest render as one flat row",
+			len(seen), len(top.Nodes))
 	}
 }

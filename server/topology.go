@@ -107,6 +107,10 @@ func unifiTopology(doc any) Topology {
 
 	nodes := map[string]*TopoNode{}
 	var edges []TopoEdge
+	// Held back until every device is known: whether an address on a port is a
+	// link or a leaf depends on whether it turns out to be on the map, and the
+	// device it names may not have been read yet.
+	var seen []TopoEdge
 	// gateways names the address every device says it reaches the internet
 	// through. The gateway itself is often not in the list — it is managed
 	// separately — so it has to be inferred from everything pointing at it.
@@ -173,9 +177,14 @@ func unifiTopology(doc any) Topology {
 			}
 		}
 
-		// Everything else seen on a port. Counted rather than drawn: thirty
-		// boxes hanging off one switch is a picture nobody can read, and the
-		// port view already lists them by name.
+		// What has been seen on each port.
+		//
+		// Two different things depending on what it turns out to be. Another
+		// device on the map is a link — weaker evidence than a reported
+		// neighbour, but the only evidence there is when one end's uplink
+		// record predates the field naming the far end. Anything else is a leaf
+		// and gets counted: thirty boxes hanging off one switch is a picture
+		// nobody can read, and the port view lists them by name.
 		if pt, ok := d["port_table"].([]any); ok {
 			for _, e := range pt {
 				p, ok := e.(map[string]any)
@@ -186,34 +195,104 @@ func unifiTopology(doc any) Topology {
 				if !ok {
 					continue
 				}
-				if peer := lowerMAC(strOf(lc["mac"])); peer != "" && peer != mac {
-					n.Leaves++
+				peer := lowerMAC(strOf(lc["mac"]))
+				if peer == "" || peer == mac {
+					continue
 				}
+				seen = append(seen, TopoEdge{
+					From: mac, To: peer,
+					FromPort: int(numOf(p["port_idx"])),
+					Speed:    int(numOf(p["speed"])),
+					Source:   "seen",
+				})
 			}
 		}
 	}
 
-	// A gateway everything points at but nothing describes. Naming it "gateway"
-	// is more use than leaving the map rooted at whatever switch happens to sit
-	// highest, which would imply the rack has no way out.
+	// Now that every device is known, each address seen on a port is one or the
+	// other. A gateway is a link even though the controller does not manage it:
+	// it is how the rack reaches the world, and drawing the rack with nothing
+	// above it is a worse error than drawing a dashed line.
+	for _, e := range seen {
+		_, isNode := nodes[e.To]
+		if isNode || gateways[e.To] > 0 {
+			edges = append(edges, e)
+			continue
+		}
+		if n := nodes[e.From]; n != nil {
+			n.Leaves++
+		}
+	}
+
+	// Anything a link points at that the controller does not manage.
+	//
+	// A router is the usual case and it matters: the switch below it reports the
+	// link, so leaving the far end off the map deletes the link too, and the
+	// whole rack ends up with nothing above it. These are marked so that ones
+	// nothing turned out to reference can be dropped again.
+	synthetic := map[string]bool{}
+	for _, e := range edges {
+		for _, mac := range []string{e.From, e.To} {
+			if _, known := nodes[mac]; known {
+				continue
+			}
+			nodes[mac] = &TopoNode{
+				MAC:  mac,
+				Name: firstNonEmpty(macVendor(mac), mac),
+				Kind: "device",
+				Up:   true,
+			}
+			synthetic[mac] = true
+		}
+	}
+	// A gateway everything names as its way out. It is often not in the list,
+	// because the controller does not manage it — and left out, the map roots
+	// at whatever switch sits highest and implies the rack has no way out.
 	root := ""
 	for g, n := range gateways {
 		if _, known := nodes[g]; !known && n >= 2 {
 			nodes[g] = &TopoNode{MAC: g, Name: "gateway", Kind: "gateway", Up: true}
+			synthetic[g] = true
 		}
 		if _, known := nodes[g]; known {
+			nodes[g].Kind = "gateway"
+			// It may already have been invented by a link pointing at it, in
+			// which case it is named after whoever made the hardware. Being the
+			// way out is the more useful thing to say about it.
+			if synthetic[g] {
+				nodes[g].Name = "gateway"
+			}
 			root = g
 		}
 	}
 
 	out := Topology{Root: root}
+	out.Edges = dedupeEdges(edges, nodes)
+
+	// A router can appear under two addresses — the one its neighbours see over
+	// LLDP and the one every device names as its way out are different
+	// interfaces of the same box. Only the address something actually links to
+	// is evidence of anything, so an invented node nothing references is
+	// dropped rather than left floating as a second router.
+	deg := map[string]int{}
+	for _, e := range out.Edges {
+		deg[e.From]++
+		deg[e.To]++
+	}
+	for mac := range nodes {
+		if synthetic[mac] && deg[mac] == 0 {
+			delete(nodes, mac)
+		}
+	}
+	if _, ok := nodes[root]; !ok {
+		root = ""
+	}
+
 	for _, n := range nodes {
-		// A leaf count must not include devices that are themselves on the map,
-		// or a switch feeding two switches reads as feeding two unknowns too.
 		out.Nodes = append(out.Nodes, *n)
 	}
 	sort.Slice(out.Nodes, func(i, j int) bool { return out.Nodes[i].Name < out.Nodes[j].Name })
-	out.Edges = dedupeEdges(edges, nodes)
+	out.Root = root
 	if out.Root == "" {
 		out.Root = rootOf(out.Nodes, out.Edges)
 	}
