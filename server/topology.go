@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -86,23 +87,100 @@ func (s *Server) topology(ctx context.Context) Topology {
 	if err != nil {
 		return Topology{Error: err.Error()}
 	}
-	t := unifiTopology(doc)
+	t, unclaimed := unifiTopology(doc)
 	if len(t.Nodes) == 0 && t.Error == "" {
 		t.Error = "the controller listed no devices"
 	}
+	s.attachKnown(&t, unclaimed)
 	s.linkToChecks(&t)
 	return t
 }
 
+// attachKnown puts the rest of the dashboard on the map.
+//
+// The controller only describes its own gear, but the switches see everybody:
+// every UPS, printer and server leaves its address on the port it hangs off.
+// The hub knows most of those addresses already — monitored devices carry a
+// MAC, and every agent reports its interfaces — so what the extraction counted
+// as an anonymous leaf is very often a card on this same dashboard. Naming it
+// and drawing the line is the difference between "+3" and seeing the UPS on
+// port 21.
+func (s *Server) attachKnown(t *Topology, unclaimed []TopoEdge) {
+	onMap := map[string]int{}
+	for i, n := range t.Nodes {
+		onMap[n.MAC] = i
+	}
+
+	// A port that carries a link between switches sees the addresses of
+	// everything beyond it — that is what a bridge does. An address seen there
+	// is transit, not attachment, so those ports claim nothing.
+	transit := map[string]bool{}
+	for _, e := range t.Edges {
+		if e.FromPort > 0 {
+			transit[e.From+"#"+strconv.Itoa(e.FromPort)] = true
+		}
+		if e.ToPort > 0 {
+			transit[e.To+"#"+strconv.Itoa(e.ToPort)] = true
+		}
+	}
+
+	type known struct {
+		name    string
+		kind    string
+		up      bool
+		checkID string
+	}
+	byMAC := map[string]known{}
+	for _, st := range s.netChecks.list() {
+		if st.NetCheck.MAC != "" {
+			byMAC[lowerMAC(st.NetCheck.MAC)] = known{
+				name: st.NetCheck.Name, kind: "device", up: st.Up, checkID: st.NetCheck.ID,
+			}
+		}
+	}
+	// Hosts after devices: if a machine is somehow both, the agent's name is
+	// the one people use.
+	for _, v := range s.store.views() {
+		for _, mac := range v.Facts.MACs {
+			if m := lowerMAC(mac); m != "" {
+				byMAC[m] = known{name: v.Hostname, kind: "host", up: v.Online}
+			}
+		}
+	}
+
+	for _, e := range unclaimed {
+		if transit[e.From+"#"+strconv.Itoa(e.FromPort)] {
+			continue
+		}
+		k, ok := byMAC[e.To]
+		if !ok {
+			continue
+		}
+		if _, dup := onMap[e.To]; dup {
+			continue // already attached via another port; one node is plenty
+		}
+		onMap[e.To] = len(t.Nodes)
+		t.Nodes = append(t.Nodes, TopoNode{
+			MAC: e.To, Name: k.name, Kind: k.kind, Up: k.up, CheckID: k.checkID,
+		})
+		e.Source = "seen"
+		t.Edges = append(t.Edges, e)
+		// It was counted as an anonymous leaf; it is not one any more.
+		if i, ok := onMap[e.From]; ok && t.Nodes[i].Leaves > 0 {
+			t.Nodes[i].Leaves--
+		}
+	}
+}
+
 // unifiTopology builds the map from a controller's answer.
-func unifiTopology(doc any) Topology {
+func unifiTopology(doc any) (Topology, []TopoEdge) {
 	list, ok := jsonPath(doc, "data")
 	if !ok {
-		return Topology{Error: "the answer has no device list"}
+		return Topology{Error: "the answer has no device list"}, nil
 	}
 	arr, ok := list.([]any)
 	if !ok {
-		return Topology{Error: "the device list is not a list"}
+		return Topology{Error: "the device list is not a list"}, nil
 	}
 
 	nodes := map[string]*TopoNode{}
@@ -213,6 +291,7 @@ func unifiTopology(doc any) Topology {
 	// other. A gateway is a link even though the controller does not manage it:
 	// it is how the rack reaches the world, and drawing the rack with nothing
 	// above it is a worse error than drawing a dashed line.
+	var unclaimed []TopoEdge
 	for _, e := range seen {
 		_, isNode := nodes[e.To]
 		if isNode || gateways[e.To] > 0 {
@@ -222,6 +301,7 @@ func unifiTopology(doc any) Topology {
 		if n := nodes[e.From]; n != nil {
 			n.Leaves++
 		}
+		unclaimed = append(unclaimed, e)
 	}
 
 	// Anything a link points at that the controller does not manage.
@@ -296,7 +376,7 @@ func unifiTopology(doc any) Topology {
 	if out.Root == "" {
 		out.Root = rootOf(out.Nodes, out.Edges)
 	}
-	return out
+	return out, unclaimed
 }
 
 // dedupeEdges keeps one line per cable.

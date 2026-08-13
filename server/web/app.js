@@ -2859,80 +2859,128 @@ function renderTopology(t) {
     adj.get(e.from)?.push(e.to);
     adj.get(e.to)?.push(e.from);
   }
-  // Laid out one connected piece at a time, and stacked.
+  // Laid out as a tidy tree: every device directly under whatever it hangs
+  // off, and a parent centred over the whole of what it feeds.
   //
-  // A single sweep from one root only reaches what that root can see, and
-  // everything else lands together on one row — which is what a map with a
-  // missing link looked like: a flat line of boxes with no shape at all. A
-  // network is allowed to be in pieces, and each piece is still a tree.
-  const depth = new Map();
-  const groups = [];
-  const start = t.root && adj.has(t.root) ? [t.root] : [];
-  for (const s0 of start.concat(nodes.map(n => n.mac))) {
-    if (!s0 || depth.has(s0)) continue;
-    const group = [];
-    depth.set(s0, 0);
+  // The first attempt put each depth on one centred row, which laid the rack
+  // out like a wedding invitation: the rows were straight but a child could
+  // land far from its parent, and every line crossed every other. The tree is
+  // the actual shape of a network, so the layout is the classic recursion —
+  // a subtree is as wide as its children, a parent sits over the middle of
+  // them — and lines then connect things that are already near each other.
+  const byMAC = new Map(nodes.map(n => [n.mac, n]));
+  const parentOf = new Map(), childrenOf = new Map(), portKey = new Map();
+
+  // A spanning forest. The map is allowed to have loops (a redundant uplink is
+  // a loop), so the tree is what BFS discovers and any remaining link is drawn
+  // as an extra line over it.
+  const roots = [];
+  const order = (t.root && adj.has(t.root) ? [t.root] : []).concat(nodes.map(n => n.mac));
+  for (const s0 of order) {
+    if (!s0 || parentOf.has(s0)) continue;
+    parentOf.set(s0, null);
+    roots.push(s0);
     const q = [s0];
     while (q.length) {
       const cur = q.shift();
-      group.push(cur);
       for (const nb of adj.get(cur) || []) {
-        if (!depth.has(nb)) { depth.set(nb, depth.get(cur) + 1); q.push(nb); }
+        if (parentOf.has(nb)) continue;
+        parentOf.set(nb, cur);
+        if (!childrenOf.has(cur)) childrenOf.set(cur, []);
+        childrenOf.get(cur).push(nb);
+        q.push(nb);
       }
     }
-    groups.push(group);
   }
-  // The piece with the most in it first — that is the rack, and the strays
-  // below it are the strays.
-  groups.sort((a, b) => b.length - a.length);
-  // Devices nothing links to are not each a network of one. Given a row apiece
-  // they push the rack off the top of the screen and imply a structure that is
-  // not there; together they are what they are, a set of things not currently
-  // attached to anything.
-  const lone = groups.filter(g => g.length === 1).flat();
-  const rest = groups.filter(g => g.length > 1);
-  groups.length = 0;
-  groups.push(...rest);
-  if (lone.length) {
-    for (const mac of lone) depth.set(mac, 0);
-    groups.push(lone);
+  // Children in port order, because that is the order they are plugged in at
+  // the rack — the map should read like the hardware.
+  for (const e of edges) {
+    if (parentOf.get(e.to) === e.from && e.from_port) portKey.set(e.to, e.from_port);
+    if (parentOf.get(e.from) === e.to && e.to_port) portKey.set(e.from, e.to_port);
   }
-
-  const byMAC = new Map(nodes.map(n => [n.mac, n]));
-  const rows = new Map();   // key: "group:depth"
-  const depths = [];
-  for (const [gi, group] of groups.entries()) {
-    const seenDepths = new Set();
-    for (const mac of group) seenDepths.add(depth.get(mac));
-    for (const d of [...seenDepths].sort((a, b) => a - b)) {
-      const key = gi + ':' + d;
-      rows.set(key, group.filter(m => depth.get(m) === d).map(m => byMAC.get(m)).filter(Boolean));
-      depths.push(key);
-    }
+  for (const kids of childrenOf.values()) {
+    kids.sort((a, b) => (portKey.get(a) || 999) - (portKey.get(b) || 999) ||
+      (byMAC.get(a).name || '').localeCompare(byMAC.get(b).name || ''));
   }
 
   const W = 190, H = 52, GAPX = 26, GAPY = 74, GAPGROUP = 30;
+  // End devices pack into a grid under their parent rather than one endless
+  // row. A core switch feeds ten things directly, and ten boxes side by side
+  // is wider than any screen — while a grid three across is the shape of the
+  // rack elevation everyone already draws by hand. Devices that feed others
+  // stay side by side, since their own subtrees need the width.
+  const LCOLS = 3, GAPYL = 62;
+  const partsOf = mac => {
+    const kids = childrenOf.get(mac) || [];
+    return {
+      treeKids: kids.filter(k => (childrenOf.get(k) || []).length > 0),
+      leafKids: kids.filter(k => !(childrenOf.get(k) || []).length),
+    };
+  };
+  const width = new Map();
+  const measure = mac => {
+    const { treeKids, leafKids } = partsOf(mac);
+    if (!treeKids.length && !leafKids.length) { width.set(mac, W); return W; }
+    const tw = treeKids.reduce((a, k) => a + measure(k), 0) + GAPX * Math.max(0, treeKids.length - 1);
+    const lcols = Math.min(LCOLS, leafKids.length);
+    const lw = lcols ? lcols * W + (lcols - 1) * GAPX : 0;
+    const w = Math.max(W, tw + (tw && lw ? GAPX : 0) + lw);
+    width.set(mac, w);
+    return w;
+  };
   const pos = new Map();
-  let maxW = 0, y = 0, lastGroup = '0';
-  for (const key of depths) {
-    const row = rows.get(key).sort((a, b) => a.name.localeCompare(b.name));
-    const rowW = row.length * W + (row.length - 1) * GAPX;
-    maxW = Math.max(maxW, rowW);
-    // A gap between pieces, so a stray does not read as hanging off the row
-    // above it.
-    const gi = key.split(':')[0];
-    if (gi !== lastGroup) { y += GAPGROUP; lastGroup = gi; }
-    row.forEach((n, i) => pos.set(n.mac, { x: i * (W + GAPX), y, n }));
-    y += GAPY;
-  }
-  const svgHeight = y + H;
-  // Centre each row against the widest one, so each tree hangs straight.
-  for (const key of depths) {
-    const row = rows.get(key);
-    const rowW = row.length * W + (row.length - 1) * GAPX;
-    for (const n of row) pos.get(n.mac).x += (maxW - rowW) / 2;
-  }
+  const place = (mac, x, depthY) => {
+    const w = width.get(mac);
+    pos.set(mac, { x: x + (w - W) / 2, y: depthY, n: byMAC.get(mac) });
+    const { treeKids, leafKids } = partsOf(mac);
+    let cx = x;
+    for (const k of treeKids) {
+      place(k, cx, depthY + GAPY);
+      cx += width.get(k) + GAPX;
+    }
+    const lcols = Math.min(LCOLS, leafKids.length);
+    leafKids.forEach((k, i) => {
+      const col = i % lcols, row = Math.floor(i / lcols);
+      width.set(k, W);
+      pos.set(k, { x: cx + col * (W + GAPX), y: depthY + GAPY + row * GAPYL, n: byMAC.get(k) });
+    });
+  };
 
+  // Measured up front, not inside the sort: a comparator only runs when there
+  // are two things to compare, so a map with a single tree — the normal case —
+  // would never be measured at all, every width would be undefined, and every
+  // position NaN. That renders as the whole rack in one overlapping column.
+  for (const r of roots) measure(r);
+
+  // Real trees first and biggest first; devices nothing links to share rows at
+  // the bottom rather than taking one each.
+  const treeRoots = roots.filter(r => (childrenOf.get(r) || []).length > 0)
+    .sort((a, b) => width.get(b) - width.get(a));
+  const lone = roots.filter(r => !(childrenOf.get(r) || []).length);
+
+  let maxW = Math.max(0, ...treeRoots.map(r => width.get(r)));
+  const perRow = Math.max(1, Math.floor((maxW || 900) / (W + GAPX)));
+  maxW = Math.max(maxW, Math.min(lone.length, perRow) * (W + GAPX) - GAPX);
+
+  let y = 0;
+  for (const r of treeRoots) {
+    place(r, (maxW - width.get(r)) / 2, y);
+    // How deep this tree went, to know where the next one starts.
+    let deepest = y;
+    for (const [m, p] of pos) if (p.y > deepest) deepest = p.y;
+    y = deepest + GAPY + GAPGROUP;
+  }
+  if (lone.length) {
+    lone.sort((a, b) => (byMAC.get(a).name || '').localeCompare(byMAC.get(b).name || ''));
+    lone.forEach((mac, i) => {
+      const col = i % perRow, row = Math.floor(i / perRow);
+      const rowN = Math.min(perRow, lone.length - row * perRow);
+      const rowW = rowN * (W + GAPX) - GAPX;
+      pos.set(mac, { x: (maxW - rowW) / 2 + col * (W + GAPX), y: y + row * GAPY, n: byMAC.get(mac) });
+    });
+    y += Math.ceil(lone.length / perRow) * GAPY;
+  }
+  const svgHeight = y ? y - GAPGROUP + H + 8 : H;
   const svgW = maxW + 40, svgH = svgHeight + 20;
   const parts = [];
   for (const e of edges) {
