@@ -2154,6 +2154,25 @@ function renderMonitorSection(which, list) {
       openCheckEditor(c);
     };
 
+    // Offered where there is a port table to read: a device managed by a
+    // controller the hub can sign in to, identified by MAC.
+    //
+    // ▤ rather than something more evocative: an unusual glyph renders as a
+    // tofu box wherever the platform lacks it, which is the same reason the OS
+    // marks on host cards are drawn rather than typed.
+    let portsBtn = null;
+    if (c.json_url && c.mac) {
+      portsBtn = document.createElement('button');
+      portsBtn.className = 'nc-del nc-ports';
+      portsBtn.title = 'Ports — what is plugged into this';
+      portsBtn.textContent = '▤';
+      portsBtn.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation(); // opening the ports must not also follow the link
+        openPorts(c);
+      };
+    }
+
     const del = document.createElement('button');
     del.className = 'nc-del';
     del.title = 'Stop monitoring';
@@ -2168,7 +2187,9 @@ function renderMonitorSection(which, list) {
       } catch (err) { alert('Could not remove: ' + err.message); }
     };
 
-    el.append(dot, body, edit, del);
+    // Appended together, and in this order: anything added before the card's
+    // own parts lands to the left of the status dot.
+    el.append(dot, body, ...(portsBtn ? [portsBtn] : []), edit, del);
     grid.appendChild(el);
   }
   // Balanced here as well as from the resize observer: adding cards does not
@@ -2717,3 +2738,203 @@ document.getElementById('netSave').addEventListener('click', async () => {
     loadNetChecks();
   } catch (e) { st.textContent = 'failed: ' + e.message; }
 });
+
+// ---- port map ----
+//
+// What is plugged into which port: the question a rack asks constantly and the
+// dashboard could not answer. The switch already knows — a managed one keeps a
+// table of which MAC it saw on which port — so this is a read, not an
+// inventory anybody has to maintain.
+
+const portsModal = document.getElementById('portsModal');
+document.getElementById('portsClose').addEventListener('click', () => portsModal.classList.add('hidden'));
+portsModal.addEventListener('click', e => { if (e.target === portsModal) portsModal.classList.add('hidden'); });
+
+async function openPorts(c) {
+  document.getElementById('portsTitle').textContent = c.name || c.address;
+  document.getElementById('portsSub').textContent = 'reading the port table…';
+  const body = document.getElementById('portsBody');
+  body.innerHTML = '';
+  portsModal.classList.remove('hidden');
+  try {
+    const pm = await authJSON('/api/ports?id=' + encodeURIComponent(c.id), 'GET');
+    renderPorts(pm);
+  } catch (e) {
+    document.getElementById('portsSub').textContent = 'could not read the port table';
+    body.innerHTML = `<p class="muted">${escapeHtml(e.message)}</p>`;
+  }
+}
+
+function renderPorts(pm) {
+  const sub = document.getElementById('portsSub');
+  const body = document.getElementById('portsBody');
+  if (pm.error) {
+    sub.textContent = '';
+    body.innerHTML = `<p class="muted">${escapeHtml(pm.error)}</p>`;
+    return;
+  }
+  const ports = pm.ports || [];
+  const live = ports.filter(p => p.up).length;
+  sub.textContent = `${live} of ${ports.length} ports up · from the ${pm.source}`;
+
+  const cells = [
+    '<div class="ph">Port</div><div class="ph">Name</div><div class="ph">On it</div><div class="ph ph4 pcol4">State</div>',
+  ];
+  for (const p of ports) {
+    const cls = p.up ? '' : ' pdown';
+    // What is on the port is the answer people came for, so it gets the room:
+    // the name if the hub knows one, the manufacturer if it does not, and the
+    // address either way — an unnamed port is then genuinely unknown rather
+    // than merely unlabelled.
+    const peer = (p.peers || []).map(x => {
+      const who = x.name ? `<b>${escapeHtml(x.name)}</b>` : (x.vendor ? escapeHtml(x.vendor) : 'unknown');
+      const addr = x.ip ? ` ${escapeHtml(x.ip)}` : '';
+      return `<span class="${x.stale ? 'pstale' : ''}">${who}<span class="pmac">${addr}</span>` +
+             (x.stale ? ' — last seen here' : '') + '</span>';
+    }).join('<br>') || '<span class="muted">—</span>';
+
+    const state = [];
+    if (p.up) state.push(p.speed >= 1000 ? (p.speed / 1000) + 'G' : p.speed + 'M');
+    else state.push('down');
+    if (p.poe_on) state.push(`<span class="ppoe">${(+p.poe_watts).toFixed(1)}W</span>`);
+    if (p.traffic > 0) state.push(fmtBytes(p.traffic) + '/s');
+
+    cells.push(
+      `<div class="pnum${cls}">${p.index}</div>` +
+      `<div class="pname${cls}">${escapeHtml(p.name || '')}</div>` +
+      `<div class="ppeer">${peer}</div>` +
+      `<div class="pstat pcol4${cls}">${state.join(' · ')}</div>`);
+  }
+  body.innerHTML = `<div class="ptbl">${cells.join('')}</div>`;
+}
+
+// ---- network map ----
+//
+// Drawn from what the network says about itself. A rack is a tree — a way out
+// at the top, switches under it, everything else hanging off those — so it is
+// laid out as one rather than by simulating a cloud of springs: a tidy tree is
+// the shape people already have in their heads, and it is stable between
+// readings, which a force layout is not.
+
+const topoModal = document.getElementById('topoModal');
+document.getElementById('topoClose').addEventListener('click', () => topoModal.classList.add('hidden'));
+topoModal.addEventListener('click', e => { if (e.target === topoModal) topoModal.classList.add('hidden'); });
+document.getElementById('topoBtn').addEventListener('click', () => openTopology());
+document.getElementById('topoRefresh').addEventListener('click', () => openTopology());
+
+async function openTopology() {
+  document.getElementById('topoSub').textContent = 'reading the map…';
+  document.getElementById('topoBody').innerHTML = '';
+  topoModal.classList.remove('hidden');
+  try {
+    renderTopology(await authJSON('/api/topology', 'GET'));
+  } catch (e) {
+    document.getElementById('topoSub').textContent = '';
+    document.getElementById('topoBody').innerHTML = `<p class="muted">${escapeHtml(e.message)}</p>`;
+  }
+}
+
+// KIND_MARK keeps the drawing honest about what a thing is without needing an
+// icon set: a PDU and a switch are the same object to a controller and are not
+// the same thing on a diagram.
+const KIND_MARK = { gateway: 'gateway', switch: 'switch', ap: 'access point', pdu: 'PDU', device: '' };
+
+function renderTopology(t) {
+  const sub = document.getElementById('topoSub');
+  const body = document.getElementById('topoBody');
+  if (t.error) {
+    sub.textContent = '';
+    body.innerHTML = `<p class="muted">${escapeHtml(t.error)}</p>`;
+    return;
+  }
+  const nodes = t.nodes || [], edges = t.edges || [];
+  const leaves = nodes.reduce((a, n) => a + (n.leaves || 0), 0);
+  sub.textContent = `${nodes.length} devices · ${edges.length} links · ${leaves} things on their ports`;
+
+  // Depth from the root, following links in either direction: the map is
+  // undirected, and which end reported the link says nothing about which is
+  // nearer the way out.
+  const adj = new Map(nodes.map(n => [n.mac, []]));
+  for (const e of edges) {
+    adj.get(e.from)?.push(e.to);
+    adj.get(e.to)?.push(e.from);
+  }
+  const depth = new Map();
+  const root = t.root && adj.has(t.root) ? t.root : (nodes[0] && nodes[0].mac);
+  const q = root ? [root] : [];
+  if (root) depth.set(root, 0);
+  while (q.length) {
+    const cur = q.shift();
+    for (const nb of adj.get(cur) || []) {
+      if (!depth.has(nb)) { depth.set(nb, depth.get(cur) + 1); q.push(nb); }
+    }
+  }
+  // Anything the links never reached still belongs on the map — an adopted
+  // device the controller cannot see is exactly what you want to notice.
+  let orphan = Math.max(0, ...[...depth.values()]) + 1;
+  for (const n of nodes) if (!depth.has(n.mac)) depth.set(n.mac, orphan);
+
+  const rows = new Map();
+  for (const n of nodes) {
+    const d = depth.get(n.mac);
+    if (!rows.has(d)) rows.set(d, []);
+    rows.get(d).push(n);
+  }
+  const depths = [...rows.keys()].sort((a, b) => a - b);
+
+  const W = 190, H = 52, GAPX = 26, GAPY = 74;
+  const pos = new Map();
+  let maxW = 0;
+  for (const d of depths) {
+    const row = rows.get(d).sort((a, b) => a.name.localeCompare(b.name));
+    const rowW = row.length * W + (row.length - 1) * GAPX;
+    maxW = Math.max(maxW, rowW);
+    row.forEach((n, i) => pos.set(n.mac, { x: i * (W + GAPX), y: depths.indexOf(d) * GAPY, n }));
+  }
+  // Centre each row against the widest one, so the tree hangs straight.
+  for (const d of depths) {
+    const row = rows.get(d);
+    const rowW = row.length * W + (row.length - 1) * GAPX;
+    for (const n of row) pos.get(n.mac).x += (maxW - rowW) / 2;
+  }
+
+  const svgW = maxW + 40, svgH = depths.length * GAPY + H + 20;
+  const parts = [];
+  for (const e of edges) {
+    const a = pos.get(e.from), b = pos.get(e.to);
+    if (!a || !b) continue;
+    const x1 = a.x + W / 2 + 20, y1 = a.y + H + 10, x2 = b.x + W / 2 + 20, y2 = b.y + 10;
+    const my = (y1 + y2) / 2;
+    parts.push(`<path class="te ${e.source === 'seen' ? 'te-seen' : ''}" d="M${x1} ${y1} C${x1} ${my} ${x2} ${my} ${x2} ${y2}"/>`);
+    // Port numbers on the line, which is the detail that turns a picture into
+    // something you can act on at the rack. Pushed to opposite sides of the
+    // line: on a link that runs straight down they would otherwise print on top
+    // of each other, which is where the two numbers matter most.
+    const side = x2 >= x1 ? 1 : -1;
+    if (e.from_port) parts.push(`<text class="tport" x="${x1 + 5 * side}" y="${y1 + 11}" text-anchor="${side > 0 ? 'start' : 'end'}">${e.from_port}</text>`);
+    if (e.to_port) parts.push(`<text class="tport" x="${x2 - 5 * side}" y="${y2 - 5}" text-anchor="${side > 0 ? 'end' : 'start'}">${e.to_port}</text>`);
+  }
+  const linked = new Set();
+  for (const e of edges) { linked.add(e.from); linked.add(e.to); }
+  for (const [, p] of pos) {
+    const n = p.n, x = p.x + 20, y = p.y + 10;
+    // Not "gateway · gateway": where the name already says what it is, saying
+    // it again costs the line that would have carried the address.
+    const kind = KIND_MARK[n.kind] === n.name ? '' : (KIND_MARK[n.kind] || '');
+    // A device nothing links to sits in a row of its own, which reads as though
+    // it hangs off the row above. It does not, and that is worth saying: an
+    // adopted device with no link is either off or unplugged.
+    const unlinked = !linked.has(n.mac) ? 'no link reported' : '';
+    const sub2 = [kind, n.ip, n.leaves ? `+${n.leaves}` : '', unlinked].filter(Boolean).join(' · ');
+    parts.push(
+      `<rect class="tn tn-${n.kind}${n.up ? '' : ' tn-down'}" x="${x}" y="${y}" width="${W}" height="${H}" rx="7"/>` +
+      `<text x="${x + 10}" y="${y + 21}">${escapeHtml(clip(n.name, 24))}</text>` +
+      `<text class="tsub" x="${x + 10}" y="${y + 38}">${escapeHtml(sub2)}</text>`);
+  }
+  body.innerHTML =
+    `<div class="topowrap"><svg class="topo" width="${svgW}" height="${svgH}" viewBox="0 0 ${svgW} ${svgH}">${parts.join('')}</svg></div>` +
+    `<p class="topolegend">Solid lines are links the devices themselves report. Dashed lines are inferred from an address seen on a port. ` +
+    `Numbers on a line are the ports at each end. <b>+n</b> is how many other things have been seen on that device's ports — the ▤ button on its card lists them.</p>`;
+}
+
+function clip(s, n) { s = String(s || ''); return s.length > n ? s.slice(0, n - 1) + '…' : s; }

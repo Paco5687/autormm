@@ -157,15 +157,9 @@ func probeOnce(ctx context.Context, id, url string, probes []JSONProbe, auth JSO
 		return nil, fmt.Sprintf("HTTP %d from the device", resp.StatusCode), false
 	}
 
-	// Bounded: this is a status document, and a device answering with a
-	// gigabyte of something is not one.
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	doc, err := decodeStatus(resp)
 	if err != nil {
-		return nil, "could not read the response", false
-	}
-	var doc any
-	if err := json.Unmarshal(body, &doc); err != nil {
-		return nil, "the response is not JSON", false
+		return nil, err.Error(), false
 	}
 
 	var out []Reading
@@ -191,6 +185,55 @@ func probeOnce(ctx context.Context, id, url string, probes []JSONProbe, auth JSO
 		return out, "no value at the path for: " + strings.Join(missing, ", "), false
 	}
 	return out, "", false
+}
+
+// decodeStatus reads a status document off a response.
+//
+// Bounded: this is a status document, and a device answering with a gigabyte of
+// something is not one.
+func decodeStatus(resp *http.Response) (any, error) {
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if err != nil {
+		return nil, fmt.Errorf("could not read the response")
+	}
+	var doc any
+	if err := json.Unmarshal(body, &doc); err != nil {
+		return nil, fmt.Errorf("the response is not JSON")
+	}
+	return doc, nil
+}
+
+// fetchStatus performs the authenticated GET a probe would, and hands back the
+// decoded document rather than readings — for the things that want the shape of
+// the answer rather than a value out of it, such as a switch's port table.
+func fetchStatus(ctx context.Context, id, url string, auth JSONAuth, sess *sessions) (any, error) {
+	client, err := authedClient(ctx, id, auth, sess)
+	if err != nil {
+		return nil, fmt.Errorf("sign-in failed: %s", shortJSONError(err.Error()))
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "autormm-healthcheck")
+	applyRequestAuth(req, auth)
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("%s", shortJSONError(err.Error()))
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		// The held session may simply have expired; drop it so the next attempt
+		// signs in again rather than failing the same way for ever.
+		if auth.Mode == "login" && sess != nil {
+			sess.drop(id)
+		}
+		return nil, fmt.Errorf("HTTP %d — the API refused the credentials", resp.StatusCode)
+	}
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("HTTP %d from the device", resp.StatusCode)
+	}
+	return decodeStatus(resp)
 }
 
 // applyRequestAuth adds whatever goes on the request itself.

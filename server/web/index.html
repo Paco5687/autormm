@@ -98,6 +98,7 @@
           <b>Network devices</b>
           <span id="netSummary" class="muted"></span>
           <span class="grow"></span>
+          <button id="topoBtn" class="btn ghost" title="How everything is connected">Map</button>
           <button id="discoverBtn" class="btn ghost" title="Find devices on the hub's networks">Discover</button>
         </div>
         <div id="netGrid" class="netgrid"></div>
@@ -255,6 +256,37 @@
       <div class="cmd-row"><input id="appURL" class="inv-filter" style="max-width:none" placeholder="jellyfin.example.com — or a full https:// or http:// URL"></div>
       <div class="cmd-row"><input id="appTags" class="inv-filter" style="max-width:none" placeholder="tags (optional)"></div>
       <div class="cmd-row"><button id="appSave" class="btn">Add app</button><span id="appStatus" class="muted"></span></div>
+    </div>
+  </div>
+
+  <!-- The map. Its own sheet, and as wide as it is given. -->
+  <div id="topoModal" class="modal hidden">
+    <div class="modal-card sheet-wide">
+      <div class="modal-head">
+        <div class="modal-title">
+          <div class="name">Network map</div>
+          <div id="topoSub" class="platform muted"></div>
+        </div>
+        <button id="topoRefresh" class="btn ghost" title="Read it again">⟳</button>
+        <button id="topoClose" class="btn ghost" title="Close">✕</button>
+      </div>
+      <div id="topoBody"></div>
+    </div>
+  </div>
+
+  <!-- What is plugged into which port. Its own sheet because a 28-port switch
+       is more than a card can hold, and because the question is asked about one
+       switch at a time. -->
+  <div id="portsModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <div class="modal-title">
+          <div id="portsTitle" class="name">Ports</div>
+          <div id="portsSub" class="platform muted"></div>
+        </div>
+        <button id="portsClose" class="btn ghost" title="Close">✕</button>
+      </div>
+      <div id="portsBody"></div>
     </div>
   </div>
 

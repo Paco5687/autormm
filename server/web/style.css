@@ -169,6 +169,43 @@ a.nc-body:hover .nc-name { text-decoration: underline; }
 }
 .nc-warnbox div + div { margin-top: 3px; }
 
+/* The network map. Wide as it is given, and scrollable rather than squeezed:
+   a rack is a shape, and shrinking it to fit is how it stops being readable. */
+.modal-card.sheet-wide { width: min(1100px, 100%); }
+.topowrap { overflow: auto; max-height: 70vh; }
+.topo { display: block; }
+.topo .tn { fill: var(--panel-2); stroke: var(--line); }
+.topo .tn-down { opacity: .45; }
+.topo .tn-gateway { stroke: var(--accent); }
+.topo text { font-family: var(--sans); fill: var(--text); font-size: 11px; }
+.topo .tsub { fill: var(--muted); font-size: 9.5px; }
+.topo .tport { fill: var(--muted); font-size: 8.5px; font-family: var(--mono); }
+/* A reported neighbour is a fact about a cable; a MAC seen on a port is an
+   inference. Drawn differently, because a guess shown as a fact is worse than
+   no line. */
+.topo .te { stroke: var(--line); stroke-width: 1.5; fill: none; }
+.topo .te-seen { stroke-dasharray: 3 3; opacity: .6; }
+.topo .tn-hit { fill: transparent; cursor: pointer; }
+.topo .tn-hit:hover + .tn, .topo .tn-hit:hover ~ text { opacity: 1; }
+.topolegend { margin-top: 8px; font-size: 10.5px; color: var(--muted); }
+
+/* The port map. A dense table because the whole value is scanning it: which
+   port is that, what is on it, is it live. */
+.ptbl { display: grid; grid-template-columns: auto 1fr auto auto; gap: 1px 12px; font-size: 12px; align-items: baseline; }
+.ptbl .ph { font-size: 9.5px; letter-spacing: .4px; text-transform: uppercase; color: var(--muted); padding-bottom: 4px; }
+.ptbl > div { padding: 3px 0; border-bottom: 1px solid color-mix(in srgb, var(--line) 55%, transparent); min-width: 0; }
+.pnum { font-family: var(--mono); color: var(--muted); }
+.pname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ppeer { font-size: 11px; color: var(--muted); }
+.ppeer b { color: var(--text); font-weight: 600; }
+.pmac { font-family: var(--mono); font-size: 10.5px; }
+.pstat { font-family: var(--mono); font-size: 10.5px; text-align: right; white-space: nowrap; }
+.pdown { opacity: .45; }
+.ppoe { color: var(--accent); }
+/* A port whose occupant has only been remembered, not seen. */
+.pstale { opacity: .6; font-style: italic; }
+@media (max-width: 560px) { .ptbl { grid-template-columns: auto 1fr auto; } .ptbl .pcol4 { display: none; } }
+
 /* A whole table read through one probe — a PDU's outlets, a printer's
    supplies. Two columns of small type: twenty outlets have to cost about as
    much card as four sensors, or the card stops being glanceable. */

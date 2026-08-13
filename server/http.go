@@ -78,6 +78,8 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/audit", s.handleAudit)
 	mux.HandleFunc("/api/discover", s.handleDiscover)
 	mux.HandleFunc("/api/snmpwalk", s.handleSNMPWalk)
+	mux.HandleFunc("/api/ports", s.handlePorts)
+	mux.HandleFunc("/api/topology", s.handleTopology)
 	mux.HandleFunc("/api/wol", s.handleWOL)
 	mux.HandleFunc("/api/eventlog", s.handleEventLog)
 	mux.HandleFunc("/api/hostprefs", s.handleHostPrefs)
