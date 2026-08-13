@@ -50,9 +50,9 @@ function connect() {
   // input=1 tells the hub this viewer will open a second socket for input, so
   // it can ask the agent for one. An agent that predates it simply never
   // attaches, and input keeps going over this socket.
-  ws = new WebSocket(`${base}&caps=${caps}&input=1`);
+  ws = new WebSocket(`${base}&caps=${caps}` + (useInputChannel ? '&input=1' : ''));
   ws.binaryType = 'arraybuffer';
-  connectInput(base);
+  if (useInputChannel) connectInput(base);
 
   ws.onopen = () => {
     reconnectAttempts = 0;
@@ -508,6 +508,25 @@ function send(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj))
 // keystroke behind it, and the lag tracks what is happening on screen rather
 // than how far away the host is. A second socket carries input past it.
 let inputWS = null, inputReady = false;
+
+// Off until it is understood.
+//
+// It does what it was built to do for absolute motion, and disturbs relative
+// motion: with the mouse captured, a game's aim went its own way. Absolute
+// positions are self-correcting — every event carries the whole answer, so a
+// late or reordered one is repaired by the next — while a delta has to be
+// applied exactly once and in order, and anything else accumulates for good.
+// That asymmetry is a strong hint but not yet evidence, so the default is the
+// behaviour that works and this is opt-in until there are measurements.
+const INPUT_CHANNEL_KEY = 'autormm_input_channel';
+let useInputChannel = localStorage.getItem(INPUT_CHANNEL_KEY) === '1';
+const inputChanEl = document.getElementById('inputChan');
+inputChanEl.checked = useInputChannel;
+inputChanEl.addEventListener('change', () => {
+  useInputChannel = inputChanEl.checked;
+  localStorage.setItem(INPUT_CHANNEL_KEY, useInputChannel ? '1' : '0');
+  flashState(useInputChannel ? 'input channel on next connect' : 'input channel off next connect');
+});
 
 function connectInput(base) {
   if (inputWS) { try { inputWS.close(); } catch (e) {} }

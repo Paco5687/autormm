@@ -72,6 +72,11 @@
         <input id="sens" type="range" min="25" max="400" step="5" value="100">
       </label>
     </div>
+    <div class="vp-row">
+      <label class="muted grow" title="Send input over its own connection so it never waits behind video. Off by default: it is under investigation for disturbing relative mouse motion while the mouse is captured.">
+        <input type="checkbox" id="inputChan"> separate input connection
+      </label>
+    </div>
   </div>
   <div class="viewer-wrap">
     <canvas id="screen" width="1280" height="720"></canvas>
