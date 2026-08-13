@@ -164,3 +164,14 @@ func (h *History) Close() error {
 	}
 	return h.db.Close()
 }
+
+// DeleteAgent removes every stored sample for one host.
+func (h *History) DeleteAgent(agentID string) error {
+	if h == nil {
+		return nil
+	}
+	h.insMu.Lock()
+	defer h.insMu.Unlock()
+	_, err := h.db.Exec(`DELETE FROM metrics WHERE agent_id = ?`, agentID)
+	return err
+}

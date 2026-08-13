@@ -248,3 +248,12 @@ func (s *Server) handleHostPrefs(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
+
+// forget drops a host's thresholds and mute window.
+//
+// Left behind, they would be waiting to be silently reapplied to whatever next
+// took the same agent id — and a machine inheriting another's alert thresholds
+// is a bad way to find out this file was never cleaned up.
+func (h *hostPrefs) forget(agentID string) error {
+	return h.set(agentID, HostPref{})
+}

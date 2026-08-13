@@ -342,6 +342,14 @@ a.nc-body:hover .nc-name { text-decoration: underline; }
 .card-head .status { margin-top: 5px; }
 .status.online { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
 .status.offline { background: var(--bad); }
+/* Removal, on an offline card only. Dim until wanted, and red on the way to
+   being pressed — it deletes history, so it should not look like a close box. */
+.card-del {
+  flex: none; opacity: .35; cursor: pointer; background: none; border: 0;
+  color: var(--text); font-size: 13px; line-height: 1; padding: 3px 5px;
+  border-radius: 4px; margin: -2px -3px 0 0;
+}
+.card-del:hover, .card-del:focus-visible { opacity: 1; color: var(--bad); outline: none; }
 /* min-width:0 is what actually lets the name ellipsis inside a flex row. */
 .host { min-width: 0; flex: 1; }
 .host .name {

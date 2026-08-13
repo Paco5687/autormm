@@ -262,6 +262,10 @@ func (s *Server) handleHosts(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	if r.Method == http.MethodDelete {
+		s.removeHost(w, r)
+		return
+	}
 	// Watched-service state lives in the hub rather than in what the agent
 	// reports, so it is attached here on the way out.
 	views := s.store.views()
@@ -574,4 +578,50 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(v)
+}
+
+// removeHost forgets a decommissioned machine.
+//
+// A hub accumulates hosts and never lets go of one: a machine that is retired
+// sits on the dashboard as permanently offline, and the only thing that
+// distinguishes it from one that is broken is knowing it was retired. That is
+// exactly the knowledge a dashboard is supposed to hold.
+//
+// Everything keyed by the agent id goes with it — samples, thresholds, mute
+// window, watched services, alert state. Left behind, that history would be
+// silently reapplied to whatever next took the same id, and a machine
+// inheriting another's alert thresholds is a bad way to discover it.
+//
+// The agent itself is not touched. Uninstalling software on a machine is not
+// what "remove this from the list" asks for, and on a decommissioned one there
+// is nothing left to uninstall.
+func (s *Server) removeHost(w http.ResponseWriter, r *http.Request) {
+	agentID := r.URL.Query().Get("agent")
+	if agentID == "" {
+		http.Error(w, "agent is required", http.StatusBadRequest)
+		return
+	}
+	removed, online := s.store.remove(agentID)
+	if online {
+		s.audit(r, "host:remove", agentID, "", "denied")
+		http.Error(w, "this host is still connected — stop its agent first, "+
+			"or it will register again within seconds", http.StatusConflict)
+		return
+	}
+	if !removed {
+		http.Error(w, "no such host", http.StatusNotFound)
+		return
+	}
+	// Best effort from here: the host is already gone from the registry, and
+	// failing to tidy one store is not a reason to report the removal failed.
+	s.svc.forget(agentID)
+	s.alerter.forget(agentID)
+	if err := s.prefs.forget(agentID); err != nil {
+		log.Printf("remove host %s: prefs: %v", agentID, err)
+	}
+	if err := s.history.DeleteAgent(agentID); err != nil {
+		log.Printf("remove host %s: history: %v", agentID, err)
+	}
+	s.audit(r, "host:remove", agentID, "", "ok")
+	writeJSON(w, http.StatusOK, map[string]any{"removed": agentID})
 }

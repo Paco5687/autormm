@@ -441,6 +441,10 @@
           <div class="name"><span class="osic"></span><span class="nametext"></span></div>
           <div class="platform muted"></div>
         </div>
+        <!-- Only on an offline host. Removing a connected one is refused by the
+             hub anyway — it would register again within seconds — so offering
+             the button there would only be an invitation to be told no. -->
+        <button class="card-del hidden" title="Remove this host">✕</button>
       </div>
       <!-- Metrics come before the alert chips so that CPU/MEM sit at the same
            height on every card. With the chips above them, one alerting host

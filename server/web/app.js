@@ -554,6 +554,28 @@ function updateCard(el, h) {
   el.classList.toggle('is-offline', !h.online);
   el.classList.toggle('is-warn', !!(h.online && (h.alerts || []).length));
 
+  // Removing a decommissioned machine. Offered only while it is offline: the
+  // hub refuses to remove a connected host, since it would register again
+  // within seconds and look like the button had not worked.
+  //
+  // Assigned rather than added: cards are reused across polls, and an added
+  // listener would stack up one deletion per poll survived.
+  const del = el.querySelector('.card-del');
+  del.classList.toggle('hidden', !!h.online);
+  del.onclick = async (e) => {
+    e.preventDefault();
+    e.stopPropagation(); // removing must not also open the host
+    const name = h.hostname || h.agent_id;
+    if (!confirm(`Remove ${name} from this dashboard?\n\n` +
+      `Its history, alert thresholds and watched services are deleted too. ` +
+      `The agent on the machine is not touched — if it is still installed and ` +
+      `runs again, the host comes back.`)) return;
+    try {
+      await authJSON('/api/hosts?agent=' + encodeURIComponent(h.agent_id), 'DELETE');
+      poll();
+    } catch (err) { alert('Could not remove: ' + err.message); }
+  };
+
   const alerts = el.querySelector('.alerts');
   alerts.innerHTML = '';
   for (const a of (h.alerts || [])) {

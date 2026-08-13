@@ -379,3 +379,16 @@ func (n *notifier) postNtfy(al Alert) {
 		resp.Body.Close()
 	}
 }
+
+// forget drops every alert state for one host, so a removed machine cannot go
+// on firing — or, worse, resolve later and send a recovery notice for something
+// that no longer exists.
+func (a *Alerter) forget(agentID string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for k := range a.states {
+		if k.agent == agentID {
+			delete(a.states, k)
+		}
+	}
+}

@@ -337,3 +337,24 @@ func ring(buf []float64, v float64, max int) []float64 {
 	}
 	return buf
 }
+
+// remove drops a host from the registry.
+//
+// It refuses while the agent is still connected, and says so, because removing
+// one that is running is a no-op with a delay on it: the agent re-registers
+// within seconds and the card comes back, which reads as the button being
+// broken. Decommissioning a machine means its agent is gone, so this is the
+// case that matters; anything else wants the agent stopped first.
+func (s *Store) remove(agentID string) (removed, online bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	h := s.hosts[agentID]
+	if h == nil {
+		return false, false
+	}
+	if h.anyConn() {
+		return false, true
+	}
+	delete(s.hosts, agentID)
+	return true, false
+}
