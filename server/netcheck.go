@@ -63,6 +63,11 @@ type NetCheck struct {
 	SNMPAuthPass  string `json:"snmp_auth_pass,omitempty"`
 	SNMPPrivProto string `json:"snmp_priv_proto,omitempty"` // DES | AES | AES192 | AES256
 	SNMPPrivPass  string `json:"snmp_priv_pass,omitempty"`
+	// SNMPOff is a request field, never stored: it says the operator chose "SNMP
+	// off" rather than merely leaving the boxes alone. Without it, turning SNMP
+	// off is indistinguishable from an edit that did not retype the community,
+	// and the untouched-secret rule puts the old one straight back.
+	SNMPOff bool `json:"snmp_off,omitempty"`
 	// MACLearned marks a MAC the hub worked out itself rather than one the
 	// operator supplied. A learned MAC is a hint: if it cannot be found the
 	// check falls back to the recorded address, because the device was being
@@ -789,13 +794,31 @@ func (s *Server) handleNetChecks(w http.ResponseWriter, r *http.Request) {
 		if c.ID == "" {
 			c.ID = auth.RandomID(10)
 		}
+		// Turning SNMP off means off.
+		//
+		// Emptying a secret box keeps what is stored, which guards against
+		// blanking a credential by accident. But choosing "SNMP off" is a
+		// decision rather than an omission, and the two were indistinguishable:
+		// the form cleared the community and the untouched-secret rule put it
+		// straight back, so the device went on being polled with the stored
+		// credential and the version reverted to the automatic fallback.
+		snmpOff := c.SNMPOff
+		c.SNMPOff = false // a request flag, never part of what is stored
+		if snmpOff {
+			c.SNMP, c.SNMPVersion = "", ""
+			c.SNMPUser, c.SNMPAuthPass, c.SNMPPrivPass = "", "", ""
+			c.SNMPAuthProto, c.SNMPPrivProto = "", ""
+		}
+
 		// An edit that did not retype the secrets keeps the stored ones, which
 		// is what makes redacting them on the way out safe.
 		s.netChecks.mu.Lock()
 		if old := s.netChecks.checks[c.ID]; old != nil {
-			c.SNMP = keptSecret(c.SNMP, old.SNMP)
-			c.SNMPAuthPass = keptSecret(c.SNMPAuthPass, old.SNMPAuthPass)
-			c.SNMPPrivPass = keptSecret(c.SNMPPrivPass, old.SNMPPrivPass)
+			if !snmpOff {
+				c.SNMP = keptSecret(c.SNMP, old.SNMP)
+				c.SNMPAuthPass = keptSecret(c.SNMPAuthPass, old.SNMPAuthPass)
+				c.SNMPPrivPass = keptSecret(c.SNMPPrivPass, old.SNMPPrivPass)
+			}
 			c.JSONAuth.Pass = keptSecret(c.JSONAuth.Pass, old.JSONAuth.Pass)
 			c.JSONAuth.Token = keptSecret(c.JSONAuth.Token, old.JSONAuth.Token)
 			c.JSONAuth.LoginBody = keptSecret(c.JSONAuth.LoginBody, old.JSONAuth.LoginBody)

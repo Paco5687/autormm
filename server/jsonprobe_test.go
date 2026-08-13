@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -485,5 +486,172 @@ func TestWildcardFallsBackToPosition(t *testing.T) {
 	got, _ := expandProbe(v, JSONProbe{Label: "Cells", Path: "cells[*name].v"})
 	if len(got) != 2 || got[0].Label != "1" || got[1].Label != "2" {
 		t.Fatalf("got %+v", got)
+	}
+}
+
+// Device counters are raw, and raw is unreadable on a card: a switch port's
+// throughput arrives as bytes per second and its lifetime traffic as a plain
+// count of bytes.
+func TestLargeFiguresAreReadable(t *testing.T) {
+	for _, c := range []struct {
+		in   float64
+		unit string
+		want string
+	}{
+		{622343.54, "B/s", "622kB/s"},
+		{62234.3, "B/s", "62.2kB/s"},
+		{6223.4, "B/s", "6223.4B/s"}, // under the threshold: still exact
+		{1708467592509, "B", "1.71TB"},
+		{1437681855, "", "1.44G"},
+		{9999, "", "9999"},
+		{10000, "", "10.0k"},
+		{9999.5, "", "9999.5"},
+		{999999, "", "1000k"},
+		{-622343.54, "B/s", "-622kB/s"},
+		{0, "W", "0W"},
+		{45, "°C", "45°C"},
+		{225.843, "W", "225.84W"},
+	} {
+		got := readingFrom(JSONProbe{Path: "x", Unit: c.unit}, c.in)
+		if got.Text != c.want {
+			t.Errorf("%v%s = %q, want %q", c.in, c.unit, got.Text, c.want)
+		}
+		// The number itself is untouched — only how it is written changes.
+		if got.Num != c.in {
+			t.Errorf("%v: Num = %v", c.in, got.Num)
+		}
+	}
+}
+
+// A reading with a full scale is drawn as a bar, and the figure beside a bar is
+// a percentage: shortening that would be a loss, not a kindness.
+func TestAFigureBesideABarStaysExact(t *testing.T) {
+	got := readingFrom(JSONProbe{Path: "x", Unit: "", Max: 100000}, 62234.5)
+	if got.Text != "62234.5" {
+		t.Errorf("text = %q, want the exact figure", got.Text)
+	}
+}
+
+// Which end of a bar is alarming depends on what is being measured, and only
+// the probe knows: a full disk and a full battery are the same bar and opposite
+// news. Getting it wrong is worse than not colouring at all — a link quality of
+// 96% drawn in the same red as a disk at 96% teaches you to ignore the colour.
+func TestAProbeSaysWhichEndIsHealthy(t *testing.T) {
+	high := readingFrom(JSONProbe{Label: "Health", Unit: "%", Max: 100, Good: "high"}, 96.0)
+	if !high.GoodHigh {
+		t.Error("good=high was not carried to the reading")
+	}
+	if high.Text != "96%" {
+		t.Errorf("text = %q", high.Text)
+	}
+	// The default is unchanged, which is what keeps every existing probe right.
+	low := readingFrom(JSONProbe{Label: "CPU", Unit: "%", Max: 100}, 96.0)
+	if low.GoodHigh {
+		t.Error("a probe with no direction was treated as high-is-good")
+	}
+	// Spelling is the operator's, not a keyword they have to match exactly.
+	for _, spelling := range []string{"high", "HIGH", " High "} {
+		if r := readingFrom(JSONProbe{Max: 100, Good: spelling}, 1.0); !r.GoodHigh {
+			t.Errorf("%q was not understood", spelling)
+		}
+	}
+	for _, other := range []string{"", "low", "LOW", "nonsense"} {
+		if r := readingFrom(JSONProbe{Max: 100, Good: other}, 1.0); r.GoodHigh {
+			t.Errorf("%q was read as high-is-good", other)
+		}
+	}
+}
+
+// The sign-in body is built rather than typed, and the password survives an
+// edit: a password inside a hand-written blob cannot be kept the way a password
+// field is, so every unrelated change meant retyping it.
+func TestSignInBodyIsBuiltFromTheFields(t *testing.T) {
+	got := loginBody(JSONAuth{Mode: "login", User: "readonly", Pass: "hunter2"})
+	var m map[string]string
+	if err := json.Unmarshal([]byte(got), &m); err != nil {
+		t.Fatalf("not JSON: %q", got)
+	}
+	if m["username"] != "readonly" || m["password"] != "hunter2" {
+		t.Errorf("body = %q", got)
+	}
+}
+
+// A password is allowed to contain a quote or a backslash. Concatenated into a
+// string it would produce a malformed body, which comes back as an
+// authentication failure — the one error that sends someone to check their
+// credentials rather than the thing that is actually broken.
+func TestAPasswordWithPunctuationSurvives(t *testing.T) {
+	for _, pass := range []string{`he said "no"`, `back\slash`, "new\nline", `{"nested":"json"}`, "üñïçø∂é"} {
+		var m map[string]string
+		if err := json.Unmarshal([]byte(loginBody(JSONAuth{User: "u", Pass: pass})), &m); err != nil {
+			t.Errorf("password %q produced invalid JSON: %v", pass, err)
+			continue
+		}
+		if m["password"] != pass {
+			t.Errorf("password %q came back as %q", pass, m["password"])
+		}
+	}
+}
+
+// A device configured before the fields existed has a body stored. Filling in
+// the fields has to take over, or moving to them would require clearing
+// something first — and an empty box is how an edit says "unchanged", so
+// clearing it is exactly what the operator cannot do.
+func TestFieldsWinOverAStoredBody(t *testing.T) {
+	stored := `{"username":"old","password":"old"}`
+	got := loginBody(JSONAuth{User: "new", Pass: "fresh", LoginBody: stored})
+	var m map[string]string
+	if err := json.Unmarshal([]byte(got), &m); err != nil {
+		t.Fatal(err)
+	}
+	if m["username"] != "new" || m["password"] != "fresh" {
+		t.Errorf("body = %q, want the fields", got)
+	}
+	// And with no username the written-out body is still what is posted, which
+	// is what keeps an API with different field names working.
+	if b := loginBody(JSONAuth{LoginBody: `{"user":"u","pass":"p"}`}); b != `{"user":"u","pass":"p"}` {
+		t.Errorf("override = %q", b)
+	}
+}
+
+// End to end: the fields sign in, and the password is one the operator did not
+// have to escape.
+func TestSigningInWithTheFields(t *testing.T) {
+	const pass = `p"a's\sw0rd`
+	var seen string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/login", func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		var m map[string]string
+		if json.Unmarshal(b, &m) != nil || m["username"] != "ro" || m["password"] != pass {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		seen = string(b)
+		http.SetCookie(w, &http.Cookie{Name: "s", Value: "1", Path: "/"})
+		w.Write([]byte(`{}`))
+	})
+	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
+		if _, err := r.Cookie("s"); err != nil {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Write([]byte(`{"load":42.5}`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	readings, msg := probeJSONAuth(context.Background(), "pdu", srv.URL+"/status",
+		[]JSONProbe{{Label: "Load", Path: "load", Unit: "W"}},
+		JSONAuth{Mode: "login", LoginURL: srv.URL + "/api/login", User: "ro", Pass: pass},
+		newSessions())
+	if msg != "" {
+		t.Fatalf("message: %s", msg)
+	}
+	if len(readings) != 1 || readings[0].Text != "42.5W" {
+		t.Fatalf("readings = %+v", readings)
+	}
+	if seen == "" {
+		t.Error("the sign-in was never accepted")
 	}
 }

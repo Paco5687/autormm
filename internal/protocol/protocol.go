@@ -257,6 +257,27 @@ type CursorMsg struct {
 	X   int    `json:"x"`
 	Y   int    `json:"y"`
 	Vis bool   `json:"vis"`
+	// Shape identifies which pointer image this is, matching a CursorShapeMsg
+	// already sent. Zero means the platform cannot report shapes and the viewer
+	// should keep its generic arrow.
+	Shape uint64 `json:"shape,omitempty"`
+}
+
+// CursorShapeMsg carries what the pointer looks like, sent once per shape.
+//
+// What the pointer looks like is information the picture does not contain: a
+// caret over a text field, a resize arrow on a window edge, and in a game a
+// different icon for every kind of thing you can point at. The hardware cursor
+// is composited by the display rather than drawn into the framebuffer, so
+// screen capture never includes it.
+type CursorShapeMsg struct {
+	T    string `json:"t"` // always "cursorimg"
+	ID   uint64 `json:"id"`
+	W    int    `json:"w"`
+	H    int    `json:"h"`
+	HotX int    `json:"hx"`
+	HotY int    `json:"hy"`
+	PNG  string `json:"png"` // base64 PNG, RGBA
 }
 
 // TermMsg is the terminal media protocol (viewer/CLI <-> agent). Output from
@@ -400,9 +421,9 @@ type HostView struct {
 	Alerts       []string  `json:"alerts,omitempty"`
 	// Services is the last observed state of each watched service, running or
 	// not. Absent for a host with none configured or none yet polled.
-	Services map[string]bool `json:"services,omitempty"`
-	CPUHistory   []float64 `json:"cpu_history,omitempty"`
-	MemHistory   []float64 `json:"mem_history,omitempty"`
+	Services   map[string]bool `json:"services,omitempty"`
+	CPUHistory []float64       `json:"cpu_history,omitempty"`
+	MemHistory []float64       `json:"mem_history,omitempty"`
 }
 
 // SessionRequest is POSTed by a client to start a remote-desktop or terminal
@@ -429,18 +450,18 @@ const (
 	// InputMouseMoveRel carries movement rather than a position, for an
 	// application that has captured the pointer and is steering it itself.
 	InputMouseMoveRel = "mmrel"
-	InputMouseDown = "mdown"
-	InputMouseUp   = "mup"
-	InputScroll    = "scroll"
-	InputKeyDown   = "kdown"
-	InputKeyUp     = "kup"
-	InputSetParams = "params"  // change fps/quality mid-session
-	InputDisplay   = "display" // switch the captured display
-	InputSetCodec  = "codec"   // switch the video codec mid-session
-	InputClipboard = "clip"    // viewer -> host: set the host clipboard (text)
-	InputSetRes    = "setres"  // viewer -> host: change a display's resolution
-	InputType      = "type"    // viewer -> host: type a string (Unicode, e.g. from a soft keyboard)
-	InputRxRate    = "rx"      // viewer -> host: bitrate the viewer is actually receiving
+	InputMouseDown    = "mdown"
+	InputMouseUp      = "mup"
+	InputScroll       = "scroll"
+	InputKeyDown      = "kdown"
+	InputKeyUp        = "kup"
+	InputSetParams    = "params"  // change fps/quality mid-session
+	InputDisplay      = "display" // switch the captured display
+	InputSetCodec     = "codec"   // switch the video codec mid-session
+	InputClipboard    = "clip"    // viewer -> host: set the host clipboard (text)
+	InputSetRes       = "setres"  // viewer -> host: change a display's resolution
+	InputType         = "type"    // viewer -> host: type a string (Unicode, e.g. from a soft keyboard)
+	InputRxRate       = "rx"      // viewer -> host: bitrate the viewer is actually receiving
 )
 
 // ClipMsg carries clipboard text from the host to the viewer (text frame on the

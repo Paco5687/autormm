@@ -64,6 +64,14 @@
         <input id="quality" type="range" min="20" max="90" value="90">
       </label>
     </div>
+    <!-- Only meaningful while the mouse is captured, so it sits with the other
+         session settings rather than in the toolbar. -->
+    <div class="vp-row">
+      <label class="muted grow" title="How far the host pointer moves for a given movement of yours, while the mouse is captured (⦿).">
+        mouse speed <span id="sensVal" class="mono">1.0×</span>
+        <input id="sens" type="range" min="25" max="400" step="5" value="100">
+      </label>
+    </div>
   </div>
   <div class="viewer-wrap">
     <canvas id="screen" width="1280" height="720"></canvas>

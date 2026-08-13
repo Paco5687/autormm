@@ -371,10 +371,40 @@ function showNotice(text) {
 // immediately and let the host's reports take over once they stop.
 let localCursorUntil = 0;
 
+// Shapes the host has described, by id. What the pointer looks like is
+// information the picture does not carry — the hardware cursor is composited by
+// the display rather than drawn into the framebuffer, so capture never includes
+// it — and it is worth having: a caret over a text field, a resize arrow on an
+// edge, and in a game a different icon for every kind of target.
+const cursorShapes = new Map();
+let curShape = null;
+
+function applyShape(sh) {
+  curShape = sh || null;
+  if (!sh) {
+    // Back to the built-in arrow, which is what the stylesheet already draws.
+    rcursor.style.backgroundImage = '';
+    rcursor.style.width = rcursor.style.height = '';
+    return;
+  }
+  rcursor.style.backgroundImage = `url(${sh.url})`;
+}
+
 function placeCursor(x, y) {
   const r = canvas.getBoundingClientRect();
-  rcursor.style.left = (r.left + x * (r.width / canvas.width)) + 'px';
-  rcursor.style.top = (r.top + y * (r.height / canvas.height)) + 'px';
+  const sx = r.width / canvas.width, sy = r.height / canvas.height;
+  // A cursor is described in host pixels, so it scales with the picture — on a
+  // phone showing a 1080p desktop, an unscaled cursor would be enormous.
+  if (curShape) {
+    rcursor.style.width = (curShape.w * sx) + 'px';
+    rcursor.style.height = (curShape.h * sy) + 'px';
+  }
+  // The hotspot is the pixel that does the pointing, and it is not the corner:
+  // a resize arrow points from its middle, a caret from its centre line.
+  const hx = curShape ? curShape.hx * sx : 2;
+  const hy = curShape ? curShape.hy * sy : 2;
+  rcursor.style.left = (r.left + x * sx - hx) + 'px';
+  rcursor.style.top = (r.top + y * sy - hy) + 'px';
   rcursor.classList.remove('hidden');
 }
 
@@ -386,6 +416,13 @@ function predictCursor(p) {
 }
 
 function updateCursor(m) {
+  // The shape is followed even when the position is not: a cursor that changed
+  // appearance without moving — hovering onto a target — is exactly the change
+  // worth seeing.
+  if (m.shape !== undefined) {
+    const sh = m.shape ? cursorShapes.get(m.shape) : null;
+    if ((sh || null) !== curShape) applyShape(sh);
+  }
   if (!m.vis) { rcursor.classList.add('hidden'); return; }
   // Ignore stale echoes of our own movement; they lag behind the local position
   // and would drag the pointer backwards.
@@ -410,6 +447,12 @@ function onMessage(ev) {
       else if (msg.t === 'error') { stateEl.textContent = msg.message; stateEl.className = 'pill dead'; }
       else if (msg.t === 'notice') showNotice(msg.message);
       else if (msg.t === 'cursor') updateCursor(msg);
+      else if (msg.t === 'cursorimg') {
+        cursorShapes.set(msg.id, {
+          url: 'data:image/png;base64,' + msg.png,
+          w: msg.w, h: msg.h, hx: msg.hx, hy: msg.hy,
+        });
+      }
       else if (msg.t === 'displays') renderDisplays(msg);
       else if (msg.t === 'caps') renderCodecs(msg);
       else if (msg.t === 'clip') setLocalClipboard(msg.d);
@@ -614,11 +657,40 @@ document.addEventListener('pointerlockchange', () => {
 // pointer to whether this page is being painted.
 const REL_MS = 8; // ~125 Hz, well past what the host can use
 let relDX = 0, relDY = 0, relTimer = null;
+
+// How far the host pointer moves for a given movement of yours. The right value
+// depends on the application's own sensitivity, so it is a setting rather than
+// a constant.
+const sensEl = document.getElementById('sens');
+const sensValEl = document.getElementById('sensVal');
+let sensitivity = parseFloat(localStorage.getItem('autormm_sens') || '1') || 1;
+function applySens() {
+  sensEl.value = String(Math.round(sensitivity * 100));
+  sensValEl.textContent = sensitivity.toFixed(1) + '×';
+}
+sensEl.addEventListener('input', () => {
+  sensitivity = Math.max(0.25, parseInt(sensEl.value, 10) / 100);
+  localStorage.setItem('autormm_sens', String(sensitivity));
+  sensValEl.textContent = sensitivity.toFixed(1) + '×';
+});
+applySens();
+
+// Scaling loses the fraction, and the fraction is most of a slow movement: at
+// 1.4× a one-pixel twitch rounds to 1 every time, so aiming carefully is the
+// case that suffers. The remainder is carried into the next send instead, which
+// is what makes a scaled pointer keep its precision.
+let relCarryX = 0, relCarryY = 0;
 function flushRel() {
   relTimer = null;
   if (!relDX && !relDY) return;
-  send({ t: 'mmrel', dx: relDX, dy: relDY });
+  const fx = relDX * sensitivity + relCarryX;
+  const fy = relDY * sensitivity + relCarryY;
+  const dx = Math.trunc(fx), dy = Math.trunc(fy);
+  relCarryX = fx - dx;
+  relCarryY = fy - dy;
   relDX = relDY = 0;
+  if (!dx && !dy) return;
+  send({ t: 'mmrel', dx, dy });
 }
 
 let lastMove = 0;

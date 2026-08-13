@@ -685,9 +685,12 @@ a.nc-body:hover .nc-name { text-decoration: underline; }
 }
 .notice.hidden { display: none; }
 
+/* Width/height and the background image are set from JS once the host has
+   described its actual pointer; this is the fallback for a platform that
+   cannot report one. The hotspot offset is applied to left/top rather than by
+   transform, because the offset depends on the shape. */
 .rcursor {
   position: fixed; width: 22px; height: 22px; z-index: 20; pointer-events: none;
-  transform: translate(-2px, -2px);
   background: no-repeat center/contain
     url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M4 2 L4 19 L8.6 14.7 L11.4 20.6 L13.9 19.5 L11.1 13.7 L17 13.7 Z' fill='white' stroke='black' stroke-width='1.3' stroke-linejoin='round'/></svg>");
 }

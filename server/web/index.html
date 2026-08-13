@@ -342,7 +342,7 @@
       </div>
       <div class="cmd-row">
         <textarea id="netJSONProbes" class="sc-content" style="height:84px"
-                  placeholder="One per line:  Label | path | unit | full scale&#10;Tank temp | istat.inputs[name=Tmp].value | °F&#10;pH | istat.inputs[name=pH].value&#10;Ink | supplies[0].level | % | 100"></textarea>
+                  placeholder="One per line:  Label | path | unit | full scale | good end&#10;Tank temp | istat.inputs[name=Tmp].value | °F&#10;pH | istat.inputs[name=pH].value&#10;Ink | supplies[0].level | % | 100&#10;Signal | wifi.quality | % | 100 | high"></textarea>
       </div>
       <div class="cmd-row">
         <select id="netJSONPreset" class="inv-filter">
@@ -359,7 +359,9 @@
         an item out of a list by one of its fields: <code>outlet_table[name=Rack].outlet_power</code>
         — or read the whole list at once with <code>[*name]</code>, which gives
         one reading per entry, labelled by that field, drawn together and
-        compactly.
+        compactly. A fifth field, <code>high</code>, says a full bar is the good
+        news — for a signal, a battery, a health score. Left off, a full bar is
+        the alarming one, which is right for processor, memory and disk.
       </p>
       <div class="cmd-row">
         <select id="netJSONAuth" class="inv-filter">
@@ -369,7 +371,9 @@
           <option value="login">Sign in and keep the session</option>
         </select>
       </div>
-      <div class="json-basic hidden">
+      <!-- Shared by HTTP basic and by a sign-in: both want a username and a
+           password, and there is no reason to ask for them differently. -->
+      <div class="json-userpass hidden">
         <div class="cmd-row">
           <input id="netJSONUser" class="inv-filter" placeholder="username" autocomplete="off" data-1p-ignore>
           <input id="netJSONPass" class="inv-filter" type="password" placeholder="password" autocomplete="off" data-1p-ignore data-lpignore="true">
@@ -386,14 +390,16 @@
                  placeholder="sign-in URL — e.g. https://unifi.lan/api/login">
         </div>
         <div class="cmd-row">
-          <input id="netJSONLoginBody" class="inv-filter" style="max-width:none" type="password"
-                 placeholder='sign-in body, as JSON — {"username":"...","password":"..."}'
+          <input id="netJSONLoginBody" class="inv-filter" style="max-width:none"
+                 placeholder='optional — a different sign-in body, as JSON'
                  autocomplete="off" data-1p-ignore data-lpignore="true">
         </div>
         <p class="muted" style="font-size:11.5px;margin:2px 0 0">
-          The body is posted as JSON and whatever cookies come back are reused
-          until they stop working. It holds a password, so it is never sent back
-          to this page once saved.
+          The username and password above are posted as
+          <code>{"username":…,"password":…}</code>, and whatever cookies come
+          back are reused until they stop working. The box is only for an API
+          that names its fields something else: it is used when no username is
+          given, so it must carry the credentials itself.
         </p>
       </div>
 

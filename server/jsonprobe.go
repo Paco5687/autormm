@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/http/cookiejar"
 	"strconv"
@@ -33,6 +34,15 @@ type JSONProbe struct {
 	// Max turns the reading into a bar rather than a figure. Zero leaves it a
 	// figure, which is right for a temperature and wrong for a percentage.
 	Max float64 `json:"max,omitempty"`
+	// Good says which end of the scale is the healthy one: "high" for a signal
+	// strength, a battery, a satisfaction score. Empty means low, which is right
+	// for the readings a dashboard usually carries — processor, memory, disk —
+	// and is why it is the default.
+	//
+	// Without this the colour is a guess dressed as a fact: a link quality of
+	// 96% was drawn in the same alarming red as a disk at 96%, which is exactly
+	// backwards and undermines the one thing a colour is for.
+	Good string `json:"good,omitempty"`
 }
 
 // Reading is one value a probe pulled out.
@@ -49,6 +59,8 @@ type Reading struct {
 	// many. The card draws those together and densely, because twenty outlets
 	// listed the way two sensors are listed is a card nobody can read.
 	Group string `json:"group,omitempty"`
+	// GoodHigh flips which end of the bar is alarming.
+	GoodHigh bool `json:"good_high,omitempty"`
 }
 
 // JSONAuth is how to authenticate to a status API.
@@ -207,7 +219,7 @@ func authedClient(ctx context.Context, id string, auth JSONAuth, sess *sessions)
 	client := clientWithJar(jar)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, auth.LoginURL,
-		strings.NewReader(auth.LoginBody))
+		strings.NewReader(loginBody(auth)))
 	if err != nil {
 		return nil, err
 	}
@@ -226,6 +238,37 @@ func authedClient(ctx context.Context, id string, auth JSONAuth, sess *sessions)
 	return client, nil
 }
 
+// loginBody is what gets posted to sign in.
+//
+// Built from the username and password: a controller wants
+// {"username":…,"password":…} and asking an operator to type that as JSON is
+// asking them to get a quote wrong at the end of a long day — and to retype a
+// password every time they touch anything else on the device, since a password
+// inside a blob cannot be kept the way a password field is.
+//
+// Encoded rather than concatenated. A password is allowed to contain a quote or
+// a backslash, and a hand-built string would produce a malformed body that
+// fails as an authentication error — the one error message guaranteed to send
+// someone looking at their credentials rather than at this.
+func loginBody(auth JSONAuth) string {
+	// A username wins over a written-out body. That ordering is what lets a
+	// device configured the old way be moved to the fields without having to
+	// clear anything first: filling them in is the whole gesture. The body is
+	// still there for an API that names its fields something else, which is the
+	// only reason it existed.
+	if strings.TrimSpace(auth.User) == "" {
+		return strings.TrimSpace(auth.LoginBody)
+	}
+	b, err := json.Marshal(map[string]string{
+		"username": auth.User,
+		"password": auth.Pass,
+	})
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
 // clientWithJar mirrors appClient's settings — self-signed certificates are the
 // norm on this gear — but follows redirects, which a login flow depends on.
 func clientWithJar(jar http.CookieJar) *http.Client {
@@ -238,7 +281,8 @@ func clientWithJar(jar http.CookieJar) *http.Client {
 
 // readingFrom renders one extracted value.
 func readingFrom(p JSONProbe, v any) Reading {
-	r := Reading{Label: p.Label, Unit: p.Unit, Max: p.Max}
+	r := Reading{Label: p.Label, Unit: p.Unit, Max: p.Max,
+		GoodHigh: strings.EqualFold(strings.TrimSpace(p.Good), "high")}
 	switch n := v.(type) {
 	case float64:
 		r.Num, r.Numeric = n, true
@@ -258,8 +302,46 @@ func readingFrom(p JSONProbe, v any) Reading {
 		r.Text = fmt.Sprintf("%v", v)
 		return r
 	}
-	r.Text = trimFloat(r.Num) + p.Unit
+	r.Text = humanNumber(r.Num, p.Max) + p.Unit
 	return r
+}
+
+// humanNumber prints a figure at the size a person reads it at.
+//
+// Device counters are raw: a switch port's throughput arrives as bytes per
+// second, its lifetime traffic as a plain count of bytes. Printed literally
+// that is "622343.54B/s" and "1708467592509B" — technically exact, and on a
+// card at ten point it is a wall of digits nobody reads. Three significant
+// figures and an SI prefix says the same thing.
+//
+// Not applied to anything with a full scale: that is drawn as a bar, where the
+// number beside it is a percentage and belongs exact.
+func humanNumber(f, max float64) string {
+	if max > 0 {
+		return trimFloat(f)
+	}
+	abs := math.Abs(f)
+	if abs < 10000 {
+		return trimFloat(f)
+	}
+	units := []string{"k", "M", "G", "T", "P"}
+	for i, u := range units {
+		abs /= 1000
+		if abs < 1000 || i == len(units)-1 {
+			v := f / math.Pow(1000, float64(i+1))
+			// Three significant figures: 1.71T, 62.2k, 622k — enough to compare
+			// two ports at a glance, which is what the number is for.
+			switch {
+			case math.Abs(v) < 10:
+				return strconv.FormatFloat(v, 'f', 2, 64) + u
+			case math.Abs(v) < 100:
+				return strconv.FormatFloat(v, 'f', 1, 64) + u
+			default:
+				return strconv.FormatFloat(v, 'f', 0, 64) + u
+			}
+		}
+	}
+	return trimFloat(f)
 }
 
 // trimFloat prints a number the way someone would write it: no trailing zeros,

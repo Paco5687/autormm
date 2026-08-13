@@ -4,6 +4,7 @@ package capture
 
 import (
 	"fmt"
+	"image"
 
 	"github.com/jezek/xgb"
 	"github.com/jezek/xgb/xproto"
@@ -36,3 +37,10 @@ func (c *x11Cursor) Close() error {
 	c.conn.Close()
 	return nil
 }
+
+// Shape is not implemented on X11 here: reading the pointer image needs the
+// XFixes extension, and the viewer's generic arrow is a fair likeness of what
+// an X11 desktop shows most of the time. Reporting no shape is what keeps it.
+func (c *x11Cursor) Shape() (uint64, bool) { return 0, false }
+
+func (c *x11Cursor) ShapeImage(uint64) (*image.RGBA, int, int, bool) { return nil, 0, 0, false }

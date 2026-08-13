@@ -1778,12 +1778,19 @@ async function savePolicy(clear) {
 // would be tidier to look at and far more tedious to fill in for six sensors.
 function parseProbes(text) {
   return String(text).split('\n').map(line => {
-    const [label, path, unit, max] = line.split('|').map(x => x.trim());
+    const [label, path, unit, max, good] = line.split('|').map(x => x.trim());
     if (!label || !path) return null;
     // A fourth field is what the reading is a fraction of, which is what turns
     // it from a figure into a bar. Optional, because most readings are not a
     // fraction of anything: a temperature has no ceiling.
-    return { label, path, unit: unit || '', max: parseFloat(max) || 0 };
+    //
+    // A fifth says which end of that scale is the healthy one. Empty means low,
+    // which is right for processor, memory and disk — and wrong for a signal or
+    // a battery, where a full bar is the good news.
+    return {
+      label, path, unit: unit || '', max: parseFloat(max) || 0,
+      good: /^high$/i.test(good || '') ? 'high' : '',
+    };
   }).filter(Boolean);
 }
 
@@ -1793,7 +1800,7 @@ function parseProbes(text) {
 // its separator; only trailing empties can be dropped.
 function formatProbes(probes) {
   return (probes || []).map(x => {
-    const f = [x.label, x.path, x.unit || '', x.max ? String(x.max) : ''];
+    const f = [x.label, x.path, x.unit || '', x.max ? String(x.max) : '', x.good || ''];
     while (f.length > 2 && !f[f.length - 1]) f.pop();
     return f.join(' | ');
   }).join('\n');
@@ -1827,6 +1834,8 @@ const JSON_PRESETS = {
   ],
   'unifi-ap': mac => [
     `Clients | data[mac=${mac}].num_sta`,
+    // The controller's own experience score, where a full bar is the good news.
+    `Health | data[mac=${mac}].satisfaction | % | 100 | high`,
     `CPU | data[mac=${mac}].system-stats.cpu | % | 100`,
     `Memory | data[mac=${mac}].system-stats.mem | % | 100`,
   ],
@@ -2288,12 +2297,18 @@ function shortSupply(name) {
 function jsonMetrics(readings) {
   return (readings || [])
     .filter(r => r.numeric && r.max > 0)
-    .map(r => ({
-      label: r.label.slice(0, 6).toUpperCase(),
-      percent: (r.num / r.max) * 100,
-      text: r.text,
-      level: r.num / r.max >= 0.9,
-    }));
+    .map(r => {
+      const frac = r.num / r.max;
+      return {
+        label: r.label.slice(0, 6).toUpperCase(),
+        percent: frac * 100,
+        text: r.text,
+        // Which end is alarming depends on what is being measured, and the
+        // probe is the only thing that knows: a full disk and a full battery
+        // are the same bar and opposite news.
+        level: r.good_high ? frac <= 0.1 : frac >= 0.9,
+      };
+    });
 }
 
 // jsonPlain is the readings that are not proportions of anything: a
@@ -2474,7 +2489,9 @@ function setSNMPVersionUI(v) {
 document.getElementById('netSNMPVersion').addEventListener('change', e => setSNMPVersionUI(e.target.value));
 
 function setJSONAuthUI(mode) {
-  document.querySelector('.json-basic').classList.toggle('hidden', mode !== 'basic');
+  // A username and a password are wanted by both of the modes that have one, so
+  // the same pair of boxes serves both.
+  document.querySelector('.json-userpass').classList.toggle('hidden', mode !== 'basic' && mode !== 'login');
   document.querySelector('.json-bearer').classList.toggle('hidden', mode !== 'bearer');
   document.querySelector('.json-login').classList.toggle('hidden', mode !== 'login');
 }
@@ -2510,7 +2527,7 @@ document.getElementById('netJSONPreset').addEventListener('change', e => {
   setJSONAuthUI('login');
   const login = document.getElementById('netJSONLoginURL');
   if (!login.value.trim()) login.value = unifiLoginURL(url);
-  st.textContent = 'filled in — add the controller sign-in below, ideally a read-only account';
+  st.textContent = 'filled in — add the controller username and password below, ideally a read-only account';
 });
 
 // Opens the device form on an existing check. Apps have their own, simpler form.
@@ -2645,8 +2662,11 @@ document.getElementById('netSave').addEventListener('click', async () => {
   const addr = document.getElementById('netAddr').value.trim();
   const mac = document.getElementById('netMAC').value.trim();
   // Choosing "SNMP off" clears the credentials rather than leaving the hub to
-  // keep them, which the untouched-secret rule would otherwise do.
-  if (!document.getElementById('netSNMPVersion').value) {
+  // keep them, which the untouched-secret rule would otherwise do — and did:
+  // clearing the boxes here was not enough, because an empty box is how an edit
+  // says "I did not retype this". The hub has to be told it was a decision.
+  const snmpOff = !document.getElementById('netSNMPVersion').value;
+  if (snmpOff) {
     for (const id of ['netSNMP', 'netSNMPUser', 'netSNMPAuthPass', 'netSNMPPrivPass']) {
       document.getElementById(id).value = '';
     }
@@ -2673,6 +2693,7 @@ document.getElementById('netSave').addEventListener('click', async () => {
         login_body: document.getElementById('netJSONLoginBody').value,
       },
       json_probes: parseProbes(document.getElementById('netJSONProbes').value),
+      snmp_off: snmpOff,
       snmp: document.getElementById('netSNMP').value.trim(),
       snmp_port: parseInt(document.getElementById('netSNMPPort').value, 10) || 0,
       // "auto" is the hub's empty string; the select uses a value so the option

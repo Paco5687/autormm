@@ -1,9 +1,13 @@
 package agent
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"image"
+	"image/png"
 	"log"
 	"net/url"
 	"runtime/debug"
@@ -337,6 +341,14 @@ func (a *Agent) cursorLoop(ctx context.Context, write func(int, []byte) error, c
 	defer t.Stop()
 	var lx, ly int
 	var lvis bool
+	var lshape uint64
+	// Which shapes this viewer has already been given. A desktop uses a few
+	// dozen distinct cursors, but an application is free to create them at
+	// runtime, and each new one costs two GDI draws and a PNG. The cap turns
+	// that from a leak into a fallback: past it the viewer keeps drawing the
+	// last shape it knows rather than the agent rendering forever.
+	const maxShapes = 128
+	sentShapes := map[uint64]bool{}
 	first := true
 	for {
 		select {
@@ -348,6 +360,18 @@ func (a *Agent) cursorLoop(ctx context.Context, write func(int, []byte) error, c
 		if !ok {
 			continue
 		}
+		// The shape is read every tick but described only when it is one the
+		// viewer has not seen: rendering a cursor costs two GDI draws, and the
+		// pointer changes appearance far less often than it moves.
+		shape, hasShape := cur.Shape()
+		if hasShape && !sentShapes[shape] && len(sentShapes) < maxShapes {
+			sentShapes[shape] = true
+			if b, err := cursorShapePayload(cur, shape); err == nil {
+				if write(websocket.TextMessage, b) != nil {
+					return
+				}
+			}
+		}
 		// Map to the currently-captured region; hide when the pointer is on a
 		// display that isn't being shown.
 		b := cptr.Bounds()
@@ -355,11 +379,11 @@ func (a *Agent) cursorLoop(ctx context.Context, write func(int, []byte) error, c
 			vis = false
 		}
 		cx, cy := x-b.Min.X, y-b.Min.Y
-		if !first && cx == lx && cy == ly && vis == lvis {
+		if !first && cx == lx && cy == ly && vis == lvis && shape == lshape {
 			continue
 		}
-		first, lx, ly, lvis = false, cx, cy, vis
-		msg, _ := json.Marshal(protocol.CursorMsg{T: "cursor", X: cx, Y: cy, Vis: vis})
+		first, lx, ly, lvis, lshape = false, cx, cy, vis, shape
+		msg, _ := json.Marshal(protocol.CursorMsg{T: "cursor", X: cx, Y: cy, Vis: vis, Shape: shape})
 		if write(websocket.TextMessage, msg) != nil {
 			return
 		}
@@ -519,4 +543,26 @@ func sendErr(ws *websocket.Conn, msg string) {
 	b, _ := json.Marshal(map[string]string{"t": "error", "message": msg})
 	ws.SetWriteDeadline(time.Now().Add(5 * time.Second))
 	ws.WriteMessage(websocket.TextMessage, b)
+}
+
+// cursorShapePayload renders one pointer shape as a message for the viewer.
+//
+// PNG rather than raw pixels: a cursor is mostly transparent, which compresses
+// to almost nothing, and it arrives as something a browser can draw directly
+// rather than something the viewer has to assemble.
+func cursorShapePayload(cur capture.Cursor, id uint64) ([]byte, error) {
+	img, hx, hy, ok := cur.ShapeImage(id)
+	if !ok || img == nil {
+		return nil, fmt.Errorf("cursor shape %d unavailable", id)
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		return nil, err
+	}
+	b := img.Bounds()
+	return json.Marshal(protocol.CursorShapeMsg{
+		T: "cursorimg", ID: id,
+		W: b.Dx(), H: b.Dy(), HotX: hx, HotY: hy,
+		PNG: base64.StdEncoding.EncodeToString(buf.Bytes()),
+	})
 }
