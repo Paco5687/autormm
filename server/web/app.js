@@ -2837,7 +2837,7 @@ async function openTopology() {
 // KIND_MARK keeps the drawing honest about what a thing is without needing an
 // icon set: a PDU and a switch are the same object to a controller and are not
 // the same thing on a diagram.
-const KIND_MARK = { gateway: 'gateway', switch: 'switch', ap: 'access point', pdu: 'PDU', device: '' };
+const KIND_MARK = { gateway: 'gateway', switch: 'switch', ap: 'access point', pdu: 'PDU', host: 'host', device: '' };
 
 function renderTopology(t) {
   const sub = document.getElementById('topoSub');
@@ -2909,21 +2909,27 @@ function renderTopology(t) {
   // is wider than any screen — while a grid three across is the shape of the
   // rack elevation everyone already draws by hand. Devices that feed others
   // stay side by side, since their own subtrees need the width.
-  const GAPYL = 60;
+  // End devices hang as indented columns — the tree-view pattern, a vertical
+  // rail with an elbow into each box — rather than a grid. A grid needs a line
+  // from the switch to every cell, and the lines to the second row pass
+  // through the first; a rail never crosses anything, and the port number sits
+  // on its own elbow with whitespace guaranteed around it.
+  const RAIL = 16, STACKGAP = 12;
   const partsOf = mac => {
     const kids = childrenOf.get(mac) || [];
     const treeKids = kids.filter(k => (childrenOf.get(k) || []).length > 0);
     const leafKids = kids.filter(k => !(childrenOf.get(k) || []).length);
-    // The grid is narrower when it shares the row with subtrees: the width it
-    // does not take is the width the subtrees get.
-    return { treeKids, leafKids, lcols: Math.min(treeKids.length ? 2 : 3, leafKids.length) };
+    // Columns bounded both ways: tall thin stacks waste the width the sheet
+    // has, one wide row is the mess this replaces.
+    const lcols = leafKids.length ? Math.min(3, Math.ceil(leafKids.length / 4)) : 0;
+    return { treeKids, leafKids, lcols };
   };
   const width = new Map();
   const measure = mac => {
     const { treeKids, leafKids, lcols } = partsOf(mac);
     if (!treeKids.length && !leafKids.length) { width.set(mac, W); return W; }
     const tw = treeKids.reduce((a, k) => a + measure(k), 0) + GAPX * Math.max(0, treeKids.length - 1);
-    const lw = lcols ? lcols * W + (lcols - 1) * GAPX : 0;
+    const lw = lcols ? lcols * (RAIL + W) + (lcols - 1) * GAPX : 0;
     const w = Math.max(W, tw + (tw && lw ? GAPX : 0) + lw);
     width.set(mac, w);
     return w;
@@ -2938,11 +2944,18 @@ function renderTopology(t) {
       place(k, cx, depthY + GAPY);
       cx += width.get(k) + GAPX;
     }
-    leafKids.forEach((k, i) => {
-      const col = i % lcols, row = Math.floor(i / lcols);
-      width.set(k, W);
-      pos.set(k, { x: cx + col * (W + GAPX), y: depthY + GAPY + row * GAPYL, n: byMAC.get(k) });
-    });
+    if (lcols) {
+      const rows = Math.ceil(leafKids.length / lcols);
+      leafKids.forEach((k, i) => {
+        const col = Math.floor(i / rows), row = i % rows;
+        const railX = cx + col * (RAIL + W + GAPX);
+        width.set(k, W);
+        pos.set(k, {
+          x: railX + RAIL, y: depthY + GAPY + row * (H + STACKGAP),
+          n: byMAC.get(k), rail: railX, parent: mac,
+        });
+      });
+    }
   };
 
   // Measured up front, not inside the sort: a comparator only runs when there
@@ -2982,28 +2995,83 @@ function renderTopology(t) {
   const svgHeight = y ? y - GAPGROUP + H + 8 : H;
   const svgW = maxW + 40, svgH = svgHeight + 20;
   const parts = [];
+  // Connectors are orthogonal — horizontal and vertical segments only, the way
+  // Meraki draws its topology and the way yWorks' guidance says dense diagrams
+  // stay readable. The curves this replaces all left the parent at one point
+  // and fanned across whatever was in the way; a bus with drops crosses
+  // nothing by construction: parent drops to a rail, the rail spans its
+  // children, each child hangs from its own drop.
+  const OX = 20, OY = 10; // svg padding offsets already applied to pos
+  const edgeOf = new Map();
   for (const e of edges) {
+    edgeOf.set(e.from + '>' + e.to, e);
+    edgeOf.set(e.to + '>' + e.from, e);
+  }
+  const clsFor = (e, a, b) => {
+    // A line to a device that is not there is a memory, not a cable: the stale
+    // uplink record survives in the controller after the device goes away.
+    const stale = !(a.n && a.n.up) || !(b.n && b.n.up);
+    return 'te' + (e && e.source === 'seen' ? ' te-seen' : '') + (stale ? ' te-stale' : '');
+  };
+  const drawnPairs = new Set();
+  for (const [mac, kids] of childrenOf) {
+    const par = pos.get(mac);
+    if (!par || !kids.length) continue;
+    const pcx = par.x + W / 2 + OX;
+    // Midway between the parent's bottom edge and its children's top edge.
+    const busY = par.y + (H + GAPY) / 2 + OY;
+    const branchKids = kids.filter(k => pos.get(k) && !pos.get(k).rail);
+    const railKids = kids.filter(k => pos.get(k) && pos.get(k).rail != null);
+
+    // The rail spans from the parent's drop to the farthest child.
+    const dropXs = [pcx];
+    for (const k of branchKids) dropXs.push(pos.get(k).x + W / 2 + OX);
+    const railXs = [...new Set(railKids.map(k => pos.get(k).rail))];
+    for (const rx of railXs) dropXs.push(rx + OX);
+    parts.push(`<path class="te" d="M${pcx} ${par.y + H + OY} V${busY}"/>`);
+    if (dropXs.length > 1) {
+      parts.push(`<path class="te" d="M${Math.min(...dropXs)} ${busY} H${Math.max(...dropXs)}"/>`);
+    }
+    for (const k of branchKids) {
+      const kp = pos.get(k);
+      const kx = kp.x + W / 2 + OX;
+      const e = edgeOf.get(mac + '>' + k);
+      parts.push(`<path class="${clsFor(e, par, kp)}" d="M${kx} ${busY} V${kp.y + OY}"/>`);
+      drawnPairs.add(mac + '>' + k);
+      // The two numbers a cable has, on opposite sides of the drop — the
+      // parent's port on the left, the child's on the right. The drop is only
+      // a few pixels tall, so stacking them vertically printed one over the
+      // other, which is what the smudged digits were.
+      const pPort = e ? (e.from === mac ? e.from_port : e.to_port) : 0;
+      const cPort = e ? (e.from === mac ? e.to_port : e.from_port) : 0;
+      if (pPort) parts.push(`<text class="tport" x="${kx - 4}" y="${busY + 10}" text-anchor="end">${pPort}</text>`);
+      if (cPort) parts.push(`<text class="tport" x="${kx + 4}" y="${busY + 10}">${cPort}</text>`);
+    }
+    // One rail per column, elbows into each box, the switch port on the elbow.
+    for (const rx of railXs) {
+      const col = railKids.filter(k => pos.get(k).rail === rx);
+      const lastY = Math.max(...col.map(k => pos.get(k).y)) + H / 2 + OY;
+      parts.push(`<path class="te" d="M${rx + OX} ${busY} V${lastY}"/>`);
+      for (const k of col) {
+        const kp = pos.get(k);
+        const e = edgeOf.get(mac + '>' + k);
+        const ey = kp.y + H / 2 + OY;
+        parts.push(`<path class="${clsFor(e, par, kp)}" d="M${rx + OX} ${ey} H${kp.x + OX}"/>`);
+        drawnPairs.add(mac + '>' + k);
+        const port = e ? (e.from === mac ? e.from_port : e.to_port) : 0;
+        if (port) parts.push(`<text class="tport" x="${rx + OX + 3}" y="${ey - 4}">${port}</text>`);
+      }
+    }
+  }
+  // Whatever is left is a loop — a link the spanning tree did not use, such as
+  // a redundant uplink. Rare, real, and drawn as the one curved thing on the
+  // map so it reads as the exception it is.
+  for (const e of edges) {
+    if (drawnPairs.has(e.from + '>' + e.to) || drawnPairs.has(e.to + '>' + e.from)) continue;
     const a = pos.get(e.from), b = pos.get(e.to);
     if (!a || !b) continue;
-    // The child may be laid out above its parent when an edge was reported
-    // upside down; anchor to whichever end is actually higher so the curve
-    // leaves the bottom of one box and enters the top of the other.
-    const [hi, lo] = a.y <= b.y ? [a, b] : [b, a];
-    const x1 = hi.x + W / 2 + 20, y1 = hi.y + H + 10, x2 = lo.x + W / 2 + 20, y2 = lo.y + 10;
-    const my = (y1 + y2) / 2;
-    // A line to a device that is not there is a memory, not a cable: the stale
-    // uplink record survives in the controller after the device goes away, and
-    // drawing it solid claims a link that does not currently exist.
-    const stale = !(a.n && a.n.up) || !(b.n && b.n.up);
-    const cls = 'te' + (e.source === 'seen' ? ' te-seen' : '') + (stale ? ' te-stale' : '');
-    parts.push(`<path class="${cls}" d="M${x1} ${y1} C${x1} ${my} ${x2} ${my} ${x2} ${y2}"/>`);
-    // Port numbers on the line, which is the detail that turns a picture into
-    // something you can act on at the rack. Pushed to opposite sides of the
-    // line: on a link that runs straight down they would otherwise print on top
-    // of each other, which is where the two numbers matter most.
-    const side = x2 >= x1 ? 1 : -1;
-    if (e.from_port) parts.push(`<text class="tport" x="${x1 + 5 * side}" y="${y1 + 11}" text-anchor="${side > 0 ? 'start' : 'end'}">${e.from_port}</text>`);
-    if (e.to_port) parts.push(`<text class="tport" x="${x2 - 5 * side}" y="${y2 - 5}" text-anchor="${side > 0 ? 'end' : 'start'}">${e.to_port}</text>`);
+    const x1 = a.x + W / 2 + OX, y1 = a.y + H / 2 + OY, x2 = b.x + W / 2 + OX, y2 = b.y + H / 2 + OY;
+    parts.push(`<path class="${clsFor(e, a, b)}" d="M${x1} ${y1} C${x1} ${(y1 + y2) / 2} ${x2} ${(y1 + y2) / 2} ${x2} ${y2}"/>`);
   }
   const linked = new Set();
   for (const e of edges) { linked.add(e.from); linked.add(e.to); }
