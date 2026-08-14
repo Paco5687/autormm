@@ -190,6 +190,8 @@ a.nc-body:hover .nc-name { text-decoration: underline; }
 /* A link whose device is gone: the switch remembers it, the map should not
    assert it. */
 .topo .te-stale { stroke-dasharray: 2 5; opacity: .35; }
+/* Wireless: no cable to be solid about. */
+.topo .te-wifi { stroke-dasharray: 1 5; stroke-linecap: round; opacity: .8; }
 .topo .tn-hit { fill: transparent; cursor: pointer; }
 .topo .tn-hit:hover + .tn, .topo .tn-hit:hover ~ text { opacity: 1; }
 .topolegend { margin-top: 8px; font-size: 10.5px; color: var(--muted); }

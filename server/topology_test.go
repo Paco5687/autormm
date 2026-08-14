@@ -325,3 +325,54 @@ func TestDashboardDevicesAndHostsJoinTheMap(t *testing.T) {
 		t.Errorf("a seen attachment must stay marked as inference, got %q", upsEdges[0].Source)
 	}
 }
+
+// Wireless clients hang off their access points, under the same bargain as the
+// wired side: known ones are drawn and named, the rest are a count on the AP —
+// nineteen phones as nineteen boxes is a map nobody asked for.
+func TestWirelessClientsHangOffTheirAP(t *testing.T) {
+	s := &Server{store: NewStore(60, time.Minute, nil), netChecks: newNetChecks(t.TempDir())}
+	apexCheck := NetCheck{ID: "apex", Name: "Neptune Apex", MAC: "aa:bb:cc:11:22:33"}
+	s.netChecks.checks["apex"] = &apexCheck
+	s.netChecks.state["apex"] = &NetStatus{NetCheck: apexCheck, Up: true}
+
+	top := Topology{Nodes: []TopoNode{
+		{MAC: "8c:30:66:80:95:7c", Name: "Access Point - Basement", Kind: "ap", Up: true},
+	}}
+	var staDoc any
+	json.Unmarshal([]byte(`{"data":[
+	 {"mac":"aa:bb:cc:11:22:33","ap_mac":"8C:30:66:80:95:7C","is_wired":false,"hostname":"apex","ip":"10.0.0.151"},
+	 {"mac":"dd:ee:ff:44:55:66","ap_mac":"8c:30:66:80:95:7c","is_wired":false,"hostname":"a-phone"},
+	 {"mac":"11:22:33:aa:bb:cc","ap_mac":"8c:30:66:80:95:7c","is_wired":true,"sw_port":4},
+	 {"mac":"99:99:99:99:99:99","ap_mac":"ff:ff:ff:ff:ff:ff","is_wired":false}]}`), &staDoc)
+	s.attachWireless(&top, unifiStations(staDoc))
+
+	if len(top.Nodes) != 2 {
+		t.Fatalf("nodes = %+v", top.Nodes)
+	}
+	apex := top.Nodes[1]
+	if apex.Name != "Neptune Apex" || apex.CheckID != "apex" || apex.IP != "10.0.0.151" {
+		t.Errorf("apex = %+v", apex)
+	}
+	if len(top.Edges) != 1 || top.Edges[0].Source != "wifi" || top.Edges[0].From != "8c:30:66:80:95:7c" {
+		t.Errorf("edges = %+v", top.Edges)
+	}
+	// The phone is a count; the wired client belongs to the port tables and is
+	// not double-counted here; the orphan station has no AP on the map.
+	if top.Nodes[0].Leaves != 1 {
+		t.Errorf("AP leaves = %d, want 1 (the phone)", top.Nodes[0].Leaves)
+	}
+}
+
+// The station list's address is derived, not configured: the two endpoints
+// differ only in their final path element, in both controller forms.
+func TestStationURLDerivation(t *testing.T) {
+	for in, want := range map[string]string{
+		"https://unifi.lan:8443/api/s/default/stat/device":      "https://unifi.lan:8443/api/s/default/stat/sta",
+		"https://u.lan/proxy/network/api/s/default/stat/device": "https://u.lan/proxy/network/api/s/default/stat/sta",
+		"https://apex.lan/cgi-bin/status.json":                  "",
+	} {
+		if got := stationURL(in); got != want {
+			t.Errorf("stationURL(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

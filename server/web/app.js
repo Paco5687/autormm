@@ -3011,7 +3011,8 @@ function renderTopology(t) {
     // A line to a device that is not there is a memory, not a cable: the stale
     // uplink record survives in the controller after the device goes away.
     const stale = !(a.n && a.n.up) || !(b.n && b.n.up);
-    return 'te' + (e && e.source === 'seen' ? ' te-seen' : '') + (stale ? ' te-stale' : '');
+    const kind = e && e.source === 'wifi' ? ' te-wifi' : (e && e.source === 'seen' ? ' te-seen' : '');
+    return 'te' + kind + (stale ? ' te-stale' : '');
   };
   const drawnPairs = new Set();
   for (const [mac, kids] of childrenOf) {
@@ -3095,8 +3096,9 @@ function renderTopology(t) {
   // keeps a small rack from being blown up to fill the width.
   body.innerHTML =
     `<div class="topowrap"><svg class="topo" viewBox="0 0 ${svgW} ${svgH}" style="width:100%;max-width:${svgW}px;height:auto;display:block;margin:0 auto">${parts.join('')}</svg></div>` +
-    `<p class="topolegend">Solid lines are links the devices themselves report. Dashed lines are inferred from an address seen on a port. ` +
-    `Numbers on a line are the ports at each end. <b>+n</b> is how many other things have been seen on that device's ports — the ▤ button on its card lists them.</p>`;
+    `<p class="topolegend">Solid lines are links the devices themselves report. Dashed lines are inferred from an address seen on a port; ` +
+    `dotted lines are wireless. Numbers on a line are the ports at each end. <b>+n</b> counts what else is there — other things seen on a ` +
+    `switch's ports (the ▤ button lists them), or wireless clients on an access point.</p>`;
 }
 
 function clip(s, n) { s = String(s || ''); return s.length > n ? s.slice(0, n - 1) + '…' : s; }

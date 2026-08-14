@@ -92,8 +92,140 @@ func (s *Server) topology(ctx context.Context) Topology {
 		t.Error = "the controller listed no devices"
 	}
 	s.attachKnown(&t, unclaimed)
+	// Wireless clients live in a second document, the station list. Best
+	// effort: a map without them is still a map, and an older controller that
+	// answers strangely here should not take the whole drawing down.
+	if staURL := stationURL(src.JSONURL); staURL != "" {
+		if staDoc, err := fetchStatus(ctx, src.ID, staURL, src.JSONAuth, s.netChecks.sessions); err == nil {
+			s.attachWireless(&t, unifiStations(staDoc))
+		}
+	}
 	s.linkToChecks(&t)
 	return t
+}
+
+// stationURL derives the client list's address from the device list's.
+//
+// The two endpoints differ only in their last path element, which is the one
+// piece of controller-API shape this relies on — and it holds for both the
+// self-hosted and the UniFi OS forms, because the prefix is carried over
+// verbatim from a URL that is already known to work.
+func stationURL(deviceURL string) string {
+	const dev, sta = "/stat/device", "/stat/sta"
+	if !strings.HasSuffix(deviceURL, dev) {
+		return ""
+	}
+	return strings.TrimSuffix(deviceURL, dev) + sta
+}
+
+// station is one associated client, as the controller reports it.
+type station struct {
+	mac   string
+	apMAC string
+	name  string
+	ip    string
+}
+
+// unifiStations reads the wireless clients out of a station list. Wired
+// clients appear in the same list; they are already covered by the port
+// tables, and better — a port number beats "somewhere on this switch".
+func unifiStations(doc any) []station {
+	list, ok := jsonPath(doc, "data")
+	if !ok {
+		return nil
+	}
+	arr, ok := list.([]any)
+	if !ok {
+		return nil
+	}
+	var out []station
+	for _, raw := range arr {
+		m, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if wired, ok := m["is_wired"].(bool); !ok || wired {
+			continue
+		}
+		st := station{
+			mac:   lowerMAC(strOf(m["mac"])),
+			apMAC: lowerMAC(strOf(m["ap_mac"])),
+			// The operator's alias wins over what the device calls itself.
+			name: firstNonEmpty(strOf(m["name"]), strOf(m["hostname"])),
+			ip:   strOf(m["ip"]),
+		}
+		if st.mac != "" && st.apMAC != "" {
+			out = append(out, st)
+		}
+	}
+	return out
+}
+
+// attachWireless hangs wireless clients off their access points.
+//
+// The same bargain as the wired side: a client the hub knows — a monitored
+// device, a host running an agent — is drawn and named, and the rest are a
+// count on the AP. Nineteen phones as nineteen boxes is a map nobody asked
+// for; the one wireless thing that is also a card on this dashboard is
+// exactly what was missing.
+func (s *Server) attachWireless(t *Topology, stations []station) {
+	onMap := map[string]int{}
+	for i, n := range t.Nodes {
+		onMap[n.MAC] = i
+	}
+	known := s.knownByMAC()
+	for _, st := range stations {
+		ap, ok := onMap[st.apMAC]
+		if !ok {
+			continue // an AP the map does not have cannot anchor anything
+		}
+		if _, dup := onMap[st.mac]; dup {
+			continue // already on the map — wired, or roamed and counted once
+		}
+		k, isKnown := known[st.mac]
+		if !isKnown {
+			t.Nodes[ap].Leaves++
+			continue
+		}
+		onMap[st.mac] = len(t.Nodes)
+		t.Nodes = append(t.Nodes, TopoNode{
+			MAC: st.mac, Name: firstNonEmpty(k.name, st.name), Kind: k.kind,
+			Up: k.up, IP: st.ip, CheckID: k.checkID,
+		})
+		t.Edges = append(t.Edges, TopoEdge{From: st.apMAC, To: st.mac, Source: "wifi"})
+	}
+}
+
+// knownMAC is what the hub can say about an address it recognises.
+type knownMAC struct {
+	name    string
+	kind    string
+	up      bool
+	checkID string
+}
+
+// knownByMAC indexes everything on the dashboard that has an address: the
+// monitored devices by their configured MAC, and the hosts by the interfaces
+// their agents report.
+func (s *Server) knownByMAC() map[string]knownMAC {
+	byMAC := map[string]knownMAC{}
+	for _, st := range s.netChecks.list() {
+		if st.NetCheck.MAC != "" {
+			byMAC[lowerMAC(st.NetCheck.MAC)] = knownMAC{
+				name: st.NetCheck.Name, kind: "device", up: st.Up, checkID: st.NetCheck.ID,
+			}
+		}
+	}
+	// Hosts after devices: if a machine is somehow both, the agent's name is
+	// the one people use.
+	for _, v := range s.store.views() {
+		for _, mac := range v.Facts.MACs {
+			if m := lowerMAC(mac); m != "" {
+				byMAC[m] = knownMAC{name: v.Hostname, kind: "host", up: v.Online}
+			}
+		}
+	}
+	return byMAC
 }
 
 // attachKnown puts the rest of the dashboard on the map.
@@ -124,29 +256,7 @@ func (s *Server) attachKnown(t *Topology, unclaimed []TopoEdge) {
 		}
 	}
 
-	type known struct {
-		name    string
-		kind    string
-		up      bool
-		checkID string
-	}
-	byMAC := map[string]known{}
-	for _, st := range s.netChecks.list() {
-		if st.NetCheck.MAC != "" {
-			byMAC[lowerMAC(st.NetCheck.MAC)] = known{
-				name: st.NetCheck.Name, kind: "device", up: st.Up, checkID: st.NetCheck.ID,
-			}
-		}
-	}
-	// Hosts after devices: if a machine is somehow both, the agent's name is
-	// the one people use.
-	for _, v := range s.store.views() {
-		for _, mac := range v.Facts.MACs {
-			if m := lowerMAC(mac); m != "" {
-				byMAC[m] = known{name: v.Hostname, kind: "host", up: v.Online}
-			}
-		}
-	}
+	byMAC := s.knownByMAC()
 
 	for _, e := range unclaimed {
 		if transit[e.From+"#"+strconv.Itoa(e.FromPort)] {

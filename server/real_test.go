@@ -147,6 +147,28 @@ func TestRealRackHasOneRouterAndOneLinePerDevice(t *testing.T) {
 		t.Error("AC LR should hang off the Lite 16")
 	}
 
+	// The station list, as stat/sta reports it: the Apex on the basement AP is
+	// a monitored device and must be drawn; the phones are a count.
+	var staDoc any
+	json.Unmarshal([]byte(`{"data":[
+	 {"mac":"cc:cc:cc:00:00:01","ap_mac":"8c:30:66:80:95:7c","is_wired":false,"hostname":"apex","ip":"10.0.0.151"},
+	 {"mac":"cc:cc:cc:00:00:02","ap_mac":"8c:30:66:80:95:7c","is_wired":false,"hostname":"phone-1"},
+	 {"mac":"cc:cc:cc:00:00:03","ap_mac":"8c:30:66:80:95:7c","is_wired":false,"hostname":"phone-2"},
+	 {"mac":"cc:cc:cc:00:00:04","ap_mac":"8c:30:66:80:95:7c","is_wired":false,"hostname":"tablet"}]}`), &staDoc)
+	add("apex", "Neptune Apex", "cc:cc:cc:00:00:01")
+	s.attachWireless(&top, unifiStations(staDoc))
+	s.linkToChecks(&top)
+
+	apOK := false
+	for _, n := range top.Nodes {
+		if n.MAC == "8c:30:66:80:95:7c" && n.Leaves == 3 {
+			apOK = true
+		}
+	}
+	if !apOK {
+		t.Error("the AP should count its three unknown wireless clients")
+	}
+
 	b, _ := json.Marshal(top)
 	os.WriteFile("/tmp/topo_real.json", b, 0o644)
 	t.Logf("nodes=%d edges=%d root=%s", len(top.Nodes), len(top.Edges), top.Root)
