@@ -187,6 +187,9 @@ a.nc-body:hover .nc-name { text-decoration: underline; }
    followed: the panel border they used to share a colour with is not. */
 .topo .te { stroke: color-mix(in srgb, var(--accent) 55%, var(--muted)); stroke-width: 2; fill: none; }
 .topo .te-seen { stroke-dasharray: 4 4; opacity: .75; }
+/* A link whose device is gone: the switch remembers it, the map should not
+   assert it. */
+.topo .te-stale { stroke-dasharray: 2 5; opacity: .35; }
 .topo .tn-hit { fill: transparent; cursor: pointer; }
 .topo .tn-hit:hover + .tn, .topo .tn-hit:hover ~ text { opacity: 1; }
 .topolegend { margin-top: 8px; font-size: 10.5px; color: var(--muted); }

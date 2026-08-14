@@ -287,15 +287,41 @@ func unifiTopology(doc any) (Topology, []TopoEdge) {
 		}
 	}
 
-	// Now that every device is known, each address seen on a port is one or the
-	// other. A gateway is a link even though the controller does not manage it:
-	// it is how the rack reaches the world, and drawing the rack with nothing
-	// above it is a worse error than drawing a dashed line.
+	// Now that every device is known, sort out what each seen address means.
+	//
+	// A port that carries a link between switches sees the address of
+	// everything beyond it — that is what a bridge does — so an address on such
+	// a port is transit, and says nothing about where the thing is attached. It
+	// is not even a leaf: the device it belongs to is counted wherever it
+	// really hangs. Likewise a device whose attachment is already reported by
+	// an uplink or LLDP needs no second, weaker line from somewhere else that
+	// merely saw its traffic go by.
+	transit := map[string]bool{}
+	attached := map[string]bool{}
+	for _, e := range edges {
+		if e.FromPort > 0 {
+			transit[e.From+"#"+strconv.Itoa(e.FromPort)] = true
+		}
+		if e.ToPort > 0 {
+			transit[e.To+"#"+strconv.Itoa(e.ToPort)] = true
+		}
+		attached[e.From], attached[e.To] = true, true
+	}
 	var unclaimed []TopoEdge
 	for _, e := range seen {
+		if transit[e.From+"#"+strconv.Itoa(e.FromPort)] {
+			continue
+		}
+		if attached[e.To] {
+			continue
+		}
 		_, isNode := nodes[e.To]
 		if isNode || gateways[e.To] > 0 {
+			// A gateway is a link even though the controller does not manage
+			// it: it is how the rack reaches the world, and drawing the rack
+			// with nothing above it is a worse error than a dashed line.
 			edges = append(edges, e)
+			attached[e.To] = true
 			continue
 		}
 		if n := nodes[e.From]; n != nil {
@@ -343,6 +369,32 @@ func unifiTopology(doc any) (Topology, []TopoEdge) {
 				nodes[g].Name = "gateway"
 			}
 			root = g
+		}
+	}
+
+	// One box has as many addresses as it has interfaces, and a router shows
+	// two of them here: the one its neighbour sees over LLDP and the one every
+	// device names as its way out. Drawn separately that is two routers, each
+	// with a real line — so an invented node whose address sits in the same
+	// block as the gateway's is folded into it. Only invented nodes: a managed
+	// device with a coincidentally similar address is a real, separate thing.
+	if root != "" {
+		block := root[:len(root)-2]
+		for mac, n := range nodes {
+			if mac == root || !synthetic[mac] || n.Kind == "gateway" {
+				continue
+			}
+			if len(mac) == len(root) && strings.HasPrefix(mac, block) {
+				delete(nodes, mac)
+				for i := range edges {
+					if edges[i].From == mac {
+						edges[i].From = root
+					}
+					if edges[i].To == mac {
+						edges[i].To = root
+					}
+				}
+			}
 		}
 	}
 

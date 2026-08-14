@@ -2903,26 +2903,26 @@ function renderTopology(t) {
       (byMAC.get(a).name || '').localeCompare(byMAC.get(b).name || ''));
   }
 
-  const W = 190, H = 52, GAPX = 26, GAPY = 74, GAPGROUP = 30;
+  const W = 170, H = 52, GAPX = 18, GAPY = 74, GAPGROUP = 30;
   // End devices pack into a grid under their parent rather than one endless
   // row. A core switch feeds ten things directly, and ten boxes side by side
   // is wider than any screen — while a grid three across is the shape of the
   // rack elevation everyone already draws by hand. Devices that feed others
   // stay side by side, since their own subtrees need the width.
-  const LCOLS = 3, GAPYL = 62;
+  const GAPYL = 60;
   const partsOf = mac => {
     const kids = childrenOf.get(mac) || [];
-    return {
-      treeKids: kids.filter(k => (childrenOf.get(k) || []).length > 0),
-      leafKids: kids.filter(k => !(childrenOf.get(k) || []).length),
-    };
+    const treeKids = kids.filter(k => (childrenOf.get(k) || []).length > 0);
+    const leafKids = kids.filter(k => !(childrenOf.get(k) || []).length);
+    // The grid is narrower when it shares the row with subtrees: the width it
+    // does not take is the width the subtrees get.
+    return { treeKids, leafKids, lcols: Math.min(treeKids.length ? 2 : 3, leafKids.length) };
   };
   const width = new Map();
   const measure = mac => {
-    const { treeKids, leafKids } = partsOf(mac);
+    const { treeKids, leafKids, lcols } = partsOf(mac);
     if (!treeKids.length && !leafKids.length) { width.set(mac, W); return W; }
     const tw = treeKids.reduce((a, k) => a + measure(k), 0) + GAPX * Math.max(0, treeKids.length - 1);
-    const lcols = Math.min(LCOLS, leafKids.length);
     const lw = lcols ? lcols * W + (lcols - 1) * GAPX : 0;
     const w = Math.max(W, tw + (tw && lw ? GAPX : 0) + lw);
     width.set(mac, w);
@@ -2932,13 +2932,12 @@ function renderTopology(t) {
   const place = (mac, x, depthY) => {
     const w = width.get(mac);
     pos.set(mac, { x: x + (w - W) / 2, y: depthY, n: byMAC.get(mac) });
-    const { treeKids, leafKids } = partsOf(mac);
+    const { treeKids, leafKids, lcols } = partsOf(mac);
     let cx = x;
     for (const k of treeKids) {
       place(k, cx, depthY + GAPY);
       cx += width.get(k) + GAPX;
     }
-    const lcols = Math.min(LCOLS, leafKids.length);
     leafKids.forEach((k, i) => {
       const col = i % lcols, row = Math.floor(i / lcols);
       width.set(k, W);
@@ -2986,9 +2985,18 @@ function renderTopology(t) {
   for (const e of edges) {
     const a = pos.get(e.from), b = pos.get(e.to);
     if (!a || !b) continue;
-    const x1 = a.x + W / 2 + 20, y1 = a.y + H + 10, x2 = b.x + W / 2 + 20, y2 = b.y + 10;
+    // The child may be laid out above its parent when an edge was reported
+    // upside down; anchor to whichever end is actually higher so the curve
+    // leaves the bottom of one box and enters the top of the other.
+    const [hi, lo] = a.y <= b.y ? [a, b] : [b, a];
+    const x1 = hi.x + W / 2 + 20, y1 = hi.y + H + 10, x2 = lo.x + W / 2 + 20, y2 = lo.y + 10;
     const my = (y1 + y2) / 2;
-    parts.push(`<path class="te ${e.source === 'seen' ? 'te-seen' : ''}" d="M${x1} ${y1} C${x1} ${my} ${x2} ${my} ${x2} ${y2}"/>`);
+    // A line to a device that is not there is a memory, not a cable: the stale
+    // uplink record survives in the controller after the device goes away, and
+    // drawing it solid claims a link that does not currently exist.
+    const stale = !(a.n && a.n.up) || !(b.n && b.n.up);
+    const cls = 'te' + (e.source === 'seen' ? ' te-seen' : '') + (stale ? ' te-stale' : '');
+    parts.push(`<path class="${cls}" d="M${x1} ${y1} C${x1} ${my} ${x2} ${my} ${x2} ${y2}"/>`);
     // Port numbers on the line, which is the detail that turns a picture into
     // something you can act on at the rack. Pushed to opposite sides of the
     // line: on a link that runs straight down they would otherwise print on top
@@ -3014,8 +3022,11 @@ function renderTopology(t) {
       `<text x="${x + 10}" y="${y + 21}">${escapeHtml(clip(n.name, 24))}</text>` +
       `<text class="tsub" x="${x + 10}" y="${y + 38}">${escapeHtml(sub2)}</text>`);
   }
+  // Scaled to the sheet rather than scrolled: a map you pan is a map you
+  // cannot take in, and taking it in at a glance is its whole purpose. The cap
+  // keeps a small rack from being blown up to fill the width.
   body.innerHTML =
-    `<div class="topowrap"><svg class="topo" width="${svgW}" height="${svgH}" viewBox="0 0 ${svgW} ${svgH}">${parts.join('')}</svg></div>` +
+    `<div class="topowrap"><svg class="topo" viewBox="0 0 ${svgW} ${svgH}" style="width:100%;max-width:${svgW}px;height:auto;display:block;margin:0 auto">${parts.join('')}</svg></div>` +
     `<p class="topolegend">Solid lines are links the devices themselves report. Dashed lines are inferred from an address seen on a port. ` +
     `Numbers on a line are the ports at each end. <b>+n</b> is how many other things have been seen on that device's ports — the ▤ button on its card lists them.</p>`;
 }

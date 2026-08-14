@@ -165,11 +165,11 @@ func TestNeighboursTheControllerDoesNotManageAreStillDrawn(t *testing.T) {
 	}
 }
 
-// A router appears under two addresses: the one its neighbours see over LLDP and
-// the one every device names as its way out are different interfaces of the same
-// box. Only the address something actually links to is evidence, so the other
-// must not be left floating as a second router.
-func TestAnInventedNodeNothingLinksToIsDropped(t *testing.T) {
+// A router has as many addresses as interfaces, and it shows two of them here:
+// the one its neighbour sees over LLDP and the one every device names as its
+// way out. Drawn separately that is two routers, each with a real line — which
+// is what a real map showed. They are one box and must fold into one node.
+func TestARoutersTwoInterfacesAreOneBox(t *testing.T) {
 	var v any
 	json.Unmarshal([]byte(`{"data":[
 	 {"mac":"aa:aa:aa:aa:aa:aa","name":"core","type":"usw","state":1,"gateway_mac":"64:62:66:23:c2:28",
@@ -177,27 +177,41 @@ func TestAnInventedNodeNothingLinksToIsDropped(t *testing.T) {
 	 {"mac":"bb:bb:bb:bb:bb:bb","name":"access","type":"usw","state":1,"gateway_mac":"64:62:66:23:c2:28",
 	  "uplink":{"uplink_mac":"aa:aa:aa:aa:aa:aa","uplink_remote_port":1,"port_idx":9}}]}`), &v)
 	top, _ := unifiTopology(v)
+	routers := 0
 	for _, n := range top.Nodes {
-		if n.MAC == "64:62:66:23:c2:28" {
-			t.Errorf("a second router was left floating: %+v", n)
+		if n.MAC == "64:62:66:23:c2:25" || n.MAC == "64:62:66:23:c2:28" {
+			routers++
+			if n.Kind != "gateway" {
+				t.Errorf("the folded router is a %q", n.Kind)
+			}
 		}
 	}
-	// The one that is actually linked to survives, or the rack has nothing above it.
-	found := false
-	for _, n := range top.Nodes {
-		if n.MAC == "64:62:66:23:c2:25" {
-			found = true
-		}
+	if routers != 1 {
+		t.Fatalf("the router appears %d times: %+v", routers, top.Nodes)
 	}
-	if !found {
-		t.Error("the router the switch actually reports was dropped")
-	}
+	// The LLDP line survives the fold, re-aimed at the surviving node.
 	if len(top.Edges) != 2 {
 		t.Errorf("edges = %+v", top.Edges)
 	}
-	// Which end is "up" is genuinely underdetermined here — there is no uplink
-	// record and LLDP says nothing about direction — so the root is not asserted.
-	// What matters is that one router is on the map and the other is not.
+	if top.Root != "64:62:66:23:c2:28" {
+		t.Errorf("root = %q", top.Root)
+	}
+	// A managed device that happens to sit in the same address block is a real,
+	// separate thing and must never be folded.
+	var v2 any
+	json.Unmarshal([]byte(`{"data":[
+	 {"mac":"64:62:66:23:c2:25","name":"a real device","type":"usw","state":1,"gateway_mac":"64:62:66:23:c2:28",
+	  "uplink":{"uplink_mac":"64:62:66:23:c2:28","uplink_remote_port":1,"port_idx":9}}]}`), &v2)
+	top2, _ := unifiTopology(v2)
+	kept := false
+	for _, n := range top2.Nodes {
+		if n.MAC == "64:62:66:23:c2:25" && n.Name == "a real device" {
+			kept = true
+		}
+	}
+	if !kept {
+		t.Error("a managed device was folded into the gateway")
+	}
 }
 
 // The shape that flattened the map: a core switch whose uplink record predates
