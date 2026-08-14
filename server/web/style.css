@@ -172,7 +172,10 @@ a.nc-body:hover .nc-name { text-decoration: underline; }
 /* The network map. Wide as it is given, and scrollable rather than squeezed:
    a rack is a shape, and shrinking it to fit is how it stops being readable. */
 .modal-card.sheet-wide { width: min(1100px, 100%); }
-.topowrap { overflow: auto; max-height: 70vh; }
+.topowrap { overflow: hidden; max-height: 70vh; }
+.topo { cursor: grab; touch-action: none; user-select: none; }
+.topo:active { cursor: grabbing; }
+.topo rect[data-ports] { cursor: pointer; }
 .topo { display: block; }
 .topo .tn { fill: var(--panel-2); stroke: var(--line); }
 .topo .tn-down { opacity: .45; }

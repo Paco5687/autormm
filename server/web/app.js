@@ -3086,8 +3086,10 @@ function renderTopology(t) {
     // adopted device with no link is either off or unplugged.
     const unlinked = !linked.has(n.mac) ? 'no link reported' : '';
     const sub2 = [kind, n.ip, n.leaves ? `+${n.leaves}` : '', unlinked].filter(Boolean).join(' · ');
+    const act = n.check_id && (n.kind === 'switch' || n.kind === 'pdu')
+      ? ` data-ports="${escapeHtml(n.check_id)}" data-name="${escapeHtml(n.name)}"` : '';
     parts.push(
-      `<rect class="tn tn-${n.kind}${n.up ? '' : ' tn-down'}" x="${x}" y="${y}" width="${W}" height="${H}" rx="7"/>` +
+      `<rect class="tn tn-${n.kind}${n.up ? '' : ' tn-down'}"${act} x="${x}" y="${y}" width="${W}" height="${H}" rx="7"/>` +
       `<text x="${x + 10}" y="${y + 21}">${escapeHtml(clip(n.name, 24))}</text>` +
       `<text class="tsub" x="${x + 10}" y="${y + 38}">${escapeHtml(sub2)}</text>`);
   }
@@ -3098,7 +3100,94 @@ function renderTopology(t) {
     `<div class="topowrap"><svg class="topo" viewBox="0 0 ${svgW} ${svgH}" style="width:100%;max-width:${svgW}px;height:auto;display:block;margin:0 auto">${parts.join('')}</svg></div>` +
     `<p class="topolegend">Solid lines are links the devices themselves report. Dashed lines are inferred from an address seen on a port; ` +
     `dotted lines are wireless. Numbers on a line are the ports at each end. <b>+n</b> counts what else is there — other things seen on a ` +
-    `switch's ports (the ▤ button lists them), or wireless clients on an access point.</p>`;
+    `switch's ports (the ▤ button lists them), or wireless clients on an access point. ` +
+    `Scroll or pinch to zoom, drag to pan, double-tap to reset; tap a switch for its ports.</p>`;
+  const svgEl = body.querySelector('svg.topo');
+  const inter = enableTopoInteraction(svgEl, svgW, svgH);
+  svgEl.addEventListener('click', e => {
+    // A drag that happens to end on a box is a drag, not a request.
+    if (inter.wasDrag()) return;
+    const r = e.target.closest('rect[data-ports]');
+    if (r) openPorts({ id: r.dataset.ports, name: r.dataset.name });
+  });
 }
 
 function clip(s, n) { s = String(s || ''); return s.length > n ? s.slice(0, n - 1) + '…' : s; }
+
+// enableTopoInteraction makes the map something you can move around in.
+//
+// All of it is the viewBox: the element keeps its place in the sheet and the
+// viewBox decides which part of the drawing fills it, so zooming and panning
+// never fight the page's own layout or scrolling. Wheel and pinch zoom about
+// the pointer — the spot under your finger stays under your finger — and a
+// double-tap puts the whole map back.
+function enableTopoInteraction(svg, svgW, svgH) {
+  let vx = 0, vy = 0, vw = svgW, vh = svgH;
+  const apply = () => svg.setAttribute('viewBox', `${vx} ${vy} ${vw} ${vh}`);
+  const toSVG = (cx, cy) => {
+    const r = svg.getBoundingClientRect();
+    return [vx + (cx - r.left) / r.width * vw, vy + (cy - r.top) / r.height * vh];
+  };
+  const zoomAt = (cx, cy, f) => {
+    // Bounded both ways: past 8x the boxes are wall-sized, and zooming out
+    // much beyond fit is just making the map small for no reason.
+    const [sx, sy] = toSVG(cx, cy);
+    const nw = Math.min(svgW * 1.5, Math.max(svgW / 8, vw * f));
+    const k = nw / vw;
+    vx = sx - (sx - vx) * k;
+    vy = sy - (sy - vy) * k;
+    vw = nw;
+    vh = vh * k;
+    apply();
+  };
+  svg.addEventListener('wheel', e => {
+    e.preventDefault();
+    zoomAt(e.clientX, e.clientY, Math.pow(1.0015, e.deltaY));
+  }, { passive: false });
+
+  // Pointer events carry mouse and touch alike; two pointers are a pinch.
+  const ptrs = new Map();
+  let moved = 0, pinch = 0;
+  svg.addEventListener('pointerdown', e => {
+    // Capture keeps the drag alive when the pointer leaves the sheet, but a
+    // browser throws for a pointer it has not seen — and one dead handler here
+    // costs every interaction after it, so the tracking must not depend on it.
+    try { svg.setPointerCapture(e.pointerId); } catch (err) {}
+    ptrs.set(e.pointerId, [e.clientX, e.clientY]);
+    if (ptrs.size === 1) moved = 0;
+    if (ptrs.size === 2) {
+      const [a, b] = [...ptrs.values()];
+      pinch = Math.hypot(a[0] - b[0], a[1] - b[1]);
+    }
+  });
+  svg.addEventListener('pointermove', e => {
+    if (!ptrs.has(e.pointerId)) return;
+    const prev = ptrs.get(e.pointerId);
+    ptrs.set(e.pointerId, [e.clientX, e.clientY]);
+    if (ptrs.size === 1) {
+      const r = svg.getBoundingClientRect();
+      vx -= (e.clientX - prev[0]) / r.width * vw;
+      vy -= (e.clientY - prev[1]) / r.height * vh;
+      moved += Math.abs(e.clientX - prev[0]) + Math.abs(e.clientY - prev[1]);
+      apply();
+    } else if (ptrs.size === 2) {
+      const [a, b] = [...ptrs.values()];
+      const d = Math.hypot(a[0] - b[0], a[1] - b[1]);
+      if (pinch > 0 && d > 0) zoomAt((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, pinch / d);
+      pinch = d;
+      moved = 99; // a pinch is never a click
+    }
+  });
+  const lift = e => { ptrs.delete(e.pointerId); pinch = 0; };
+  svg.addEventListener('pointerup', lift);
+  svg.addEventListener('pointercancel', lift);
+  svg.addEventListener('dblclick', e => {
+    e.preventDefault();
+    vx = 0; vy = 0; vw = svgW; vh = svgH;
+    apply();
+  });
+  // The click threshold is a few pixels, not zero: a finger cannot go down and
+  // up on the same pixel, and treating that tremor as a drag makes taps on a
+  // phone silently do nothing.
+  return { wasDrag: () => moved > 6 };
+}
