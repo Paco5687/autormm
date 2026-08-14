@@ -80,6 +80,8 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/snmpwalk", s.handleSNMPWalk)
 	mux.HandleFunc("/api/ports", s.handlePorts)
 	mux.HandleFunc("/api/topology", s.handleTopology)
+	mux.HandleFunc("/api/syslog", s.handleSyslog)
+	mux.HandleFunc("/api/traffic", s.handleTraffic)
 	mux.HandleFunc("/api/wol", s.handleWOL)
 	mux.HandleFunc("/api/eventlog", s.handleEventLog)
 	mux.HandleFunc("/api/hostprefs", s.handleHostPrefs)

@@ -134,11 +134,14 @@ type NetStatus struct {
 	// Readings are values pulled out of the device's JSON API.
 	Readings    []Reading `json:"readings,omitempty"`
 	ReadingsErr string    `json:"readings_err,omitempty"`
-	Up          bool      `json:"up"`
-	LatencyMs   float64   `json:"latency_ms,omitempty"`
-	Since       time.Time `json:"since"` // when the current state began
-	Checked     time.Time `json:"checked"`
-	Error       string    `json:"error,omitempty"`
+	// Cert is the TLS certificate the device's web interface presented, for a
+	// check that reaches one over https. Read every few hours, not every tick.
+	Cert      *CertInfo `json:"cert,omitempty"`
+	Up        bool      `json:"up"`
+	LatencyMs float64   `json:"latency_ms,omitempty"`
+	Since     time.Time `json:"since"` // when the current state began
+	Checked   time.Time `json:"checked"`
+	Error     string    `json:"error,omitempty"`
 }
 
 const (
@@ -161,6 +164,7 @@ type netChecks struct {
 	// sessions holds a cookie jar per check, so an API that hands out a session
 	// is not asked for a new one every poll.
 	sessions *sessions
+	certs    *certCache
 }
 
 // canLearnMAC reports whether any check is watched by address alone, and so
@@ -187,7 +191,7 @@ func hasMACs(list []NetCheck) bool {
 func newNetChecks(dir string) *netChecks {
 	n := &netChecks{
 		checks: map[string]*NetCheck{}, state: map[string]*NetStatus{},
-		macs: newMACIndex(), sessions: newSessions(),
+		macs: newMACIndex(), sessions: newSessions(), certs: newCertCache(),
 	}
 	if dir != "" {
 		n.path = filepath.Join(dir, "netchecks.json")
@@ -542,6 +546,7 @@ func (n *netChecks) runChecks(ctx context.Context, now time.Time) []NetStatus {
 		snmp        *SNMPInfo
 		readings    []Reading
 		readingsErr string
+		cert        *CertInfo
 		e           error
 	}
 	results := make(chan result, len(due))
@@ -580,7 +585,18 @@ func (n *netChecks) runChecks(ctx context.Context, now time.Time) []NetStatus {
 			if c.MAC != "" && found == "" && err == nil {
 				err = errors.New("no device with that MAC found on the hub's networks")
 			}
-			results <- result{c, up, ms, code, used, found, snmp, readings, readingsErr, err}
+			// The certificate, from whichever https URL this check reaches: the
+			// one that answered, or the one configured. Cached for hours — the
+			// date changes on renewal, not per tick.
+			var cert *CertInfo
+			if up {
+				for _, u := range []string{used, c.URL, c.JSONURL} {
+					if cert = n.certs.get(ctx, c.ID, u); cert != nil {
+						break
+					}
+				}
+			}
+			results <- result{c, up, ms, code, used, found, snmp, readings, readingsErr, cert, err}
 		}(c)
 	}
 	wg.Wait()
@@ -604,6 +620,13 @@ func (n *netChecks) runChecks(ctx context.Context, now time.Time) []NetStatus {
 		// it was always checked at still stands.
 		up := r.up && !(r.c.MAC != "" && !r.c.MACLearned && r.ip == "")
 		st := &NetStatus{NetCheck: r.c, Web: web, Up: up, LatencyMs: r.ms, Code: r.code, IP: r.ip, Checked: now}
+		st.Cert = r.cert
+		// Down ticks keep the last known certificate: it did not stop existing
+		// because the device is off, and "expired while unplugged" is exactly
+		// the surprise this exists to prevent.
+		if st.Cert == nil && prev != nil {
+			st.Cert = prev.Cert
+		}
 		st.Readings, st.ReadingsErr = r.readings, r.readingsErr
 		// A poll that failed keeps the previous reading rather than replacing it
 		// with nothing: one dropped UDP packet should not blank a card.

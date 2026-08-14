@@ -99,6 +99,8 @@
           <span id="netSummary" class="muted"></span>
           <span class="grow"></span>
           <button id="topoBtn" class="btn ghost" title="How everything is connected">Map</button>
+          <button id="trafficBtn" class="btn ghost" title="Which ports are carrying the traffic right now">Traffic</button>
+          <button id="syslogBtn" class="btn ghost" title="What the devices are saying — syslog">Logs</button>
           <button id="discoverBtn" class="btn ghost" title="Find devices on the hub's networks">Discover</button>
         </div>
         <div id="netGrid" class="netgrid"></div>
@@ -256,6 +258,37 @@
       <div class="cmd-row"><input id="appURL" class="inv-filter" style="max-width:none" placeholder="jellyfin.example.com — or a full https:// or http:// URL"></div>
       <div class="cmd-row"><input id="appTags" class="inv-filter" style="max-width:none" placeholder="tags (optional)"></div>
       <div class="cmd-row"><button id="appSave" class="btn">Add app</button><span id="appStatus" class="muted"></span></div>
+    </div>
+  </div>
+
+  <div id="trafficModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <div class="modal-title">
+          <div class="name">Traffic</div>
+          <div id="trafficSub" class="platform muted"></div>
+        </div>
+        <button id="trafficRefresh" class="btn ghost" title="Read it again">⟳</button>
+        <button id="trafficClose" class="btn ghost" title="Close">✕</button>
+      </div>
+      <div id="trafficBody"></div>
+    </div>
+  </div>
+
+  <div id="syslogModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <div class="modal-title">
+          <div class="name">Device logs</div>
+          <div id="syslogSub" class="platform muted"></div>
+        </div>
+        <button id="syslogClose" class="btn ghost" title="Close">✕</button>
+      </div>
+      <div class="cmd-row">
+        <input id="syslogQ" class="inv-filter" style="max-width:none" placeholder="filter — text or tag">
+        <select id="syslogSrc" class="inv-filter"><option value="">all devices</option></select>
+      </div>
+      <div id="syslogBody"></div>
     </div>
   </div>
 

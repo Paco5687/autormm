@@ -199,6 +199,21 @@ a.nc-body:hover .nc-name { text-decoration: underline; }
 .topo .tn-hit:hover + .tn, .topo .tn-hit:hover ~ text { opacity: 1; }
 .topolegend { margin-top: 8px; font-size: 10.5px; color: var(--muted); }
 
+/* Traffic and logs: dense monospace tables, built to be scanned. */
+.tktbl { display: grid; grid-template-columns: auto auto 1fr auto; gap: 1px 12px; font-size: 12px; align-items: baseline; }
+.tktbl .ph { font-size: 9.5px; letter-spacing: .4px; text-transform: uppercase; color: var(--muted); padding-bottom: 4px; }
+.tktbl > div { padding: 3px 0; border-bottom: 1px solid color-mix(in srgb, var(--line) 55%, transparent); min-width: 0; }
+.tkrate { font-family: var(--mono); text-align: right; white-space: nowrap; }
+.tkwho { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tkup { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .4px; }
+.slog { font-family: var(--mono); font-size: 11px; max-height: 55vh; overflow-y: auto; margin-top: 8px; }
+.slog .sl { padding: 2px 0; border-bottom: 1px solid color-mix(in srgb, var(--line) 40%, transparent); word-break: break-word; }
+.slog .sl-t { color: var(--muted); margin-right: 8px; }
+.slog .sl-s { color: var(--muted); margin-right: 8px; }
+.slog .sl-tag { color: var(--accent); margin-right: 6px; }
+.slog .sl-err { color: var(--bad); }
+.slog .sl-warn { color: var(--warn); }
+
 /* The port map. A dense table because the whole value is scanning it: which
    port is that, what is on it, is it live. */
 .ptbl { display: grid; grid-template-columns: auto 1fr auto auto; gap: 1px 12px; font-size: 12px; align-items: baseline; }

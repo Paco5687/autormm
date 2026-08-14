@@ -31,6 +31,9 @@ type Config struct {
 	TLSKey       string
 	AdminStore   string // path to admins.json for username/password login
 	FFmpegURL    string // where hosts fetch ffmpeg for H.264; empty => DefaultFFmpegURL
+	// SyslogAddr turns on the syslog listener, e.g. ":514". Empty means off.
+	// UDP syslog is unauthenticated, so this belongs on a LAN address.
+	SyslogAddr string
 }
 
 // Server is the running hub.
@@ -49,6 +52,7 @@ type Server struct {
 	alerter    *Alerter
 	prefs      *hostPrefs
 	netChecks  *netChecks
+	syslog     *syslogStore
 	netSeenMu  sync.Mutex
 	netSeen    map[string]bool
 	admins     *adminstore.Store
@@ -130,6 +134,10 @@ func (s *Server) Run(ctx context.Context) error {
 	s.alerter.remediate = s.tryRemediate
 
 	go s.netCheckLoop(ctx)
+	if s.cfg.SyslogAddr != "" {
+		s.syslog = newSyslogStore()
+		go s.runSyslog(ctx, s.cfg.SyslogAddr)
+	}
 	go s.svcWatchLoop(ctx)
 
 	errCh := make(chan error, 1)

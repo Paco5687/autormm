@@ -2033,8 +2033,25 @@ function renderMonitorSection(which, list) {
     // and a reason rather than a red dot that would misreport the device.
     if (c.snmp && c.snmp.error) warns.push('SNMP: ' + c.snmp.error);
     if (c.readings_err) warns.push('Readings: ' + c.readings_err);
+    // A certificate that quietly expires takes a service down at a moment
+    // nobody chose. Worth a warning while there is still time to act, and a
+    // note before that — 30 days is when an automated renewal should already
+    // have happened, so its absence is the first sign the automation is broken.
+    if (c.cert && c.cert.expires_unix) {
+      const days = Math.floor((c.cert.expires_unix * 1000 - Date.now()) / 86400000);
+      const who = c.cert.self_signed ? 'self-signed' : (c.cert.issuer || '');
+      const tag = who ? ` (${who})` : '';
+      if (days < 0) warns.push(`certificate EXPIRED ${-days} day${days === -1 ? '' : 's'} ago${tag}`);
+      else if (days <= 14) warns.push(`certificate expires in ${days} day${days === 1 ? '' : 's'}${tag}`);
+    }
 
     const notes = [];
+    if (c.cert && c.cert.expires_unix) {
+      const days = Math.floor((c.cert.expires_unix * 1000 - Date.now()) / 86400000);
+      if (days > 14 && days <= 30) {
+        notes.push(`certificate expires in ${days} days${c.cert.self_signed ? ' (self-signed)' : ''}`);
+      }
+    }
     // What the device says about itself — name, uptime, battery, interfaces up.
     // A description, not a complaint: collecting it as a reason put a warning
     // mark on every healthy device that answers SNMP at all, and filled the
@@ -3190,4 +3207,112 @@ function enableTopoInteraction(svg, svgW, svgH) {
   // up on the same pixel, and treating that tremor as a drag makes taps on a
   // phone silently do nothing.
   return { wasDrag: () => moved > 6 };
+}
+
+// ---- traffic: which ports are carrying it ----
+//
+// The 80/20 of flow analysis, from data already being read. It says which link
+// is busy and what is on the end of it — not what the traffic is, which needs
+// flow export and classification this deliberately does not attempt.
+
+const trafficModal = document.getElementById('trafficModal');
+document.getElementById('trafficClose').addEventListener('click', () => trafficModal.classList.add('hidden'));
+trafficModal.addEventListener('click', e => { if (e.target === trafficModal) trafficModal.classList.add('hidden'); });
+document.getElementById('trafficBtn').addEventListener('click', () => openTraffic());
+document.getElementById('trafficRefresh').addEventListener('click', () => openTraffic());
+
+async function openTraffic() {
+  document.getElementById('trafficSub').textContent = 'reading…';
+  trafficModal.classList.remove('hidden');
+  const body = document.getElementById('trafficBody');
+  try {
+    const d = await authJSON('/api/traffic', 'GET');
+    const tks = d.talkers || [];
+    document.getElementById('trafficSub').textContent = tks.length
+      ? 'busiest first, right now — an uplink carries everything beyond it'
+      : 'nothing is moving';
+    const cells = ['<div class="ph">Rate</div><div class="ph">Where</div><div class="ph">On it</div><div class="ph"></div>'];
+    for (const t of tks) {
+      const who = (t.peers || []).map(x => x.name ? `<b>${escapeHtml(x.name)}</b>` : (x.vendor || '')).filter(Boolean).join(', ');
+      cells.push(
+        `<div class="tkrate">${fmtBytes(t.rate)}/s</div>` +
+        `<div class="tkwho">${escapeHtml(t.device)}${t.port ? ' · port ' + t.port : ''}${t.name && t.name !== 'Port ' + t.port ? ' · ' + escapeHtml(t.name) : ''}</div>` +
+        `<div class="tkwho">${who || '<span class="muted">—</span>'}</div>` +
+        `<div class="tkup">${t.uplink ? 'uplink' : (t.whole ? 'whole device' : '')}</div>`);
+    }
+    body.innerHTML = `<div class="tktbl">${cells.join('')}</div>`;
+  } catch (e) {
+    document.getElementById('trafficSub').textContent = '';
+    body.innerHTML = `<p class="muted">${escapeHtml(e.message)}</p>`;
+  }
+}
+
+// ---- device logs ----
+//
+// What the devices are saying, for the devices that cannot run an agent —
+// which are exactly the ones with something to say and nowhere to say it.
+
+const syslogModal = document.getElementById('syslogModal');
+document.getElementById('syslogClose').addEventListener('click', () => syslogModal.classList.add('hidden'));
+syslogModal.addEventListener('click', e => { if (e.target === syslogModal) syslogModal.classList.add('hidden'); });
+document.getElementById('syslogBtn').addEventListener('click', () => { syslogModal.classList.remove('hidden'); loadSyslog(); });
+document.getElementById('syslogQ').addEventListener('input', () => loadSyslog());
+document.getElementById('syslogSrc').addEventListener('change', () => loadSyslog());
+// Fresh while it is open: a log view that has to be reopened to update is a
+// screenshot, not a view.
+setInterval(() => { if (!syslogModal.classList.contains('hidden')) loadSyslog(); }, 5000);
+
+// deviceNameForIP names a log source from the cards already on the dashboard.
+function deviceNameForIP(ip, checks) {
+  for (const c of checks || []) {
+    if (c.ip === ip || c.address === ip) return c.name;
+  }
+  return '';
+}
+
+let lastChecksForLogs = [];
+async function loadSyslog() {
+  const q = document.getElementById('syslogQ').value.trim();
+  const src = document.getElementById('syslogSrc').value;
+  const body = document.getElementById('syslogBody');
+  try {
+    const [d, checks] = await Promise.all([
+      authJSON(`/api/syslog?q=${encodeURIComponent(q)}&source=${encodeURIComponent(src)}&limit=300`, 'GET'),
+      authJSON('/api/netchecks', 'GET').catch(() => lastChecksForLogs),
+    ]);
+    lastChecksForLogs = checks || [];
+    if (!d.enabled) {
+      document.getElementById('syslogSub').textContent = '';
+      body.innerHTML = '<p class="muted">The listener is off. Start the hub with <code>-syslog :5514</code> ' +
+        '(or <code>AUTORMM_SYSLOG=:5514</code>) and point your devices\' syslog at the hub. ' +
+        'UDP syslog is unauthenticated — keep it on the LAN.</p>';
+      return;
+    }
+    // The source filter, named as well as the dashboard can manage.
+    const sel = document.getElementById('syslogSrc');
+    const have = new Set([...sel.options].map(o => o.value));
+    for (const s2 of d.sources || []) {
+      if (!have.has(s2)) {
+        const o = document.createElement('option');
+        o.value = s2;
+        const nm = deviceNameForIP(s2, lastChecksForLogs);
+        o.textContent = nm ? `${nm} (${s2})` : s2;
+        sel.appendChild(o);
+      }
+    }
+    const msgs = d.messages || [];
+    document.getElementById('syslogSub').textContent = `${msgs.length} message${msgs.length === 1 ? '' : 's'}`;
+    body.innerHTML = '<div class="slog">' + msgs.map(m => {
+      const t = new Date(m.received * 1000);
+      const hh = String(t.getHours()).padStart(2, '0'), mm = String(t.getMinutes()).padStart(2, '0'), ss2 = String(t.getSeconds()).padStart(2, '0');
+      const cls = m.severity <= 3 ? ' sl-err' : (m.severity === 4 ? ' sl-warn' : '');
+      const nm = deviceNameForIP(m.source, lastChecksForLogs) || m.source;
+      return `<div class="sl${cls}"><span class="sl-t">${hh}:${mm}:${ss2}</span>` +
+        `<span class="sl-s">${escapeHtml(nm)}</span>` +
+        (m.tag ? `<span class="sl-tag">${escapeHtml(m.tag)}</span>` : '') +
+        escapeHtml(m.text) + '</div>';
+    }).join('') + '</div>';
+  } catch (e) {
+    body.innerHTML = `<p class="muted">${escapeHtml(e.message)}</p>`;
+  }
 }
