@@ -41,6 +41,7 @@ function connect() {
   disposeDecoder();
   codecsEl.innerHTML = '';
   autoFitDone = false; // auto-fit resolution once per session
+  hostHasCursor = false; // re-learned per session; the host may have changed
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   // Advertise H.264 when this browser can decode it, so the hub starts the
   // session on it whenever the host has ffmpeg. JPEG-tile stays the fallback,
@@ -376,6 +377,19 @@ function showNotice(text) {
 // immediately and let the host's reports take over once they stop.
 let localCursorUntil = 0;
 
+// Whether this host has ever reported a pointer of its own.
+//
+// A machine with no mouse attached reports none — Windows says the cursor is
+// hidden and leaves its position frozen — and then neither the visibility nor
+// the coordinates say anything about the pointer the operator is driving. Ours
+// is the only one in play, so the host's opinion is ignored entirely.
+//
+// A host that has shown a cursor and then hides it is the opposite case: an
+// application took the pointer (a game's mouse-look, a video going fullscreen),
+// and following that is right. The two are only distinguishable by whether a
+// cursor was ever seen at all.
+let hostHasCursor = false;
+
 // Shapes the host has described, by id. What the pointer looks like is
 // information the picture does not carry — the hardware cursor is composited by
 // the display rather than drawn into the framebuffer, so capture never includes
@@ -428,7 +442,19 @@ function updateCursor(m) {
     const sh = m.shape ? cursorShapes.get(m.shape) : null;
     if ((sh || null) !== curShape) applyShape(sh);
   }
-  if (!m.vis) { rcursor.classList.add('hidden'); return; }
+  if (m.vis) hostHasCursor = true;
+  // A host that has never had a pointer of its own has nothing useful to say
+  // about this one, in either position or visibility. Local prediction owns it.
+  if (!hostHasCursor) return;
+  if (!m.vis) {
+    // Not while the operator is driving. These reports arrive at ~30Hz and the
+    // local position updates at ~60, so acting on a hide mid-movement flickers
+    // the pointer on and off — which is what "jittery" looked like, and then
+    // hid it for good the moment the movement stopped.
+    if (performance.now() < localCursorUntil) return;
+    rcursor.classList.add('hidden');
+    return;
+  }
   // Ignore stale echoes of our own movement; they lag behind the local position
   // and would drag the pointer backwards.
   if (performance.now() < localCursorUntil) return;
