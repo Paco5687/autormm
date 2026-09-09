@@ -42,6 +42,7 @@ function connect() {
   codecsEl.innerHTML = '';
   autoFitDone = false; // auto-fit resolution once per session
   hostHasCursor = false; // re-learned per session; the host may have changed
+  applyShape(null);      // and so may its pointer; never carry one across
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   // Advertise H.264 when this browser can decode it, so the hub starts the
   // session on it whenever the host has ffmpeg. JPEG-tile stays the fallback,
@@ -435,6 +436,16 @@ function predictCursor(p) {
 }
 
 function updateCursor(m) {
+  if (m.vis) hostHasCursor = true;
+  // A host that has never had a pointer of its own has nothing useful to say
+  // about this one — not its position, not its visibility, and not its shape.
+  // All three are frozen at whatever they happened to be, and the agent only
+  // sends a message when one of them changes, so it sends exactly one per
+  // session and then goes quiet. Following that leaves the pointer stuck as
+  // whichever shape the host was holding at the instant we connected — a
+  // resize arrow, most memorably. Local prediction owns the pointer, and the
+  // plain arrow is the honest thing to draw.
+  if (!hostHasCursor) return;
   // The shape is followed even when the position is not: a cursor that changed
   // appearance without moving — hovering onto a target — is exactly the change
   // worth seeing.
@@ -442,10 +453,6 @@ function updateCursor(m) {
     const sh = m.shape ? cursorShapes.get(m.shape) : null;
     if ((sh || null) !== curShape) applyShape(sh);
   }
-  if (m.vis) hostHasCursor = true;
-  // A host that has never had a pointer of its own has nothing useful to say
-  // about this one, in either position or visibility. Local prediction owns it.
-  if (!hostHasCursor) return;
   if (!m.vis) {
     // Not while the operator is driving. These reports arrive at ~30Hz and the
     // local position updates at ~60, so acting on a hide mid-movement flickers
