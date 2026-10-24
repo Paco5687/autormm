@@ -3,6 +3,7 @@
 package capture
 
 import (
+	"errors"
 	"fmt"
 	"image"
 	"log"
@@ -126,7 +127,10 @@ func (c *screenCapturer) Capture() (*image.RGBA, error) {
 	var img *image.RGBA
 	var err error
 	region := c.Bounds()
-	onCaptureDesktop(func() {
+	// The capture thread has no deadline, so this always completes; checked
+	// rather than assumed, because reading img and err after an abandoned job
+	// would be reading them while the worker still writes them.
+	if !onCaptureDesktop(func() {
 		if c.fast != nil {
 			img, err = c.fast.grab(region)
 			if err == nil || err == ErrNoChange {
@@ -141,7 +145,9 @@ func (c *screenCapturer) Capture() (*image.RGBA, error) {
 		// the whole frame changed.
 		c.setDirty(nil)
 		img, err = screenshot.CaptureRect(region)
-	})
+	}) {
+		return nil, errors.New("capture: the desktop thread did not finish the grab")
+	}
 	return img, err
 }
 

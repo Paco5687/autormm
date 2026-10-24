@@ -4,7 +4,16 @@
 # without a C toolchain.
 
 VERSION ?= 0.1.0
-LDFLAGS := -s -w -X github.com/Paco5687/autormm/agent.Version=$(VERSION)
+# Both version vars, deliberately. Only agent.Version used to be stamped, so a
+# `make build` hub reported "dev" from server.Version while the agents it
+# handed out carried a real number. That asymmetry is invisible until it
+# matters: the hub compares itself against the latest public release to decide
+# whether an update exists, so a locally built hub either never offers one or —
+# if someone picks a version ahead of the public repo — offers to move
+# backwards onto it.
+LDFLAGS := -s -w \
+  -X github.com/Paco5687/autormm/agent.Version=$(VERSION) \
+  -X github.com/Paco5687/autormm/server.Version=$(VERSION)
 GO      := go
 DIST    := dist
 

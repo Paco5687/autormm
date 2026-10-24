@@ -82,13 +82,25 @@ type bitmapInfo struct {
 // given loaded cursor, so it doubles as a cache key: the viewer is told the
 // image once and thereafter only the id.
 func (winCursor) Shape() (uint64, bool) {
-	var ci cursorInfo
-	ci.cbSize = uint32(unsafe.Sizeof(ci))
-	r, _, _ := procGetCursorInfo.Call(uintptr(unsafe.Pointer(&ci)))
-	if r == 0 || ci.hCursor == 0 {
+	var got struct {
+		id uint64
+		ok bool
+	}
+	// On the cursor thread for the same reason Pos is: the handle belongs to
+	// the reader's desktop, and a reader on the wrong one gets a handle frozen
+	// at whatever it was — which the viewer wears until it reconnects.
+	if !onCursorDesktop(func() {
+		var ci cursorInfo
+		ci.cbSize = uint32(unsafe.Sizeof(ci))
+		r, _, _ := procGetCursorInfo.Call(uintptr(unsafe.Pointer(&ci)))
+		if r == 0 || ci.hCursor == 0 {
+			return
+		}
+		got.id, got.ok = uint64(ci.hCursor), true
+	}) {
 		return 0, false
 	}
-	return uint64(ci.hCursor), true
+	return got.id, got.ok
 }
 
 // ShapeImage renders a cursor handle into pixels.
@@ -105,6 +117,24 @@ func (winCursor) ShapeImage(id uint64) (*image.RGBA, int, int, bool) {
 	if id == 0 {
 		return nil, 0, 0, false
 	}
+	var got struct {
+		img        *image.RGBA
+		hotX, hotY int
+		ok         bool
+	}
+	// Rendering a cursor is GDI work, and GDI is scoped to the thread's desktop
+	// exactly as the cursor itself is: a handle from one desktop drawn on
+	// another produces nothing. Same thread as the read that produced it.
+	if !onCursorDesktop(func() {
+		got.img, got.hotX, got.hotY, got.ok = shapeImageHere(id)
+	}) {
+		return nil, 0, 0, false
+	}
+	return got.img, got.hotX, got.hotY, got.ok
+}
+
+// shapeImageHere renders on whichever thread calls it.
+func shapeImageHere(id uint64) (*image.RGBA, int, int, bool) {
 	h := uintptr(id)
 	var ii iconInfo
 	if r, _, _ := procGetIconInfo.Call(h, uintptr(unsafe.Pointer(&ii))); r == 0 {

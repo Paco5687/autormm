@@ -7,5 +7,6 @@ package capture
 // agent already runs in.
 func FollowInputDesktop() {}
 
-func onInputDesktop(fn func())   { fn() }
-func onCaptureDesktop(fn func()) { fn() }
+func onInputDesktop(fn func()) bool   { fn(); return true }
+func onCaptureDesktop(fn func()) bool { fn(); return true }
+func onCursorDesktop(fn func()) bool  { fn(); return true }

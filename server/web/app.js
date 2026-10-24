@@ -185,6 +185,12 @@ async function checkUpdates() {
       st.textContent = `Update available: ${d.latest}`;
       apply.textContent = `Update hub to ${d.latest}`;
       apply.classList.remove('hidden');
+    } else if (d.ahead) {
+      // Not the same as being up to date, and worth saying: a hub ahead of
+      // every published release is running a hand-built binary, and this
+      // dialog is the only place that would ever mention it.
+      st.textContent = `This hub (${d.current}) is newer than the latest release (${d.latest}) — built by hand, not from a release`;
+      apply.classList.add('hidden');
     } else {
       st.textContent = `Up to date (latest ${d.latest || d.current})`;
       apply.classList.add('hidden');

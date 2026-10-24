@@ -6,6 +6,7 @@ import (
 	"log"
 	"runtime"
 	"sync"
+	"time"
 )
 
 var (
@@ -18,8 +19,23 @@ var (
 	// not share one: the capture side blocks inside AcquireNextFrame waiting for
 	// the screen to change, and a keystroke queued behind that wait would be
 	// delayed by the whole timeout — which showed up as laggy, dropped typing.
-	captureThread = &desktopThread{name: "capture"}
-	inputThread   = &desktopThread{name: "input"}
+	// Capture has no deadline on purpose: blocking is how it waits for the
+	// screen to change, and a still screen blocks for the full DXGI timeout
+	// every frame. Nothing queues behind it — that is what its own thread is
+	// for — so waiting costs nothing but the frame it is already waiting on.
+	captureThread = &desktopThread{dispatcher: dispatcher{name: "capture"}}
+	inputThread   = &desktopThread{dispatcher: dispatcher{name: "input", timeout: jobTimeout}}
+	// Reading the pointer is desktop-scoped too, and for the same reason: the
+	// cursor a thread can see belongs to its own desktop. Without this the
+	// reader sits on whatever desktop the process started on and reports a
+	// desktop with no cursor at all — hidden, position frozen, handle frozen —
+	// which the viewer then faithfully renders as a pointer that vanishes,
+	// flickers and wears the wrong shape.
+	//
+	// Its own thread rather than sharing: it polls at 30Hz, and putting that
+	// in front of injection would make every keystroke queue behind a cursor
+	// read.
+	cursorThread = &desktopThread{dispatcher: dispatcher{name: "cursor", timeout: jobTimeout}}
 )
 
 // FollowInputDesktop switches this process into console-worker mode: screen
@@ -35,6 +51,7 @@ var (
 func FollowInputDesktop() {
 	captureThread.start()
 	inputThread.start()
+	cursorThread.start()
 	followingMu.Lock()
 	following = true
 	followingMu.Unlock()
@@ -50,9 +67,8 @@ func isFollowing() bool {
 // thread's desktop assignment is per-thread state, which is exactly why it must
 // never be released back to the Go scheduler.
 type desktopThread struct {
-	name string
+	dispatcher
 	once sync.Once
-	jobs chan func()
 }
 
 func (t *desktopThread) start() {
@@ -106,22 +122,39 @@ func (t *desktopThread) run(ready chan<- struct{}) {
 
 // do runs fn on this thread and waits for it. When following is not enabled it
 // runs inline, so the ordinary user-session agent is unaffected.
-func (t *desktopThread) do(fn func()) {
+// jobTimeout is how long callers of the input and cursor threads will wait.
+//
+// Those dispatch Windows syscalls documented to return promptly that
+// occasionally do not: SendInput blocks on a full input queue, and SetCursorPos
+// and the desktop switch can block on a busy desktop. Waiting forever on an
+// unbuffered channel turns one such stall into a session with no input at all —
+// permanently, since the worker never returns to its loop and every later
+// caller queues behind it — while capture carries on from its own thread and
+// the picture looks perfectly healthy. A dropped event is recoverable; a dead
+// input path is not.
+//
+// Generous by the standards of the work: injection is sub-millisecond and
+// reading the pointer barely more, so a quarter second means something is
+// wrong rather than something is busy.
+const jobTimeout = 250 * time.Millisecond
+
+// do runs fn on this thread and reports whether it completed. When following is
+// not enabled it runs inline on the caller's goroutine, so the ordinary
+// user-session agent is untouched by any of this.
+func (t *desktopThread) do(fn func()) bool {
 	if !isFollowing() || t.jobs == nil {
 		fn()
-		return
+		return true
 	}
-	done := make(chan struct{})
-	t.jobs <- func() {
-		defer close(done)
-		fn()
-	}
-	<-done
+	return t.send(fn)
 }
 
 // onInputDesktop runs fn on the thread reserved for input injection, so a
 // keystroke never waits behind a screen capture.
-func onInputDesktop(fn func()) { inputThread.do(fn) }
+func onInputDesktop(fn func()) bool { return inputThread.do(fn) }
+
+// onCursorDesktop runs fn on the thread reserved for reading the pointer.
+func onCursorDesktop(fn func()) bool { return cursorThread.do(fn) }
 
 // onCaptureDesktop runs fn on the thread reserved for screen capture.
-func onCaptureDesktop(fn func()) { captureThread.do(fn) }
+func onCaptureDesktop(fn func()) bool { return captureThread.do(fn) }
