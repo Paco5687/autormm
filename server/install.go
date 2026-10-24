@@ -82,7 +82,9 @@ func (s *Server) handleDownloadAgent(w http.ResponseWriter, r *http.Request) {
 
 // handleInstallScript serves a self-contained agent installer with the hub URL
 // and enroll token baked in. ?desktop=1 installs a graphical (screen-sharing)
-// user-session agent instead of a headless system service.
+// user-session agent instead of a headless system service, and ?autologin=1
+// additionally has that desktop log itself in at boot, so the host is reachable
+// without someone having signed in at its screen.
 func (s *Server) handleInstallScript(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Query().Get("token")
 	w.Header().Set("Content-Type", "text/x-shellscript")
@@ -99,6 +101,13 @@ func (s *Server) handleInstallScript(w http.ResponseWriter, r *http.Request) {
 	}
 	out := strings.ReplaceAll(tmpl, "__SERVER__", baseURL(r))
 	out = strings.ReplaceAll(out, "__TOKEN__", token)
+	// Only the desktop template carries this, and only ?autologin=1 turns it on:
+	// the install must not quietly change how the machine boots.
+	autologin := "0"
+	if r.URL.Query().Get("autologin") == "1" {
+		autologin = "1"
+	}
+	out = strings.ReplaceAll(out, "__AUTOLOGIN__", autologin)
 	w.Write([]byte(out))
 }
 
@@ -141,10 +150,14 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 		"enroll_token": tok,
 		"bundled":      haveLinux || haveWin,
 		"commands": map[string]string{
-			"linux":            fmt.Sprintf(`curl -fsSL "%s/install.sh?token=%s" | sudo sh`, base, tok),
-			"linux_desktop":    fmt.Sprintf(`curl -fsSL "%s/install.sh?token=%s&desktop=1" | sh`, base, tok),
-			"windows":          fmt.Sprintf(`iwr -useb "%s/install.ps1?token=%s" | iex`, base, tok),
-			"windows_elevated": fmt.Sprintf(`iwr -useb "%s/install-elevated.ps1?token=%s" | iex`, base, tok),
+			"linux":         fmt.Sprintf(`curl -fsSL "%s/install.sh?token=%s" | sudo sh`, base, tok),
+			"linux_desktop": fmt.Sprintf(`curl -fsSL "%s/install.sh?token=%s&desktop=1" | sh`, base, tok),
+			// Same install, plus GDM autologin: a Linux desktop has no display to
+			// capture until someone signs in, so without this a rebooted host comes
+			// back monitor-only.
+			"linux_desktop_autologin": fmt.Sprintf(`curl -fsSL "%s/install.sh?token=%s&desktop=1&autologin=1" | sh`, base, tok),
+			"windows":                 fmt.Sprintf(`iwr -useb "%s/install.ps1?token=%s" | iex`, base, tok),
+			"windows_elevated":        fmt.Sprintf(`iwr -useb "%s/install-elevated.ps1?token=%s" | iex`, base, tok),
 			// No sudo: a LaunchAgent belongs to the user's login session.
 			"macos": fmt.Sprintf(`curl -fsSL "%s/install.sh?token=%s&os=darwin" | sh`, base, tok),
 		},
@@ -261,30 +274,187 @@ echo "autormm-agent installed and running. It should appear on the dashboard sho
 echo "Log: ~/Library/Logs/autormm-agent.log"
 `
 
+// detectGraphicalSessionSh leaves the X display this user is logged into in
+// DISP, the authority file that opens it in XAUTH, and the session's type in
+// SESSION_TYPE.
+//
+// The desktop unit used to hardcode :0 and ~/.Xauthority, and a stock Ubuntu
+// GDM desktop contradicts both often enough to matter: GDM keeps its authority
+// file under /run/user/<uid>/gdm, and a session that was not the first on its
+// seat lands on :1. Getting either wrong is quiet rather than loud — the agent
+// starts, finds no display, registers can_stream=false, and the dashboard greys
+// out the Remote button with nothing on screen to say why.
+//
+// The installer is run from an ssh login as often as from a terminal inside the
+// desktop, so the environment is only the first guess: logind is the source
+// that knows about a session this shell is not part of.
+const detectGraphicalSessionSh = `
+UID_NUM="$(id -u)"
+RUNDIR="${XDG_RUNTIME_DIR:-/run/user/$UID_NUM}"
+# A variable rather than a literal so the test can point the socket scan at a
+# directory it is allowed to create. Nothing else sets it.
+X11_SOCKETS="${AUTORMM_X11_SOCKETS:-/tmp/.X11-unix}"
+
+# session_prop <session-id> <property> — one property of one logind session.
+session_prop() {
+  loginctl show-session "$1" -p "$2" 2>/dev/null | sed -n "s/^$2=//p"
+}
+
+SESSION_TYPE=""
+DISP="$DISPLAY"
+if command -v loginctl >/dev/null 2>&1; then
+  SID=""
+  # logind calls a user's graphical session their "display" session, and that is
+  # the right answer when it has one -- but it names a session even when that
+  # session is a tty, so the type has to be checked rather than trusted. This
+  # installer is usually run over ssh, and an ssh login is a session too: it
+  # must not shadow the desktop the agent is being installed for. Hence the
+  # preferred id first, then every session this user owns, taking the first
+  # graphical one.
+  for s in $(loginctl show-user "$USER" -p Display 2>/dev/null | sed -n 's/^Display=//p') \
+           $(loginctl list-sessions --no-legend 2>/dev/null | awk '{print $1}'); do
+    [ "$(session_prop "$s" Name)" = "$USER" ] || continue
+    case "$(session_prop "$s" Type)" in
+      x11|wayland) SID="$s"; break;;
+    esac
+  done
+  if [ -n "$SID" ]; then
+    SESSION_TYPE="$(session_prop "$SID" Type)"
+    sid_disp="$(session_prop "$SID" Display)"
+    if [ -n "$sid_disp" ]; then DISP="$sid_disp"; fi
+  fi
+fi
+# Nothing from logind: take the first X socket on the machine (normally the
+# only one; a box with several has no way to say which is this user's).
+if [ -z "$DISP" ]; then
+  for sock in "$X11_SOCKETS"/X*; do
+    [ -e "$sock" ] || continue
+    DISP=":${sock##*/X}"
+    break
+  done
+fi
+[ -n "$DISP" ] || DISP=":0"
+
+# The authority file: whatever the session exported, else the usual places. The
+# glob covers display managers that keep theirs in a directory of their own
+# under the runtime dir (lightdm, sddm) without having to name each one.
+XAUTH=""
+for cand in "$XAUTHORITY" "$RUNDIR/gdm/Xauthority" "$HOME/.Xauthority" "$RUNDIR"/*/Xauthority "$RUNDIR/Xauthority"; do
+  if [ -n "$cand" ] && [ -r "$cand" ]; then
+    XAUTH="$cand"
+    break
+  fi
+done
+[ -n "$XAUTH" ] || XAUTH="$HOME/.Xauthority"
+`
+
+// enableAutologinSh turns on GDM autologin for the installing user.
+//
+// This is what makes a desktop host reachable after a reboot. X is the login
+// session on Linux: with nobody logged in there is no display to capture, so
+// the agent registers can_stream=false and the hub can only grey the Remote
+// button out — not a misconfiguration, just the shape of the platform. A
+// machine that logs itself in has a session waiting whether or not anyone is
+// sitting at it.
+//
+// Opt-in (?autologin=1) rather than part of every desktop install: it means the
+// machine comes up past its login screen, which is a trade the operator has to
+// make deliberately, not a side effect of enrolling a host.
+const enableAutologinSh = `
+AUTOLOGIN_CONF=""
+# A variable rather than a literal list so the test can point this at a file it
+# is allowed to rewrite. Nothing else sets it.
+for c in ${AUTORMM_GDM_CONFS:-/etc/gdm3/custom.conf /etc/gdm/custom.conf}; do
+  if [ -f "$c" ]; then AUTOLOGIN_CONF="$c"; break; fi
+done
+if [ -z "$AUTOLOGIN_CONF" ]; then
+  echo "autormm: no GDM config found (looked in /etc/gdm3 and /etc/gdm), so autologin is not set." >&2
+  echo "         Turn it on in your own display manager's configuration instead." >&2
+elif ! sudo -n true 2>/dev/null; then
+  echo "autormm: autologin needs root, and sudo here wants a password. Set it yourself:" >&2
+  echo "           sudo nano $AUTOLOGIN_CONF" >&2
+  echo "         and under [daemon] put AutomaticLoginEnable=true and AutomaticLogin=$USER" >&2
+else
+  # Keep one backup, from the first time this ran: re-running the installer must
+  # not overwrite the original with an already-modified copy.
+  if [ ! -f "$AUTOLOGIN_CONF.autormm.bak" ]; then
+    sudo -n cp "$AUTOLOGIN_CONF" "$AUTOLOGIN_CONF.autormm.bak"
+  fi
+  # Three shapes: the keys are already there (set them), there is a [daemon]
+  # section to put them in (Ubuntu ships one, with both keys commented out), or
+  # neither and the section has to be written.
+  if grep -qE '^[[:space:]]*AutomaticLoginEnable[[:space:]]*=' "$AUTOLOGIN_CONF"; then
+    sudo -n sed -i "s|^[[:space:]]*AutomaticLoginEnable[[:space:]]*=.*|AutomaticLoginEnable=true|" "$AUTOLOGIN_CONF"
+    if grep -qE '^[[:space:]]*AutomaticLogin[[:space:]]*=' "$AUTOLOGIN_CONF"; then
+      sudo -n sed -i "s|^[[:space:]]*AutomaticLogin[[:space:]]*=.*|AutomaticLogin=$USER|" "$AUTOLOGIN_CONF"
+    else
+      sudo -n sed -i "/^[[:space:]]*AutomaticLoginEnable/a AutomaticLogin=$USER" "$AUTOLOGIN_CONF"
+    fi
+  elif grep -q '^\[daemon\]' "$AUTOLOGIN_CONF"; then
+    sudo -n sed -i "/^\[daemon\]/a AutomaticLoginEnable=true\nAutomaticLogin=$USER" "$AUTOLOGIN_CONF"
+  else
+    printf '[daemon]\nAutomaticLoginEnable=true\nAutomaticLogin=%s\n' "$USER" | sudo -n tee -a "$AUTOLOGIN_CONF" >/dev/null
+  fi
+  echo "autormm: autologin enabled for $USER in $AUTOLOGIN_CONF"
+  echo "         (original kept as $AUTOLOGIN_CONF.autormm.bak)."
+  echo "         This machine now reaches its desktop at boot with no password typed."
+  echo "         Lock the screen when you leave it: a locked X session still streams, so"
+  echo "         you can unlock it from the viewer."
+  if [ "$SESSION_TYPE" = "wayland" ]; then
+    echo "autormm: autologin will start the same Wayland session, which cannot be captured." >&2
+    echo "         Put WaylandEnable=false in $AUTOLOGIN_CONF as well." >&2
+  fi
+fi
+`
+
 const installShDesktop = `#!/bin/sh
 # autormm agent installer (graphical desktop, per-user; enables screen sharing).
 set -e
 SERVER="__SERVER__"
 TOKEN="__TOKEN__"
+AUTOLOGIN="__AUTOLOGIN__"
 case "$(uname -m)" in
   x86_64|amd64) ARCH=amd64;;
   aarch64|arm64) ARCH=arm64;;
   *) echo "unsupported architecture: $(uname -m)" >&2; exit 1;;
 esac
+` + detectGraphicalSessionSh + `
+if [ "$SESSION_TYPE" = "wayland" ]; then
+  echo "autormm: this desktop is a Wayland session, and screen capture is X11-only." >&2
+  echo "         The agent installs and reports metrics, but Remote stays greyed out." >&2
+  echo "         Log in with 'Ubuntu on Xorg' (the gear on the login screen) to stream." >&2
+fi
+
+# A headless install on this same machine registers under the same agent id (the
+# hostname) and claims the same connection slot on the hub, so the two evict each
+# other on every reconnect and the host flaps between streamable and not. On a
+# desktop, the agent that can actually see the screen is the one that should win.
+if [ -f /etc/systemd/system/autormm-agent.service ]; then
+  echo "autormm: a headless system agent is installed here; disabling it so the two do not fight."
+  if sudo -n systemctl disable --now autormm-agent >/dev/null 2>&1; then
+    echo "autormm: headless agent stopped."
+  else
+    echo "autormm: could not stop it without a password. Run this, then re-run the installer:" >&2
+    echo "         sudo systemctl disable --now autormm-agent" >&2
+  fi
+fi
+
 mkdir -p "$HOME/.local/bin" "$HOME/.config/autormm" "$HOME/.config/systemd/user"
 echo "Downloading autormm-agent ($ARCH) from $SERVER ..."
 curl -fsSL "$SERVER/download/agent?os=linux&arch=$ARCH&token=$TOKEN" -o "$HOME/.local/bin/autormm-agent"
 chmod 0755 "$HOME/.local/bin/autormm-agent"
 printf 'AUTORMM_SERVER=%s\nAUTORMM_ENROLL_TOKEN=%s\n' "$SERVER" "$TOKEN" > "$HOME/.config/autormm/agent.env"
 chmod 600 "$HOME/.config/autormm/agent.env"
-cat > "$HOME/.config/systemd/user/autormm-agent.service" <<'UNIT'
+# Unquoted heredoc, so the detected display and authority are written in while
+# %h is left for systemd to expand.
+cat > "$HOME/.config/systemd/user/autormm-agent.service" <<UNIT
 [Unit]
 Description=autormm agent (desktop)
 After=graphical-session.target
 [Service]
 EnvironmentFile=%h/.config/autormm/agent.env
-Environment=DISPLAY=:0
-Environment=XAUTHORITY=%h/.Xauthority
+Environment=DISPLAY=$DISP
+Environment=XAUTHORITY=$XAUTH
 ExecStart=%h/.local/bin/autormm-agent
 Restart=always
 RestartSec=5
@@ -294,9 +464,53 @@ UNIT
 loginctl enable-linger "$USER" >/dev/null 2>&1 || true
 systemctl --user daemon-reload
 systemctl --user enable autormm-agent
+# Note the time before the restart, so the check below reads this run's log and
+# not a verdict left by an earlier install.
+STARTED="$(date '+%Y-%m-%d %H:%M:%S')"
 # restart (not just enable --now) so re-running this command upgrades in place.
 systemctl --user restart autormm-agent
-echo "autormm-agent (desktop) installed and running."
+echo "autormm-agent (desktop) installed: display $DISP, authority $XAUTH"
+
+if [ "$AUTOLOGIN" = "1" ]; then
+` + enableAutologinSh + `
+elif [ -z "$SESSION_TYPE" ]; then
+  # Nobody is logged in, so there is nothing to capture and a reboot will leave
+  # it that way. Say so here rather than leaving a greyed-out button to explain
+  # itself on the dashboard.
+  echo "autormm: nobody is logged in at this machine's screen, so there is no display to"
+  echo "         capture and Remote stays greyed out -- after every reboot, too."
+  echo "         Re-run this command with '&autologin=1' on the end and the machine will"
+  echo "         log itself in at boot. The Add-host dialog offers that version as well."
+fi
+
+# Read the verdict back rather than claiming success: the agent logs whether it
+# found a capturable screen when it registers, and a wrong display is not a
+# failure to start — it is stream=false, which is otherwise visible only as a
+# greyed-out button on the dashboard.
+if ! command -v journalctl >/dev/null 2>&1; then
+  exit 0
+fi
+i=0
+while [ "$i" -lt 15 ]; do
+  state="$(journalctl --user -u autormm-agent --since "$STARTED" -n 30 --no-pager 2>/dev/null | grep -o 'stream=[a-z]*' | tail -1 || true)"
+  case "$state" in
+    stream=true)
+      echo "autormm: screen sharing is live — Remote is available for this host."
+      exit 0;;
+    stream=false)
+      echo "autormm: the agent is connected but reports it cannot capture this screen." >&2
+      echo "         It is using DISPLAY=$DISP XAUTHORITY=$XAUTH." >&2
+      echo "         Run 'echo \$DISPLAY; echo \$XAUTHORITY' in a terminal on the desktop" >&2
+      echo "         itself, put those values in" >&2
+      echo "         ~/.config/systemd/user/autormm-agent.service, and then:" >&2
+      echo "           systemctl --user daemon-reload && systemctl --user restart autormm-agent" >&2
+      exit 0;;
+  esac
+  i=$((i + 1))
+  sleep 1
+done
+echo "autormm: installed, but the agent has not registered yet. Check it with:"
+echo "           journalctl --user -u autormm-agent -n 30"
 `
 
 // installPs1 installs the Windows desktop agent as a system-tray app that starts

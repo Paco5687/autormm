@@ -515,6 +515,10 @@
         <!-- Only on an offline host. Removing a connected one is refused by the
              hub anyway — it would register again within seconds — so offering
              the button there would only be an invitation to be told no. -->
+        <!-- Unenroll is Remove's mirror image, and the two are never both
+             offered: this one works by asking the agent to take itself off the
+             machine, so it needs a host that can still hear the request. -->
+        <button class="card-unenroll hidden" title="Uninstall the agent and remove this host">⏏</button>
         <button class="card-del hidden" title="Remove this host">✕</button>
       </div>
       <!-- Metrics come before the alert chips so that CPU/MEM sit at the same
@@ -555,6 +559,9 @@
         <div class="cmd-row"><code id="cmdLinux"></code><button class="btn copy" data-t="cmdLinux">Copy</button></div>
         <h4 class="sc-h">Linux — desktop (enables screen sharing)</h4>
         <div class="cmd-row"><code id="cmdLinuxDesktop"></code><button class="btn copy" data-t="cmdLinuxDesktop">Copy</button></div>
+        <h4 class="sc-h">Linux — desktop, unattended (also logs in at boot)</h4>
+        <div class="cmd-row"><code id="cmdLinuxDesktopAuto"></code><button class="btn copy" data-t="cmdLinuxDesktopAuto">Copy</button></div>
+        <p class="muted" style="font-size:12px">Same install plus GDM autologin. A Linux desktop has no screen to share until someone signs in, so without this a rebooted host comes back monitor-only. The machine then reaches its desktop with no password typed — lock the screen when you leave it, a locked session still streams.</p>
         <h4 class="sc-h">Windows — PowerShell (as the console user)</h4>
         <div class="cmd-row"><code id="cmdWindows"></code><button class="btn copy" data-t="cmdWindows">Copy</button></div>
         <h4 class="sc-h">macOS — no sudo (installs a LaunchAgent in your login session)</h4>

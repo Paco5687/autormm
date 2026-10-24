@@ -13,8 +13,13 @@ PartOf=graphical-session.target
 
 [Service]
 EnvironmentFile=%h/.config/autormm/agent.env
-# Adjust if your display/auth differ (Xwayland/X11 only; native Wayland capture
-# is not supported).
+# These two are the whole trick, and :0 with ~/.Xauthority is only the common
+# case: under GDM the authority file is /run/user/<uid>/gdm/Xauthority, and a
+# session that was not the first on its seat is on :1. Read the real pair with
+#   loginctl show-session "$(loginctl show-user $USER -p Display --value)" -p Type -p Display
+#   echo "$XAUTHORITY"   # from a terminal on the desktop itself
+# or let the hub's one-command desktop installer detect them for you.
+# (X11/Xwayland only; native Wayland capture is not supported.)
 Environment=DISPLAY=:0
 Environment=XAUTHORITY=%h/.Xauthority
 ExecStart=%h/.local/bin/autormm-agent

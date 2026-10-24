@@ -93,6 +93,8 @@ it. No file hunting, no tokens to copy by hand.
 # Linux (headless):   the dashboard gives you this, pre-filled
 curl -fsSL "http://<hub-ip>:8765/install.sh?token=<enroll>" | sudo sh
 # Linux desktop (adds screen sharing): same URL with &desktop=1, no sudo
+#   add &autologin=1 as well and the desktop logs itself in at boot, so screen
+#   sharing works with nobody sitting at it (X is the login session on Linux)
 # Windows (tray app, no admin): iwr -useb "http://<hub-ip>:8765/install.ps1?token=<enroll>" | iex
 ```
 
@@ -312,7 +314,7 @@ network — when history is enabled via `--db`) and its top processes.
 ## Known limitations
 
 - **Screen capture is X11 (Linux) / GDI (Windows).** Native Wayland capture isn't supported — use Xorg or Xwayland on Linux desktops. macOS builds run in **metrics-only** mode (capture returns "unsupported").
-- The Linux agent needs access to the X session (`DISPLAY`/`XAUTHORITY`); the provided user service handles this. Headless servers register as **not streamable** and are monitor-only.
+- The Linux agent needs access to the X session (`DISPLAY`/`XAUTHORITY`); the desktop installer detects both from the live session, since GDM's authority file is not `~/.Xauthority` and the display is not always `:0`. Headless servers register as **not streamable** and are monitor-only.
 - **Keyboard** mapping covers the common physical keys (letters, digits, punctuation, modifiers, arrows, F-keys, numpad). Exotic keys/layouts may not map.
 - The default codec is **JPEG tile-deltas** (changed 128px tiles only) — efficient for typical desktop use, not tuned for full-screen video/gaming. An **opt-in H.264 codec** does much better on video/motion; it needs `ffmpeg` on the host (encode) and a WebCodecs browser like Chrome/Edge (decode), and silently falls back to JPEG if either is missing.
 - **Multi-monitor** hosts are supported: the viewer streams one display at a time (starting on the primary), with a picker to switch between them. Capturing all monitors as one frame is deliberately not offered — it is too large to stream smoothly.

@@ -22,6 +22,9 @@ func removeTestServer(t *testing.T) *Server {
 		alerter:  NewAlerter(AlertConfig{}),
 		prefs:    newHostPrefs(t.TempDir()),
 		auditLog: newAuditLog(nil),
+		// Unenrolling correlates the agent's acknowledgement through the exec
+		// registry, so a server without one cannot be asked to do it.
+		execReg: newExecRegistry(),
 	}
 }
 

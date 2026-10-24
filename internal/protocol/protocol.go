@@ -22,6 +22,7 @@ const (
 	TypeInventory   = "inventory"    // server -> agent: list installed software
 	TypeWOL         = "wol"          // server -> agent: broadcast Wake-on-LAN packets for a peer
 	TypeProcRestart = "proc_restart" // server -> agent: stop a process and relaunch its command line
+	TypeUninstall   = "uninstall"    // server -> agent: take yourself off this machine
 
 	// agent -> server (command execution)
 	TypeExecOut       = "exec_out"       // a chunk of command output
@@ -36,6 +37,21 @@ type ProcRestartRequest struct {
 	Type   string `json:"type"` // TypeProcRestart
 	ExecID string `json:"exec_id"`
 	PID    int    `json:"pid"`
+}
+
+// UninstallRequest asks the agent to remove itself from the machine: stop and
+// deregister its service or autostart entry, delete its binary and config, and
+// stop running.
+//
+// The agent answers with an ExecDone carrying the same ExecID *before* it
+// starts, not after. An uninstall that reported success on completion could
+// never report anything at all: by the time the last file is gone there is no
+// process left holding the socket the reply would go out on. So the ack means
+// "accepted, and the teardown is launched", and the hub confirms the rest by
+// watching the host go offline and stay offline.
+type UninstallRequest struct {
+	Type   string `json:"type"` // TypeUninstall
+	ExecID string `json:"exec_id"`
 }
 
 // InventoryRequest asks the agent to enumerate installed software.
@@ -164,11 +180,11 @@ type StartSession struct {
 	// InputChannel asks the agent to open a second socket for this session,
 	// carrying input only. An agent that predates it ignores the field and the
 	// viewer keeps sending input on the media socket, which still works.
-	InputChannel bool `json:"input_channel,omitempty"`
-	Kind    string `json:"kind,omitempty"`  // SessionScreen | SessionTerminal
-	Codec   string `json:"codec,omitempty"` // negotiated video codec (CapJPEGTile | CapH264)
-	FPS     int    `json:"fps"`
-	Quality int    `json:"quality"` // JPEG quality 1-100
+	InputChannel bool   `json:"input_channel,omitempty"`
+	Kind         string `json:"kind,omitempty"`  // SessionScreen | SessionTerminal
+	Codec        string `json:"codec,omitempty"` // negotiated video codec (CapJPEGTile | CapH264)
+	FPS          int    `json:"fps"`
+	Quality      int    `json:"quality"` // JPEG quality 1-100
 }
 
 // CapsMsg is sent from the agent to the viewer at session start listing the

@@ -709,6 +709,60 @@ function overCanvas(e) {
 // tracking also keeps a drag alive while the pointer is briefly outside.
 const heldButtons = new Set();
 
+// ---- click precision ----
+//
+// Whether two clicks are a double click is the host's decision, and Windows
+// makes it strictly: the second press has to land within SM_CXDOUBLECLK of the
+// first — four pixels — and inside the double-click interval, or the pair is
+// two ordinary clicks. Nothing on this side guaranteed the first half.
+//
+// The view is scaled to fit the window, and movement is scaled with it: a 4K
+// host in a 1080p page doubles every pixel of it, so the two or three pixels of
+// drift a hand leaves between two fast clicks arrive at the host as five or
+// six, and double click simply did not work. Touch had it worse again — a tap
+// is allowed to wander TAP_MOVE_TOL and still be a tap.
+//
+// The same drift is why a right click sometimes landed next to what it was
+// aimed at. Most applications open their context menu on the release, under the
+// pointer as it is at that moment, so a press on a list row and a release three
+// pixels lower open the menu for the row below — or, on a small target, for
+// nothing at all. It looked like right click working in some places and not
+// others, which is how a few pixels look from the outside.
+//
+// So the gesture is settled here, where the operator's intent is still legible,
+// and the host is sent coordinates that say the same thing: a release at the
+// pixel its press landed on, and a second click at the pixel of the first.
+const CLICK_SLOP = 3;        // CSS px a press may drift before it is a drag
+const MULTI_CLICK_MS = 700;  // past this a press starts a click rather than extending one
+const MULTI_CLICK_TOL = 16;  // CSS px between mouse presses still treated as one spot
+const TAP_PIN_TOL = 24;      // the same for taps, which a finger places far less precisely
+
+// The press in flight: where it started on the page, the host pixel it was sent
+// at, and whether it has since travelled far enough to be a drag.
+let press = null;
+// The last press sent, so the next one can be pinned to it.
+let lastPress = null;
+
+// continuesClick reports whether a press is the next click of the run the last
+// one started rather than a new click somewhere else. The test is in page
+// pixels, not host pixels: it asks what the operator meant, and the answer must
+// not change with how far the view happens to be scaled.
+function continuesClick(button, lx, ly, tol) {
+  return !!lastPress && lastPress.button === button &&
+    performance.now() - lastPress.at < MULTI_CLICK_MS &&
+    Math.abs(lx - lastPress.lx) <= tol && Math.abs(ly - lastPress.ly) <= tol;
+}
+
+// pressPoint records a press and returns the host pixel to send it at: the
+// previous click's, when this one continues it, so the host sees both presses
+// at one place and reads them as the double click they were.
+function pressPoint(button, lx, ly, pos, multi) {
+  if (multi) pos = lastPress.pos;
+  lastPress = { button, pos, at: performance.now(), lx, ly };
+  lastPos = pos;
+  return pos;
+}
+
 // ---- mouse capture ----
 //
 // An application that steers the pointer itself — a game's mouse-look, a CAD
@@ -799,6 +853,13 @@ window.addEventListener('mousemove', e => {
   // Off-canvas moves only matter mid-drag; otherwise reaching for the top bar
   // would slide the host cursor to a clamped edge.
   if (!heldButtons.size && !overCanvas(e)) return;
+  // A press that has not travelled far enough to be a drag must not move the
+  // host pointer at all: those few pixels are what separate a double click from
+  // two single clicks, and a menu on the row you aimed at from the one below.
+  if (press && !press.dragging) {
+    if (Math.abs(e.clientX - press.x) <= CLICK_SLOP && Math.abs(e.clientY - press.y) <= CLICK_SLOP) return;
+    press.dragging = true;
+  }
   const now = performance.now();
   if (now - lastMove < 16) return; // ~60 Hz cap
   lastMove = now;
@@ -815,18 +876,28 @@ canvas.addEventListener('mousedown', e => {
     sendInput({ t: 'mdown', button: e.button, rel: true });
     return;
   }
-  const p = toRemote(e);
+  // e.detail is the browser's own count of the clicks in this run, kept with
+  // the operator's double-click settings: the gesture they made, rather than a
+  // second guess at it from timings here.
+  const multi = e.detail > 1 && continuesClick(e.button, e.clientX, e.clientY, MULTI_CLICK_TOL);
+  const p = pressPoint(e.button, e.clientX, e.clientY, toRemote(e), multi);
+  press = { button: e.button, x: e.clientX, y: e.clientY, pos: p, dragging: false };
   predictCursor(p);
   sendInput({ t: 'mdown', x: p.x, y: p.y, button: e.button });
 });
 window.addEventListener('mouseup', e => {
   if (!heldButtons.delete(e.button)) return; // not a press that started in the view
+  const held = press && press.button === e.button ? press : null;
+  if (held) press = null;
   if (captured()) {
     sendInput({ t: 'mup', button: e.button, rel: true });
     return;
   }
-  const p = toRemote(e);
-  sendInput({ t: 'mup', x: p.x, y: p.y, button: e.button });
+  // A click that never became a drag is released at the pixel its press landed
+  // on, so the two cannot disagree about what was clicked.
+  const at = held && !held.dragging ? held.pos : toRemote(e);
+  lastPos = at;
+  sendInput({ t: 'mup', x: at.x, y: at.y, button: e.button });
 });
 // A drag that ends while the tab is hidden/unfocused never delivers 'mouseup'
 // (e.g. alt-tab, or the release lands on another window), so release manually.
@@ -839,6 +910,7 @@ function releaseHeldButtons(rel) {
     send(rel ? { t: 'mup', button: b, rel: true } : { t: 'mup', x: lastPos.x, y: lastPos.y, button: b });
   }
   heldButtons.clear();
+  press = null;
 }
 window.addEventListener('blur', () => {
   releaseHeldButtons();
@@ -993,8 +1065,13 @@ canvas.addEventListener('touchend', e => {
   // succession therefore reach the host as two ordinary clicks close together,
   // which is precisely what a double click is — the host decides, using its own
   // double-click interval, and touch gets a real double click for free.
-  sendInput({ t: 'mdown', x: lastPos.x, y: lastPos.y, button: 0 });
-  sendInput({ t: 'mup', x: lastPos.x, y: lastPos.y, button: 0 });
+  //
+  // Pinned to the first tap's pixel, or it would not: a finger may wander
+  // TAP_MOVE_TOL between touchstart and the tap that still counts as one, and
+  // the host wants the two presses within four pixels of each other.
+  const tap = pressPoint(0, g.x, g.y, lastPos, continuesClick(0, g.x, g.y, TAP_PIN_TOL));
+  sendInput({ t: 'mdown', x: tap.x, y: tap.y, button: 0 });
+  sendInput({ t: 'mup', x: tap.x, y: tap.y, button: 0 });
 }, { passive: false });
 
 canvas.addEventListener('touchcancel', () => {

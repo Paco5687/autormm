@@ -576,6 +576,37 @@ function updateCard(el, h) {
     } catch (err) { alert('Could not remove: ' + err.message); }
   };
 
+  // Unenroll: the agent uninstalls itself, then the host is forgotten. Offered
+  // only while the host is online, which is exactly when Remove is not — the
+  // request has to reach the agent for there to be anything to uninstall.
+  const unenroll = el.querySelector('.card-unenroll');
+  unenroll.classList.toggle('hidden', !h.online);
+  unenroll.onclick = async (e) => {
+    e.preventDefault();
+    e.stopPropagation(); // unenrolling must not also open the host
+    const name = h.hostname || h.agent_id;
+    if (!confirm(`Unenroll ${name}?\n\n` +
+      `The agent uninstalls itself from the machine — its service, binary, config ` +
+      `and autostart entry all go — and the host is then removed from this ` +
+      `dashboard, along with its history, alert thresholds and watched services.\n\n` +
+      `Getting it back means running the install command on the machine again.`)) return;
+    unenroll.disabled = true;
+    try {
+      const res = await authJSON('/api/hosts/unenroll?agent=' + encodeURIComponent(h.agent_id), 'POST');
+      // The host is gone either way; a warning means one half of a two-part
+      // install (the Windows tray app and its elevated helper) said no, and
+      // that half is still on the machine.
+      if (res.warnings && res.warnings.length) {
+        alert('Unenrolled, but something was left behind:\n\n' + res.warnings.join('\n'));
+      }
+      poll();
+    } catch (err) {
+      alert('Could not unenroll: ' + err.message);
+    } finally {
+      unenroll.disabled = false;
+    }
+  };
+
   const alerts = el.querySelector('.alerts');
   alerts.innerHTML = '';
   for (const a of (h.alerts || [])) {
@@ -1529,6 +1560,7 @@ async function openEnroll() {
     const d = await res.json();
     document.getElementById('cmdLinux').textContent = d.commands.linux;
     document.getElementById('cmdLinuxDesktop').textContent = d.commands.linux_desktop;
+    document.getElementById('cmdLinuxDesktopAuto').textContent = d.commands.linux_desktop_autologin;
     document.getElementById('cmdWindows').textContent = d.commands.windows;
     document.getElementById('cmdWindowsElevated').textContent = d.commands.windows_elevated;
     document.getElementById('cmdMac').textContent = d.commands.macos;

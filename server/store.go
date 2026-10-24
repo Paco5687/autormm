@@ -160,6 +160,38 @@ func (s *Store) onlineConns() []*agentConn {
 	return conns
 }
 
+// controlConns returns the connections an instruction to the host itself must
+// reach: the interactive agent and the elevated helper.
+//
+// The console worker is deliberately left out. It is a transient child the
+// elevated helper launches into the console session and takes with it, it runs
+// from the helper's own binary, and asking it to uninstall would have it tear
+// down its parent's install from underneath it.
+func (s *Store) controlConns(agentID string) []*agentConn {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	h := s.hosts[agentID]
+	if h == nil {
+		return nil
+	}
+	var conns []*agentConn
+	if h.conn != nil {
+		conns = append(conns, h.conn)
+	}
+	if h.elevConn != nil {
+		conns = append(conns, h.elevConn)
+	}
+	return conns
+}
+
+// stillConnected reports whether anything of this host is still attached.
+func (s *Store) stillConnected(agentID string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	h := s.hosts[agentID]
+	return h != nil && h.anyConn()
+}
+
 // canStream reports whether a host can serve a screen session right now. It
 // needs the interactive connection specifically: the elevated helper keeps a
 // host online but runs in session 0, with no user desktop to capture.

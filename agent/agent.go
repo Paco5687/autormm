@@ -154,6 +154,34 @@ func (a *Agent) Run(ctx context.Context) error {
 	}
 }
 
+// displayPoll is how often an agent with no display looks for one. Variables
+// rather than constants so a test can drive them; nothing else reassigns them.
+var (
+	displayPoll      = 15 * time.Second
+	captureAvailable = capture.Available
+)
+
+// waitForDisplay ends the control connection once screen capture has become
+// possible, so the agent reconnects and registers the truth. It runs only while
+// the host is un-streamable, and an X connection that fails because there is no
+// display to connect to costs nothing.
+func (a *Agent) waitForDisplay(ctx context.Context, reconnect func()) {
+	t := time.NewTicker(displayPoll)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if captureAvailable() {
+				log.Printf("a display appeared -- reconnecting to register as streamable")
+				reconnect()
+				return
+			}
+		}
+	}
+}
+
 // sessionCtx returns the context media sessions should use: the agent's
 // lifetime, so they survive control-channel reconnects.
 func (a *Agent) sessionCtx() context.Context {
@@ -187,7 +215,7 @@ func (a *Agent) session(ctx context.Context) error {
 		// The session-0 elevated helper has no desktop; the console worker does
 		// (it follows the input desktop) and streams the screen, lock screen
 		// included.
-		CanStream:   capture.Available() && (!a.cfg.Elevated || a.cfg.Console),
+		CanStream:   captureAvailable() && (!a.cfg.Elevated || a.cfg.Console),
 		CanExec:     a.cfg.AllowExec,
 		Elevated:    a.cfg.Elevated,
 		Console:     a.cfg.Console,
@@ -203,6 +231,16 @@ func (a *Agent) session(ctx context.Context) error {
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+
+	// CanStream was settled just above and is sent once per connection, so an
+	// agent that came up before its display did would stay un-streamable for the
+	// life of this socket, with the dashboard greying out Remote long after the
+	// session arrived. That is the ordinary case on a Linux desktop: the install
+	// enables lingering, so systemd starts the agent at boot and the graphical
+	// session follows some seconds later.
+	if !reg.CanStream && !a.cfg.Elevated {
+		go a.waitForDisplay(ctx, cancel)
+	}
 
 	// ReadMessage below does not observe ctx; close the socket on shutdown so
 	// the read unblocks promptly (otherwise the agent lingers until the read
@@ -257,6 +295,11 @@ func (a *Agent) session(ctx context.Context) error {
 			var req protocol.ProcRestartRequest
 			if json.Unmarshal(data, &req) == nil {
 				go a.restartProc(ctx, out, req)
+			}
+		case protocol.TypeUninstall:
+			var req protocol.UninstallRequest
+			if json.Unmarshal(data, &req) == nil {
+				go a.runUninstall(out, req)
 			}
 		case protocol.TypeWOL:
 			var req protocol.WOLRequest

@@ -68,6 +68,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/exec", s.handleExec)
 	mux.HandleFunc("/api/inventory", s.handleInventory)
 	mux.HandleFunc("/api/scripts", s.handleScripts)
+	mux.HandleFunc("/api/hosts/unenroll", s.unenrollHost)
 	mux.HandleFunc("/api/scripts/run", s.handleScriptRun)
 	mux.HandleFunc("/api/schedules", s.handleSchedules)
 	mux.HandleFunc("/api/runs", s.handleRuns)
@@ -680,8 +681,18 @@ func (s *Server) removeHost(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no such host", http.StatusNotFound)
 		return
 	}
-	// Best effort from here: the host is already gone from the registry, and
-	// failing to tidy one store is not a reason to report the removal failed.
+	s.forgetHost(agentID)
+	s.audit(r, "host:remove", agentID, "", "ok")
+	writeJSON(w, http.StatusOK, map[string]any{"removed": agentID})
+}
+
+// forgetHost drops everything keyed by an agent id once the host itself is out
+// of the registry.
+//
+// Best effort throughout: the host is already gone, and failing to tidy one
+// store is not a reason to report the removal failed. Shared with unenrolling,
+// which ends in the same place by a longer road.
+func (s *Server) forgetHost(agentID string) {
 	s.svc.forget(agentID)
 	s.alerter.forget(agentID)
 	if err := s.prefs.forget(agentID); err != nil {
@@ -690,6 +701,4 @@ func (s *Server) removeHost(w http.ResponseWriter, r *http.Request) {
 	if err := s.history.DeleteAgent(agentID); err != nil {
 		log.Printf("remove host %s: history: %v", agentID, err)
 	}
-	s.audit(r, "host:remove", agentID, "", "ok")
-	writeJSON(w, http.StatusOK, map[string]any{"removed": agentID})
 }
